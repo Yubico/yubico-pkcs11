@@ -1,0 +1,10 @@
+[package]
+name = "pkcs11-common"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Shared PKCS#11 utilities for Yubico modules"
+
+[dependencies]
+pkcs11-sys = { workspace = true }
+parking_lot = { workspace = true }

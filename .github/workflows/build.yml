@@ -1,0 +1,108 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ykcs11 is the module under active development — this job must pass.
+  build-ykcs11:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PC/SC + bindgen build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev libclang-dev pcscd
+          # C_GetSlotList talks to the PC/SC resource manager even with zero
+          # readers attached — pcscd must actually be running or it fails
+          # with CKR_DEVICE_ERROR (same as it would on a real machine).
+          sudo systemctl start pcscd
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build ykcs11
+        run: cargo build --release -p ykcs11 --verbose
+
+      - name: Locate cdylib artifact
+        id: artifact
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux)   path=target/release/libykcs11.so ;;
+            macOS)   path=target/release/libykcs11.dylib ;;
+            Windows) path=target/release/ykcs11.dll ;;
+          esac
+          test -f "$path" || { echo "::error::expected artifact $path was not produced"; exit 1; }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - name: Install pkcs11-tool (opensc)
+        if: runner.os != 'Windows'
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get install -y opensc
+          else
+            brew install opensc
+          fi
+
+      # Milestone 1: the module must initialize and answer C_GetInfo
+      # correctly with no reader/token present.
+      - name: pkcs11-tool --show-info
+        if: runner.os != 'Windows'
+        run: pkcs11-tool --module "${{ steps.artifact.outputs.path }}" --show-info
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ykcs11-${{ matrix.os }}
+          path: ${{ steps.artifact.outputs.path }}
+
+  # yubihsm-pkcs11 depends on yubihsmrs, which in turn builds the vendored
+  # libyubihsm C library (cmake + curl + OpenSSL) at compile time. That
+  # native build chain isn't validated in this environment yet, so this job
+  # is best-effort: it gives visibility without blocking PRs. Promote it to
+  # required once it's known to build cleanly on all three platforms.
+  build-yubihsm-pkcs11:
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native build deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev libcurl4-openssl-dev libssl-dev cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build yubihsm-pkcs11
+        run: cargo build --release -p yubihsm-pkcs11 --verbose
+
+      - name: Locate cdylib artifact
+        id: artifact
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            Linux)   path=target/release/libyubihsm_pkcs11.so ;;
+            macOS)   path=target/release/libyubihsm_pkcs11.dylib ;;
+            Windows) path=target/release/yubihsm_pkcs11.dll ;;
+          esac
+          test -f "$path" || { echo "::error::expected artifact $path was not produced"; exit 1; }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yubihsm-pkcs11-${{ matrix.os }}
+          path: ${{ steps.artifact.outputs.path }}
