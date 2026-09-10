@@ -1,108 +1,327 @@
-name: Build
+name: Build and test
 
-on:
-  push:
-    branches: [main, master]
-  pull_request:
+on: [push]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ykcs11 is the module under active development — this job must pass.
-  build-ykcs11:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install PC/SC + bindgen build deps (Linux)
-        if: runner.os == 'Linux'
+  ubuntu:
+    name: Build and test on Linux
+    runs-on: ubuntu-latest
+    env:
+      LIBYUBIHSM_VERSION: 2.8.0
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install PC/SC + bindgen build deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libpcsclite-dev libclang-dev pcscd
+          sudo apt-get update && sudo apt-get dist-upgrade -y
+
+          # ykcs11
+          sudo apt-get install -y libpcsclite-dev libclang-dev pcscd libudev-dev
           # C_GetSlotList talks to the PC/SC resource manager even with zero
           # readers attached — pcscd must actually be running or it fails
           # with CKR_DEVICE_ERROR (same as it would on a real machine).
           sudo systemctl start pcscd
 
+          # yubihsm-pkcs11
+          sudo apt-get install -y libclang-dev \
+                                  libcurl4-openssl-dev \
+                                  libssl-dev \
+                                  cmake \
+                                  libusb-1.0.0-dev \
+                                  libedit-dev \
+                                  gengetopt
+
+          # common for testing
+          sudo apt-get install -y opensc
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build ykcs11
-        run: cargo build --release -p ykcs11 --verbose
-
-      - name: Locate cdylib artifact
-        id: artifact
-        shell: bash
         run: |
-          case "${{ runner.os }}" in
-            Linux)   path=target/release/libykcs11.so ;;
-            macOS)   path=target/release/libykcs11.dylib ;;
-            Windows) path=target/release/ykcs11.dll ;;
-          esac
-          test -f "$path" || { echo "::error::expected artifact $path was not produced"; exit 1; }
-          echo "path=$path" >> "$GITHUB_OUTPUT"
+            cargo build -p ykcs11 --verbose
+            test -f "target/debug/libykcs11.so" || { echo "::error::expected artifact target/debug/libykcs11.so was not produced"; exit 1; }
+            pkcs11-tool --module target/debug/libykcs11.so --show-info | grep "PKCS#11 PIV Library"
 
-      - name: Install pkcs11-tool (opensc)
-        if: runner.os != 'Windows'
+      - name: Build yubihsm-pkcs11
+        env:
+          LIBYUBIHSM_TAG: ${{ matrix.libyubihsm_tag }}
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get install -y opensc
-          else
-            brew install opensc
-          fi
+          set -x
 
-      # Milestone 1: the module must initialize and answer C_GetInfo
-      # correctly with no reader/token present.
-      - name: pkcs11-tool --show-info
-        if: runner.os != 'Windows'
-        run: pkcs11-tool --module "${{ steps.artifact.outputs.path }}" --show-info
+          cd ..
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ykcs11-${{ matrix.os }}
-          path: ${{ steps.artifact.outputs.path }}
+          #git clone --branch $LIBYUBIHSM_TAG https://github.com/Yubico/yubihsm-shell.git
+          git clone https://github.com/Yubico/yubihsm-shell.git
+          cd yubihsm-shell
 
-  # yubihsm-pkcs11 depends on yubihsmrs, which in turn builds the vendored
-  # libyubihsm C library (cmake + curl + OpenSSL) at compile time. That
-  # native build chain isn't validated in this environment yet, so this job
-  # is best-effort: it gives visibility without blocking PRs. Promote it to
-  # required once it's known to build cleanly on all three platforms.
-  build-yubihsm-pkcs11:
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+          # ubuntu 24.04 and newer come with _FORTIFY_SOURCE already set
+          sed -i 's/add_definitions (-D_FORTIFY_SOURCE=2)/add_definitions (-D_FORTIFY_SOURCE=3)/' cmake/SecurityFlags.cmake
+
+          # Set PCSC flags
+          #sed -i 's/#SET(CMAKE_C_FLAGS/SET(CMAKE_C_FLAGS/' ykhsmauth/CMakeLists.txt
+
+          mkdir build
+          cd build
+          cmake -DWITHOUT_YKYH=1 -DBUILD_ONLY_LIB=ON -DENABLE_CERT_COMPRESS=OFF -DWITHOUT_MANPAGES=1 ..
+          cmake --build .
+
+          pwd
+          echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
+
+          cd ../../yubico-pkcs11
+          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build -p yubihsm-pkcs11 --verbose
+          test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
+          echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.config
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubico-pkcs11/yubihsm_pkcs11.config pkcs11-tool --module target/debug/libyubihsm_pkcs11.so --show-info | grep "YubiHSM PKCS#11 Library"
+
+
+
+
+  MacOS:
+    name: Build and test on MacOS
+    runs-on: macos-latest
+    env:
+      LIBYUBIHSM_VERSION: 2.8.0
+
     steps:
-      - uses: actions/checkout@v4
+      - name: clone repository
+        uses: actions/checkout@v5
 
-      - name: Install native build deps (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev libcurl4-openssl-dev libssl-dev cmake
+      - name: install dependencies
+        run: |
+            brew install opensc
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build yubihsm-pkcs11
-        run: cargo build --release -p yubihsm-pkcs11 --verbose
-
-      - name: Locate cdylib artifact
-        id: artifact
-        shell: bash
+      - name: Build ykcs11
         run: |
-          case "${{ runner.os }}" in
-            Linux)   path=target/release/libyubihsm_pkcs11.so ;;
-            macOS)   path=target/release/libyubihsm_pkcs11.dylib ;;
-            Windows) path=target/release/yubihsm_pkcs11.dll ;;
-          esac
-          test -f "$path" || { echo "::error::expected artifact $path was not produced"; exit 1; }
-          echo "path=$path" >> "$GITHUB_OUTPUT"
+            cargo build -p ykcs11 --verbose
+            test -f "target/debug/libykcs11.dylib" || { echo "::error::expected artifact target/debug/libykcs11.dylib was not produced"; exit 1; }
+            pkcs11-tool --module target/debug/libykcs11.dylib --show-info | grep "PKCS#11 PIV Library"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: yubihsm-pkcs11-${{ matrix.os }}
-          path: ${{ steps.artifact.outputs.path }}
+      - name: Build yubihsm-pkcs11
+        run: |
+          set -e -o pipefail
+          set -x
+
+          brew update
+          brew reinstall openssl@3
+
+          cd ..
+          curl -L --max-redirs 2 -o yubihsm-shell-installer.pkg https://developers.yubico.com/yubihsm-shell/Releases/yubihsm-shell-$LIBYUBIHSM_VERSION-mac-universal.pkg
+          sudo installer -verbose -pkg yubihsm-shell-installer.pkg -target /
+
+          cd yubico-pkcs11
+          YUBIHSM_LIB_DIR=/usr/local/lib cargo build -p yubihsm-pkcs11 --verbose
+
+          ls target/debug
+
+          test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
+          echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.config
+          DYLD_LIBRARY_PATH=/usr/local/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubico-pkcs11/yubihsm_pkcs11.config pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info > out.txt
+          cat out.txt | grep "YubiHSM"
+
+  Windows:
+    name: Build and test on Windows
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            arch: win32
+            arch_cmake: Win32
+          - os: windows-2025
+            arch: win64
+            arch_cmake: x64
+          - os: windows-2022
+            arch: win32
+            arch_cmake: Win32
+          - os: windows-2022
+            arch: win64
+            arch_cmake: x64
+    env:
+      LIBYUBIHSM_VERSION: 2.8.0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build ykcs11
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+            $ErrorActionPreference = "Stop"
+
+            if($env:ARCH -eq "win32")
+            {
+              $target = "i686-pc-windows-msvc"
+            }
+            else
+            {
+              $target = "x86_64-pc-windows-msvc"
+            }
+            rustup target add $target
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+            cargo build -p ykcs11 --verbose --target $target
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+            ls target/$target/debug
+
+            Test-Path target/$target/debug/ykcs11.dll -PathType Leaf
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Build libyubihsm
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSDebug -Trace 1
+
+          cd ..
+          Invoke-WebRequest -Uri https://developers.yubico.com/yubihsm-shell/Releases/yubihsm-shell-$env:LIBYUBIHSM_VERSION-$env:ARCH.msi -OutFile yubihsm-shell.msi -UseBasicParsing
+
+          $log = "$env:GITHUB_WORKSPACE\install.log"
+          $procMain = Start-Process "msiexec" "/i `"yubihsm-shell.msi`" /qn /l*! `"$log`"" -NoNewWindow -PassThru
+          $procMain.WaitForExit()
+
+          mkdir -p $env:GITHUB_WORKSPACE/pkcs11/bin
+          mkdir -p $env:GITHUB_WORKSPACE/pkcs11/lib
+          if($env:ARCH -eq "win32")
+          {
+            cp "C:\Program Files (x86)\Yubico\YubiHSM Shell\bin\libyubihsm*.dll" $env:GITHUB_WORKSPACE/pkcs11/bin/
+            cp "C:\Program Files (x86)\Yubico\YubiHSM Shell\lib\libyubihsm*.lib" $env:GITHUB_WORKSPACE/pkcs11/lib/
+          }
+          else
+          {
+            cp "C:\Program Files\Yubico\YubiHSM Shell\bin\libyubihsm*.dll" $env:GITHUB_WORKSPACE/pkcs11/bin/
+            cp "C:\Program Files\Yubico\YubiHSM Shell\lib\libyubihsm*.lib" $env:GITHUB_WORKSPACE/pkcs11/lib/
+          }
+
+      - name: Build yubihsm-pkcs11
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSDebug -Trace 1
+
+          # Cross-compile from the host (x64) toolchain rather than switching
+          # the default toolchain to i686: cargo always builds/runs build
+          # scripts and proc-macros (e.g. bindgen, used by pkcs11-sys) for
+          # the *host*, regardless of --target. Making i686 the default
+          # toolchain instead makes bindgen's build script itself a 32-bit
+          # process, which needs a 32-bit libclang.dll — and LLVM hasn't
+          # shipped official 32-bit Windows releases in years, so there's no
+          # DLL available to point LIBCLANG_PATH at. Cross-compiling keeps
+          # bindgen running as x64 (host, 64-bit libclang available) while
+          # only the final yubihsm_pkcs11.dll is built for i686.
+          if($env:ARCH -eq "win32")
+          {
+            $target = "i686-pc-windows-msvc"
+          }
+          else
+          {
+            $target = "x86_64-pc-windows-msvc"
+          }
+          rustup target add $target
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          #C:/vcpkg/vcpkg.exe install openssl:x86-windows / openssl:x64-windows
+          #if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          #$env:OPENSSL_DIR="C:/vcpkg/packages/openssl_..."
+
+          ls $env:GITHUB_WORKSPACE/pkcs11/lib/
+          ls $env:GITHUB_WORKSPACE/pkcs11/bin/
+
+          $env:RUST_BACKTRACE=1
+          $env:YUBIHSM_LIB_DIR="$env:GITHUB_WORKSPACE/pkcs11/lib"
+          #$env:PATH+=";$env:GITHUB_WORKSPACE/pkcs11/bin;$env:OPENSSL_DIR/bin"
+          # $env:PATH+=";$env:GITHUB_WORKSPACE/pkcs11/bin"
+          cargo.exe update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo.exe build -p yubihsm-pkcs11 --verbose --target $target
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          ls target/$target/debug
+
+          Test-Path target/$target/debug/yubihsm_pkcs11.dll -PathType Leaf
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Install OpenSC
+        env:
+          ARCH: ${{ matrix.arch }}
+
+        run: |
+          Set-PSDebug -Trace 1
+
+          if($env:ARCH -eq "win32")
+          {
+            Invoke-WebRequest -Uri  https://github.com/OpenSC/OpenSC/releases/download/0.25.1/OpenSC-0.25.1_win32.msi -OutFile OpenSC.msi -UseBasicParsing
+          }
+          else
+          {
+            Invoke-WebRequest -Uri  https://github.com/OpenSC/OpenSC/releases/download/0.25.1/OpenSC-0.25.1_win64.msi -OutFile OpenSC.msi -UseBasicParsing
+          }
+
+          Start-Sleep -Seconds 120
+          $log = "$env:GITHUB_WORKSPACE\install_opensc.log"
+          Start-Process "msiexec" "/i `"$env:GITHUB_WORKSPACE\OpenSC.msi`" /qn /l*! `"$log`"" -Wait -NoNewWindow -PassThru
+
+      - name: Test ykcs11 module
+        env:
+          ARCH: ${{ matrix.arch }}
+
+        run: |
+          Set-PSDebug -Trace 1
+
+          if($env:ARCH -eq "win32")
+          {
+            $env:PATH += ";C:\Program Files (x86)\OpenSC Project\OpenSC\tools"
+            $target = "i686-pc-windows-msvc"
+          }
+          else
+          {
+            $env:PATH += ";C:\Program Files\OpenSC Project\OpenSC\tools"
+            $target = "x86_64-pc-windows-msvc"
+          }
+
+          pkcs11-tool.exe --module target/$target/debug/ykcs11.dll --show-info *> .\outputFile.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          type .\outputFile.txt | findstr "PKCS#11 PIV Library"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Test yubihsm_pkcs11 module
+        env:
+          ARCH: ${{ matrix.arch }}
+
+        run: |
+          Set-PSDebug -Trace 1
+
+          # No actual connection, but this is enough to make sure that the PKCS11 module is found and loaded
+          $PKCS11_CONFIG="connector=http://127.0.0.1:12345"
+          $PKCS11_CONFIG | Out-File $env:GITHUB_WORKSPACE\yubihsm_pkcs11.conf
+          $env:YUBIHSM_PKCS11_CONF="$env:GITHUB_WORKSPACE\yubihsm_pkcs11.conf"
+
+          if($env:ARCH -eq "win32")
+          {
+            $env:PATH += ";C:\Program Files (x86)\OpenSC Project\OpenSC\tools"
+            $target = "i686-pc-windows-msvc"
+          }
+          else
+          {
+            $env:PATH += ";C:\Program Files\OpenSC Project\OpenSC\tools"
+            $target = "x86_64-pc-windows-msvc"
+          }
+
+          pkcs11-tool.exe --module target/$target/debug/yubihsm_pkcs11.dll --show-info *> .\outputFile.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          type .\outputFile.txt | findstr "YubiHSM PKCS#11 Library"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
