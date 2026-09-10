@@ -72,6 +72,15 @@ pub type CK_C_GetFunctionStatus = Option<unsafe extern "C" fn(CK_SESSION_HANDLE)
 pub type CK_C_CancelFunction = Option<unsafe extern "C" fn(CK_SESSION_HANDLE) -> CK_RV>;
 pub type CK_C_WaitForSlotEvent = Option<unsafe extern "C" fn(CK_FLAGS, CK_SLOT_ID_PTR, CK_VOID_PTR) -> CK_RV>;
 
+/* Same Windows-only 1-byte-packing convention as wrapper.h's pragma, applied
+ * by hand here since this struct is hand-written, not bindgen-generated
+ * (bindgen can't parse the macro-inclusion pattern the real headers use for
+ * it). Without `packed` on Windows, `version` (2 bytes) gets padded to
+ * align `C_Initialize` (an 8-byte function pointer) to offset 8 instead of
+ * the spec's offset 2 — so any real caller reading through this table
+ * (which every PKCS#11 consumer does, via C_GetFunctionList) reads garbage
+ * function pointers and crashes calling through them. */
+#[cfg_attr(windows, repr(packed))]
 #[repr(C)]
 pub struct CK_FUNCTION_LIST {
     pub version: CK_VERSION,

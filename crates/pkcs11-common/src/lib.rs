@@ -5,6 +5,8 @@ pub mod debug;
 pub mod function_list;
 pub mod session;
 pub mod stubs;
+#[cfg(windows)]
+mod win_dllmain;
 
 /// Pad a byte array with spaces (PKCS#11 convention — not null-terminated).
 pub fn str_pad(dst: &mut [u8], src: &str) {
