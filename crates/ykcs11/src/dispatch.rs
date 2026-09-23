@@ -126,7 +126,10 @@ pub unsafe extern "C" fn C_Login(
     pPin: CK_UTF8CHAR_PTR,
     ulPinLen: CK_ULONG,
 ) -> CK_RV {
-    traced!("C_Login", G_ENGINE.login(hSession, userType, pPin, ulPinLen))
+    traced!(
+        "C_Login",
+        G_ENGINE.login(hSession, userType, pPin, ulPinLen, std::ptr::null_mut(), 0)
+    )
 }
 
 #[unsafe(no_mangle)]

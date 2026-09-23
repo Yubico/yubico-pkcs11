@@ -11,9 +11,15 @@ use pkcs11_sys::CK_RV;
 pub struct YubiHsmSlotData {
     pub connector_config: ConnectorConfig,
     pub hsm: Option<yubihsmrs::YubiHsm>,
+    /// The authenticated device session established by `C_Login`/
+    /// `C_LoginUser`, shared by every PKCS#11 session open on this slot —
+    /// matches `yubihsm_pkcs11_slot.device_session` in the C module (one
+    /// session per slot, not per PKCS#11 session).
+    pub device_session: Option<yubihsmrs::Session>,
 }
 
-// Safety: `hsm` is only ever accessed while the slot's own `Mutex` is held.
+// Safety: `hsm`/`device_session` are only ever accessed while the slot's
+// own `Mutex` is held.
 unsafe impl Send for YubiHsmSlotData {}
 
 impl YubiHsmSlotData {
@@ -21,6 +27,7 @@ impl YubiHsmSlotData {
         Self {
             connector_config: config,
             hsm: None,
+            device_session: None,
         }
     }
 

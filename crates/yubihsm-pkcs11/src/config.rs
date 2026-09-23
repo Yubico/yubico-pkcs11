@@ -129,8 +129,12 @@ fn merge(config: &mut Config, other: Config) {
 /// on top of it (`cmdline_parser_config_file`, `override = 0`) — settings
 /// already present from pReserved are kept, everything else (including
 /// `debug`/`dinout`/`libdebug`) is filled in from the file even when the
-/// file defines no connectors of its own. Only if no connectors were found
-/// anywhere does a default localhost connector get added.
+/// file defines no connectors of its own.
+///
+/// No default connector is substituted if none was found: the C module
+/// treats a missing connector as a hard `CKR_ARGUMENTS_BAD` failure
+/// (`args_info.connector_given == 0` in `C_Initialize`), not a fallback to
+/// localhost — callers must check `config.connectors.is_empty()`.
 pub fn resolve(reserved: Option<&str>) -> Config {
     let mut config = Config::default();
 
@@ -141,12 +145,6 @@ pub fn resolve(reserved: Option<&str>) -> Config {
     let file_path =
         env::var("YUBIHSM_PKCS11_CONF").unwrap_or_else(|_| "yubihsm_pkcs11.conf".to_string());
     merge(&mut config, load_from_file(&file_path));
-
-    if config.connectors.is_empty() {
-        config.connectors.push(ConnectorConfig {
-            url: "http://127.0.0.1:12345".to_string(),
-        });
-    }
 
     config
 }

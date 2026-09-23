@@ -5,6 +5,7 @@ pub mod debug;
 pub mod function_list;
 pub mod session;
 pub mod stubs;
+pub mod util;
 #[cfg(windows)]
 mod win_dllmain;
 

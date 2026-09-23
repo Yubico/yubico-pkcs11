@@ -109,6 +109,25 @@ pub unsafe extern "C" fn C_GetSessionInfo(
     traced!("C_GetSessionInfo", G_ENGINE.get_session_info(hSession, pInfo))
 }
 
+/// The real PKCS#11 3.0 `C_LoginUser` — not part of the base `CK_FUNCTION_LIST`
+/// (`CK_LoginUser` is a 3.0-only addition, reachable via `C_GetInterface`,
+/// which this module doesn't implement), but exported directly and called
+/// by `C_Login` below, exactly as `yubihsm_pkcs11.c` does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_LoginUser(
+    hSession: CK_SESSION_HANDLE,
+    userType: CK_USER_TYPE,
+    pPin: CK_UTF8CHAR_PTR,
+    ulPinLen: CK_ULONG,
+    pUsername: CK_UTF8CHAR_PTR,
+    ulUsernameLen: CK_ULONG,
+) -> CK_RV {
+    traced!(
+        "C_LoginUser",
+        G_ENGINE.login(hSession, userType, pPin, ulPinLen, pUsername, ulUsernameLen)
+    )
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_Login(
     hSession: CK_SESSION_HANDLE,
@@ -116,7 +135,42 @@ pub unsafe extern "C" fn C_Login(
     pPin: CK_UTF8CHAR_PTR,
     ulPinLen: CK_ULONG,
 ) -> CK_RV {
-    traced!("C_Login", G_ENGINE.login(hSession, userType, pPin, ulPinLen))
+    // Matches yubihsm_pkcs11.c's C_Login (util_pkcs11.c isn't involved):
+    // split the combined pPin buffer into a leading "identity" substring
+    // (the optional '@'/'#label#' auth-scheme marker plus the 4-hex-digit
+    // auth key ID) and a trailing password, then delegate to C_LoginUser.
+    let mut username_len: CK_ULONG = 0;
+    if !pPin.is_null() && ulPinLen > 0 {
+        let pin_bytes = std::slice::from_raw_parts(pPin as *const u8, ulPinLen as usize);
+        if pin_bytes[0] == b'@' {
+            username_len += 1;
+        } else if pin_bytes[0] == b'#' {
+            username_len += 1;
+            while username_len < ulPinLen && pin_bytes[username_len as usize] != b'#' {
+                username_len += 1;
+            }
+            username_len += 1;
+        }
+        username_len += 4;
+        if username_len > ulPinLen {
+            username_len = ulPinLen;
+        }
+    }
+
+    // Avoid offsetting a null pointer even by 0.
+    let password_ptr = if pPin.is_null() { pPin } else { pPin.add(username_len as usize) };
+
+    traced!(
+        "C_Login",
+        C_LoginUser(
+            hSession,
+            userType,
+            password_ptr,
+            ulPinLen - username_len,
+            pPin,
+            username_len,
+        )
+    )
 }
 
 #[unsafe(no_mangle)]

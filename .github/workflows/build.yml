@@ -74,10 +74,13 @@ jobs:
           echo "GITHUB_WORKSPACE = $GITHUB_WORKSPACE"
 
           cd ../../yubico-pkcs11
+          ls $GITHUB_WORKSPACE/../yubihsm-shell/build/lib
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
-          echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.config
-          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubico-pkcs11/yubihsm_pkcs11.config pkcs11-tool --module target/debug/libyubihsm_pkcs11.so --show-info | grep "YubiHSM PKCS#11 Library"
+          cd target/debug
+          echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
+          cat yubihsm_pkcs11.conf
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib pkcs11-tool --module ./libyubihsm_pkcs11.so --show-info | grep "YubiHSM PKCS#11 Library"
 
 
 
@@ -130,10 +133,10 @@ jobs:
           ls target/debug
 
           test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
-          echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.config
-          #DYLD_LIBRARY_PATH=/usr/local/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubico-pkcs11/yubihsm_pkcs11.config pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info
+          echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
+          #DYLD_LIBRARY_PATH=/usr/local/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubihsm_pkcs11.conf pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info
           output="$(DYLD_LIBRARY_PATH=/usr/local/lib \
-                    YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubico-pkcs11/yubihsm_pkcs11.config \
+                    YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubihsm_pkcs11.conf \
                     pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info 2>&1 || true)"
           printf '%s\n' "$output"
           grep -Fq "YubiHSM PKCS#11 Library" <<< "$output"

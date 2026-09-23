@@ -142,7 +142,15 @@ pub trait Backend: Sized + 'static {
         flags: CK_FLAGS,
     ) -> Self::SessionData;
 
-    fn login(slot: &mut Slot<Self>, user_type: CK_USER_TYPE, pin: &[u8]) -> Result<(), CK_RV>;
+    /// `username` is the PKCS#11 3.0 `C_LoginUser` identity string, empty
+    /// when called from the base `C_Login` (which has no such concept) —
+    /// backends that don't distinguish users (e.g. ykcs11) can ignore it.
+    fn login(
+        slot: &mut Slot<Self>,
+        user_type: CK_USER_TYPE,
+        pin: &[u8],
+        username: &[u8],
+    ) -> Result<(), CK_RV>;
     fn logout(slot: &mut Slot<Self>) -> Result<(), CK_RV>;
 }
 
@@ -589,6 +597,8 @@ impl<B: Backend> Engine<B> {
         user_type: CK_USER_TYPE,
         p_pin: CK_UTF8CHAR_PTR,
         ul_pin_len: CK_ULONG,
+        p_username: CK_UTF8CHAR_PTR,
+        ul_username_len: CK_ULONG,
     ) -> CK_RV {
         let mut guard = self.state.lock();
         let state = match guard.as_mut() {
@@ -601,14 +611,22 @@ impl<B: Backend> Engine<B> {
         };
         let slot = state.slots[slot_id as usize].clone();
         let mut slot_guard = slot.lock();
+        if !B::is_present(&slot_guard.data) {
+            return CKR_TOKEN_NOT_PRESENT.into();
+        }
 
         let pin: &[u8] = if p_pin.is_null() || ul_pin_len == 0 {
             &[]
         } else {
             std::slice::from_raw_parts(p_pin as *const u8, ul_pin_len as usize)
         };
+        let username: &[u8] = if p_username.is_null() || ul_username_len == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(p_username as *const u8, ul_username_len as usize)
+        };
 
-        match B::login(&mut slot_guard, user_type, pin) {
+        match B::login(&mut slot_guard, user_type, pin, username) {
             Ok(()) => CKR_OK.into(),
             Err(rv) => rv,
         }
@@ -626,6 +644,9 @@ impl<B: Backend> Engine<B> {
         };
         let slot = state.slots[slot_id as usize].clone();
         let mut slot_guard = slot.lock();
+        if !B::is_present(&slot_guard.data) {
+            return CKR_TOKEN_NOT_PRESENT.into();
+        }
         match B::logout(&mut slot_guard) {
             Ok(()) => CKR_OK.into(),
             Err(rv) => rv,
