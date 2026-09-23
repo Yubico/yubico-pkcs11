@@ -49,6 +49,24 @@ pub unsafe extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GetMechanismList(
+    slotID: CK_SLOT_ID,
+    pMechanismList: CK_MECHANISM_TYPE_PTR,
+    pulCount: CK_ULONG_PTR,
+) -> CK_RV {
+    G_ENGINE.get_mechanism_list(slotID, pMechanismList, pulCount)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GetMechanismInfo(
+    slotID: CK_SLOT_ID,
+    mechanismType: CK_MECHANISM_TYPE,
+    pInfo: CK_MECHANISM_INFO_PTR,
+) -> CK_RV {
+    G_ENGINE.get_mechanism_info(slotID, mechanismType, pInfo)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_OpenSession(
     slotID: CK_SLOT_ID,
     flags: CK_FLAGS,
@@ -105,6 +123,8 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_get_slot_list: Some(C_GetSlotList),
     c_get_slot_info: Some(C_GetSlotInfo),
     c_get_token_info: Some(C_GetTokenInfo),
+    c_get_mechanism_list: Some(C_GetMechanismList),
+    c_get_mechanism_info: Some(C_GetMechanismInfo),
     c_open_session: Some(C_OpenSession),
     c_close_session: Some(C_CloseSession),
     c_close_all_sessions: Some(C_CloseAllSessions),

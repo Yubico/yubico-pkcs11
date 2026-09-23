@@ -13,4 +13,4 @@ crate-type = ["cdylib", "staticlib"]
 pkcs11-sys = { workspace = true }
 pkcs11-common = { workspace = true }
 log = { workspace = true }
-yubihsmrs = { git = "https://github.com/Yubico/yubihsmrs.git" }
+yubihsmrs = { git = "https://github.com/Yubico/yubihsmrs.git", branch = "pkcs11" }

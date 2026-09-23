@@ -9,6 +9,7 @@ mod config;
 mod debug;
 mod dispatch;
 mod error;
+mod mechanisms;
 mod slot;
 
 pub use dispatch::*;

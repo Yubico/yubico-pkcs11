@@ -7,8 +7,9 @@ use crate::config::{self, Config};
 use crate::debug;
 use crate::slot::YubiHsmSlotData;
 use crate::{dbg_info, dbg_warn};
-use pkcs11_common::backend::{Backend, Engine, LibraryInfo, Slot, SlotInfo, TokenInfo};
+use pkcs11_common::backend::{Backend, Engine, LibraryInfo, MechanismInfo, Slot, SlotInfo, TokenInfo};
 use pkcs11_sys::*;
+use yubihsmrs::object::ObjectAlgorithm;
 
 const VERSION_MAJOR: u8 = 1;
 const VERSION_MINOR: u8 = 0;
@@ -16,6 +17,15 @@ const MANUFACTURER_ID: &str = "Yubico";
 const LIBRARY_DESCRIPTION: &str = "YubiHSM PKCS#11 Library";
 
 pub struct YubiHsmBackend;
+
+impl YubiHsmBackend {
+    /// The connected device's reported algorithm capabilities, or `None` if
+    /// not connected / the query failed.
+    fn device_algorithms(data: &YubiHsmSlotData) -> Option<Vec<ObjectAlgorithm>> {
+        let hsm = data.hsm.as_ref()?;
+        Some(hsm.get_device_info().ok()?.algorithms())
+    }
+}
 
 impl Backend for YubiHsmBackend {
     type SlotData = YubiHsmSlotData;
@@ -93,6 +103,23 @@ impl Backend for YubiHsmBackend {
             hardware_version: (2, 0),
             firmware_version: (2, 0),
             extra_flags: 0,
+        })
+    }
+
+    fn mechanism_list(data: &YubiHsmSlotData) -> Vec<CK_MECHANISM_TYPE> {
+        let Some(algorithms) = Self::device_algorithms(data) else {
+            return Vec::new();
+        };
+        crate::mechanisms::mechanism_list(&algorithms)
+    }
+
+    fn mechanism_info(data: &YubiHsmSlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
+        let algorithms = Self::device_algorithms(data)?;
+        let info = crate::mechanisms::mechanism_info(&algorithms, mechanism)?;
+        Some(MechanismInfo {
+            min_key_size: info.min_key_size,
+            max_key_size: info.max_key_size,
+            flags: info.flags,
         })
     }
 

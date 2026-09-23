@@ -45,6 +45,13 @@ pub struct TokenInfo {
     pub extra_flags: CK_FLAGS,
 }
 
+/// Per-mechanism info reported by `C_GetMechanismInfo`.
+pub struct MechanismInfo {
+    pub min_key_size: CK_ULONG,
+    pub max_key_size: CK_ULONG,
+    pub flags: CK_FLAGS,
+}
+
 /// A single open session on a slot.
 pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
@@ -113,6 +120,15 @@ pub trait Backend: Sized + 'static {
     fn slot_info(slot_id: CK_SLOT_ID, data: &Self::SlotData) -> SlotInfo;
     /// `None` means no token present (translated to `CKR_TOKEN_NOT_PRESENT`).
     fn token_info(data: &mut Self::SlotData) -> Option<TokenInfo>;
+
+    /// The `CKM_*` mechanisms this token supports, in the order they should
+    /// be reported. Called with the token already confirmed present.
+    fn mechanism_list(data: &Self::SlotData) -> Vec<CK_MECHANISM_TYPE>;
+
+    /// Details for one mechanism. `None` means the mechanism isn't
+    /// supported (translated to `CKR_MECHANISM_INVALID`). Called with the
+    /// token already confirmed present.
+    fn mechanism_info(data: &Self::SlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo>;
 
     /// Maximum concurrent sessions per slot, or `None` for unbounded
     /// (`CK_EFFECTIVELY_INFINITE`).
@@ -313,6 +329,80 @@ impl<B: Backend> Engine<B> {
         if B::is_present(&slot.data) {
             info.flags |= CKF_TOKEN_PRESENT as CK_FLAGS;
         }
+        CKR_OK.into()
+    }
+
+    pub unsafe fn get_mechanism_list(
+        &self,
+        slot_id: CK_SLOT_ID,
+        p_mechanism_list: CK_MECHANISM_TYPE_PTR,
+        pul_count: CK_ULONG_PTR,
+    ) -> CK_RV {
+        let guard = self.state.lock();
+        let state = match guard.as_ref() {
+            Some(s) => s,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+        };
+        if pul_count.is_null() {
+            return CKR_ARGUMENTS_BAD.into();
+        }
+        let slot = match Self::slot_arc(state, slot_id) {
+            Ok(s) => s,
+            Err(rv) => return rv,
+        };
+        let slot = slot.lock();
+        if !B::is_present(&slot.data) {
+            return CKR_TOKEN_NOT_PRESENT.into();
+        }
+        let mechanisms = B::mechanism_list(&slot.data);
+
+        let count = mechanisms.len() as CK_ULONG;
+        if p_mechanism_list.is_null() {
+            *pul_count = count;
+            return CKR_OK.into();
+        }
+        if *pul_count < count {
+            *pul_count = count;
+            return CKR_BUFFER_TOO_SMALL.into();
+        }
+        for (i, m) in mechanisms.iter().enumerate() {
+            *p_mechanism_list.add(i) = *m;
+        }
+        *pul_count = count;
+        CKR_OK.into()
+    }
+
+    pub unsafe fn get_mechanism_info(
+        &self,
+        slot_id: CK_SLOT_ID,
+        mechanism_type: CK_MECHANISM_TYPE,
+        p_info: CK_MECHANISM_INFO_PTR,
+    ) -> CK_RV {
+        let guard = self.state.lock();
+        let state = match guard.as_ref() {
+            Some(s) => s,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+        };
+        if p_info.is_null() {
+            return CKR_ARGUMENTS_BAD.into();
+        }
+        let slot = match Self::slot_arc(state, slot_id) {
+            Ok(s) => s,
+            Err(rv) => return rv,
+        };
+        let slot = slot.lock();
+        if !B::is_present(&slot.data) {
+            return CKR_TOKEN_NOT_PRESENT.into();
+        }
+        let info = match B::mechanism_info(&slot.data, mechanism_type) {
+            Some(i) => i,
+            None => return CKR_MECHANISM_INVALID.into(),
+        };
+
+        let out = &mut *p_info;
+        out.ulMinKeySize = info.min_key_size;
+        out.ulMaxKeySize = info.max_key_size;
+        out.flags = info.flags;
         CKR_OK.into()
     }
 

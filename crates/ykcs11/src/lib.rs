@@ -9,6 +9,7 @@ extern crate pkcs11_common;
 mod backend;
 mod discovery;
 mod dispatch;
+mod mechanisms;
 mod piv_slot;
 
 pub use dispatch::*;

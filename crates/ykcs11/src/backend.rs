@@ -4,7 +4,9 @@
 //! [`pkcs11_common::backend::Backend`] impl for the YubiKey PIV module.
 
 use crate::piv_slot::PivSlotData;
-use pkcs11_common::backend::{Backend, Engine, LibraryInfo, ModuleState, Slot, SlotInfo, TokenInfo};
+use pkcs11_common::backend::{
+    Backend, Engine, LibraryInfo, MechanismInfo, ModuleState, Slot, SlotInfo, TokenInfo,
+};
 use pkcs11_sys::*;
 
 const YKCS11_MANUFACTURER: &str = "Yubico (www.yubico.com)";
@@ -88,6 +90,36 @@ impl Backend for PivBackend {
 
     fn max_sessions(_data: &PivSlotData) -> Option<usize> {
         Some(crate::piv_slot::YKCS11_MAX_SESSIONS)
+    }
+
+    fn mechanism_list(_data: &PivSlotData) -> Vec<CK_MECHANISM_TYPE> {
+        crate::mechanisms::token_mechanisms()
+    }
+
+    fn mechanism_info(data: &PivSlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
+        let entry = crate::mechanisms::mechanism_table()
+            .into_iter()
+            .find(|e| e.mechanism == mechanism)?;
+
+        // RSA key generation/operations above 2048 bits need firmware 5.7+;
+        // on older keys the reported max clamps down, matching ykcs11.c's
+        // is_version_compatible(..., 5, 7, 0) check.
+        let mut max_key_size = entry.max_key_size;
+        if max_key_size == 4096 {
+            let fw_at_least_5_7 = data
+                .token_info
+                .as_ref()
+                .is_some_and(|t| (t.fw_version_major, t.fw_version_minor) >= (5, 7));
+            if !fw_at_least_5_7 {
+                max_key_size = 2048;
+            }
+        }
+
+        Some(MechanismInfo {
+            min_key_size: entry.min_key_size,
+            max_key_size,
+            flags: entry.flags,
+        })
     }
 
     fn new_session_data(_slot: &mut PivSlotData, _handle: CK_SESSION_HANDLE, _flags: CK_FLAGS) {}
