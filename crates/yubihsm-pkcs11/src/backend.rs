@@ -50,10 +50,10 @@ impl Backend for YubiHsmBackend {
             config.libdebug,
             config.debug_file.as_deref(),
         );
-        dbg_info!("Initializing PKCS#11 module");
+        dbg_info!("initialize", "Initializing PKCS#11 module");
 
         if yubihsmrs::init().is_err() {
-            dbg_warn!("Failed to initialize libyubihsm");
+            dbg_warn!("initialize", "Failed to initialize libyubihsm");
             return Err(CKR_GENERAL_ERROR.into());
         }
 
@@ -61,18 +61,18 @@ impl Backend for YubiHsmBackend {
         for connector_config in &config.connectors {
             let mut slot = YubiHsmSlotData::new(connector_config.clone());
             match slot.connect() {
-                Ok(()) => dbg_info!("Connected to {}", connector_config.url),
-                Err(_) => dbg_warn!("Failed to connect to {}", connector_config.url),
+                Ok(()) => dbg_info!("initialize", "Connected to {}", connector_config.url),
+                Err(_) => dbg_warn!("initialize", "Failed to connect to {}", connector_config.url),
             }
             slots.push(slot);
         }
-        dbg_info!("Found {} slot(s)", slots.len());
+        dbg_info!("initialize", "Found {} slot(s)", slots.len());
 
         Ok((config, slots))
     }
 
     fn finalize(_data: &mut Config) {
-        dbg_info!("Finalizing PKCS#11 module");
+        dbg_info!("finalize", "Finalizing PKCS#11 module");
         let _ = yubihsmrs::exit();
     }
 

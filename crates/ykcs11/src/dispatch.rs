@@ -9,7 +9,24 @@
 use crate::backend::G_ENGINE;
 use pkcs11_common::debug;
 use pkcs11_common::function_list::{build_function_list, RealFunctions};
+use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
+
+/// Brackets a call into `G_ENGINE` with the same entry/exit tracing the
+/// original C module printed around every `C_*` function (`DIN;`/`DOUT;`
+/// plus a return-code log). The function name is passed explicitly rather
+/// than relying on `din!`/`dout!`'s own `file!()`/`line!()` — those would
+/// resolve to wherever `traced!` calls them, once, and every one of the ~14
+/// call sites below would print the identical location. `rv` is a bare
+/// PKCS#11 return-code number, not a symbolic name (e.g. `0` for `CKR_OK`).
+macro_rules! traced {
+    ($name:literal, $body:expr) => {{
+        yk_dbg!("{}: in", $name);
+        let rv: CK_RV = $body;
+        yk_dbg!("{}: out, rv={}", $name, rv);
+        rv
+    }};
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
@@ -18,22 +35,22 @@ pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     debug::set_verbose(dbg_level);
-    G_ENGINE.initialize(pInitArgs)
+    traced!("C_Initialize", G_ENGINE.initialize(pInitArgs))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_Finalize(pReserved: CK_VOID_PTR) -> CK_RV {
-    G_ENGINE.finalize(pReserved)
+    traced!("C_Finalize", G_ENGINE.finalize(pReserved))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetInfo(pInfo: CK_INFO_PTR) -> CK_RV {
-    G_ENGINE.get_info(pInfo)
+    traced!("C_GetInfo", G_ENGINE.get_info(pInfo))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetFunctionList(ppFunctionList: *mut CK_FUNCTION_LIST_PTR) -> CK_RV {
-    G_ENGINE.get_function_list(ppFunctionList, &G_FUNCTION_LIST)
+    traced!("C_GetFunctionList", G_ENGINE.get_function_list(ppFunctionList, &G_FUNCTION_LIST))
 }
 
 #[unsafe(no_mangle)]
@@ -42,17 +59,17 @@ pub unsafe extern "C" fn C_GetSlotList(
     pSlotList: CK_SLOT_ID_PTR,
     pulCount: CK_ULONG_PTR,
 ) -> CK_RV {
-    G_ENGINE.get_slot_list(tokenPresent, pSlotList, pulCount)
+    traced!("C_GetSlotList", G_ENGINE.get_slot_list(tokenPresent, pSlotList, pulCount))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetSlotInfo(slotID: CK_SLOT_ID, pInfo: CK_SLOT_INFO_PTR) -> CK_RV {
-    G_ENGINE.get_slot_info(slotID, pInfo)
+    traced!("C_GetSlotInfo", G_ENGINE.get_slot_info(slotID, pInfo))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetTokenInfo(slotID: CK_SLOT_ID, pInfo: CK_TOKEN_INFO_PTR) -> CK_RV {
-    G_ENGINE.get_token_info(slotID, pInfo)
+    traced!("C_GetTokenInfo", G_ENGINE.get_token_info(slotID, pInfo))
 }
 
 #[unsafe(no_mangle)]
@@ -61,7 +78,7 @@ pub unsafe extern "C" fn C_GetMechanismList(
     pMechanismList: CK_MECHANISM_TYPE_PTR,
     pulCount: CK_ULONG_PTR,
 ) -> CK_RV {
-    G_ENGINE.get_mechanism_list(slotID, pMechanismList, pulCount)
+    traced!("C_GetMechanismList", G_ENGINE.get_mechanism_list(slotID, pMechanismList, pulCount))
 }
 
 #[unsafe(no_mangle)]
@@ -70,7 +87,7 @@ pub unsafe extern "C" fn C_GetMechanismInfo(
     mechanismType: CK_MECHANISM_TYPE,
     pInfo: CK_MECHANISM_INFO_PTR,
 ) -> CK_RV {
-    G_ENGINE.get_mechanism_info(slotID, mechanismType, pInfo)
+    traced!("C_GetMechanismInfo", G_ENGINE.get_mechanism_info(slotID, mechanismType, pInfo))
 }
 
 #[unsafe(no_mangle)]
@@ -81,17 +98,17 @@ pub unsafe extern "C" fn C_OpenSession(
     Notify: CK_NOTIFY,
     phSession: CK_SESSION_HANDLE_PTR,
 ) -> CK_RV {
-    G_ENGINE.open_session(slotID, flags, pApplication, Notify, phSession)
+    traced!("C_OpenSession", G_ENGINE.open_session(slotID, flags, pApplication, Notify, phSession))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_CloseSession(hSession: CK_SESSION_HANDLE) -> CK_RV {
-    G_ENGINE.close_session(hSession)
+    traced!("C_CloseSession", G_ENGINE.close_session(hSession))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_CloseAllSessions(slotID: CK_SLOT_ID) -> CK_RV {
-    G_ENGINE.close_all_sessions(slotID)
+    traced!("C_CloseAllSessions", G_ENGINE.close_all_sessions(slotID))
 }
 
 #[unsafe(no_mangle)]
@@ -99,7 +116,7 @@ pub unsafe extern "C" fn C_GetSessionInfo(
     hSession: CK_SESSION_HANDLE,
     pInfo: CK_SESSION_INFO_PTR,
 ) -> CK_RV {
-    G_ENGINE.get_session_info(hSession, pInfo)
+    traced!("C_GetSessionInfo", G_ENGINE.get_session_info(hSession, pInfo))
 }
 
 #[unsafe(no_mangle)]
@@ -109,12 +126,12 @@ pub unsafe extern "C" fn C_Login(
     pPin: CK_UTF8CHAR_PTR,
     ulPinLen: CK_ULONG,
 ) -> CK_RV {
-    G_ENGINE.login(hSession, userType, pPin, ulPinLen)
+    traced!("C_Login", G_ENGINE.login(hSession, userType, pPin, ulPinLen))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_Logout(hSession: CK_SESSION_HANDLE) -> CK_RV {
-    G_ENGINE.logout(hSession)
+    traced!("C_Logout", G_ENGINE.logout(hSession))
 }
 
 // ============================================================

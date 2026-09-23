@@ -10,11 +10,35 @@ use std::time::SystemTime;
 pub static DBG_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static DINOUT_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Initialize debug settings from config.
+// Matches common/debug.h's ANSI_* macros: colors are only enabled when
+// building for Linux, empty strings everywhere else (including macOS).
+#[cfg(target_os = "linux")]
+pub const ANSI_RED: &str = "\x1b[31m";
+#[cfg(target_os = "linux")]
+pub const ANSI_YELLOW: &str = "\x1b[33m";
+#[cfg(target_os = "linux")]
+pub const ANSI_BLUE: &str = "\x1b[34m";
+#[cfg(target_os = "linux")]
+pub const ANSI_RESET: &str = "\x1b[0m";
+
+#[cfg(not(target_os = "linux"))]
+pub const ANSI_RED: &str = "";
+#[cfg(not(target_os = "linux"))]
+pub const ANSI_YELLOW: &str = "";
+#[cfg(not(target_os = "linux"))]
+pub const ANSI_BLUE: &str = "";
+#[cfg(not(target_os = "linux"))]
+pub const ANSI_RESET: &str = "";
+
+/// Initialize debug settings from config. Matches `yh_dbg_init` in the C
+/// module: each flag can also be turned on by setting the corresponding
+/// environment variable (to any value, including empty), independently of
+/// the config file, so debug output can be enabled without editing config.
 pub fn dbg_init(dbg: bool, dinout: bool, _libdbg: bool, _debug_file: Option<&str>) {
-    DBG_ENABLED.store(dbg, Ordering::SeqCst);
-    DINOUT_ENABLED.store(dinout, Ordering::SeqCst);
+    DBG_ENABLED.store(dbg || std::env::var("YUBIHSM_PKCS11_DBG").is_ok(), Ordering::SeqCst);
+    DINOUT_ENABLED.store(dinout || std::env::var("YUBIHSM_PKCS11_DINOUT").is_ok(), Ordering::SeqCst);
     // TODO: redirect output to debug_file if specified
+    // TODO: wire _libdbg / YUBIHSM_LIB_DBG into yubihsmrs's verbosity setting
 }
 
 #[inline]
@@ -43,13 +67,18 @@ fn timestamp() -> String {
 
 /// Print a debug line matching C format:
 /// [P11 - INF HH:MM:SS.UUUUUU] file:line (func): message
+///
+/// `$name` is passed explicitly rather than derived automatically: Rust has
+/// no `__func__` equivalent usable from inside a `macro_rules!` body, so
+/// every call site names its own enclosing function.
 #[macro_export]
 macro_rules! dbg_info {
-    ($($arg:tt)*) => {
+    ($name:literal, $($arg:tt)*) => {
         if $crate::debug::is_dbg() {
-            eprintln!("[P11 - INF {}] {}:{} ({}): {}",
+            eprintln!("[{}P11 - INF{} {}] {}:{} ({}): {}",
+                $crate::debug::ANSI_BLUE, $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $crate::debug::_func_name(),
+                file!(), line!(), $name,
                 format!($($arg)*));
         }
     };
@@ -57,11 +86,12 @@ macro_rules! dbg_info {
 
 #[macro_export]
 macro_rules! dbg_err {
-    ($($arg:tt)*) => {
+    ($name:literal, $($arg:tt)*) => {
         if $crate::debug::is_dbg() {
-            eprintln!("[P11 - ERR {}] {}:{} ({}): {}",
+            eprintln!("[{}P11 - ERR{} {}] {}:{} ({}): {}",
+                $crate::debug::ANSI_RED, $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $crate::debug::_func_name(),
+                file!(), line!(), $name,
                 format!($($arg)*));
         }
     };
@@ -69,49 +99,45 @@ macro_rules! dbg_err {
 
 #[macro_export]
 macro_rules! dbg_warn {
-    ($($arg:tt)*) => {
+    ($name:literal, $($arg:tt)*) => {
         if $crate::debug::is_dbg() {
-            eprintln!("[P11 - WRN {}] {}:{} ({}): {}",
+            eprintln!("[{}P11 - WRN{} {}] {}:{} ({}): {}",
+                $crate::debug::ANSI_YELLOW, $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $crate::debug::_func_name(),
+                file!(), line!(), $name,
                 format!($($arg)*));
         }
     };
 }
 
-/// DIN/DOUT macros for function entry/exit tracing
+/// DIN/DOUT macros for function entry/exit tracing, matching the C module's
+/// `DIN;`/`DOUT;` exactly: just "In"/"Out", no return code.
 #[macro_export]
 macro_rules! din {
-    () => {
+    ($name:literal) => {
         if $crate::debug::is_dinout() {
-            eprintln!("[P11 - INF {}] {}:{} ({}): In",
+            eprintln!("[{}P11 - INF{} {}] {}:{} ({}): In",
+                $crate::debug::ANSI_BLUE, $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $crate::debug::_func_name());
+                file!(), line!(), $name);
         }
     };
 }
 
 #[macro_export]
 macro_rules! dout {
-    () => {
+    ($name:literal) => {
         if $crate::debug::is_dinout() {
-            eprintln!("[P11 - INF {}] {}:{} ({}): Out",
+            eprintln!("[{}P11 - INF{} {}] {}:{} ({}): Out",
+                $crate::debug::ANSI_BLUE, $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $crate::debug::_func_name());
+                file!(), line!(), $name);
         }
     };
 }
 
-// Helpers exposed for macros (not public API)
+// Helper exposed for macros (not public API)
 #[doc(hidden)]
 pub fn _timestamp() -> String {
     timestamp()
-}
-
-#[doc(hidden)]
-pub fn _func_name() -> &'static str {
-    // Rust doesn't have __func__ at compile time in macros.
-    // The caller's function name is embedded via file!/line!.
-    // We return a placeholder; the real function context comes from the call site.
-    ""
 }

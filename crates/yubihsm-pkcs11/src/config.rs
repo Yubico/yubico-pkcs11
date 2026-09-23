@@ -105,40 +105,48 @@ pub fn load_from_file(path: &str) -> Config {
     config
 }
 
-/// Resolve config: pReserved > YUBIHSM_PKCS11_CONF env > ./yubihsm_pkcs11.conf
+/// Fold `other` into `config`: scalar settings already present in `config`
+/// win (matches `cmdline_parser_config_file`'s `params.override = 0`, which
+/// never overwrites a value already given on the pReserved "command line");
+/// connectors accumulate from both sources.
+fn merge(config: &mut Config, other: Config) {
+    config.connectors.extend(other.connectors);
+    config.debug |= other.debug;
+    config.dinout |= other.dinout;
+    config.libdebug |= other.libdebug;
+    config.debug_file = config.debug_file.take().or(other.debug_file);
+    config.cacert = config.cacert.take().or(other.cacert);
+    config.cert = config.cert.take().or(other.cert);
+    config.key = config.key.take().or(other.key);
+    config.proxy = config.proxy.take().or(other.proxy);
+    config.noproxy = config.noproxy.take().or(other.noproxy);
+    config.timeout = config.timeout.take().or(other.timeout);
+    config.device_pubkey = config.device_pubkey.take().or(other.device_pubkey);
+}
+
+/// Resolve config, matching the C module's `C_Initialize`: pReserved is
+/// parsed first (`cmdline_parser_string_ext`), then a config file is parsed
+/// on top of it (`cmdline_parser_config_file`, `override = 0`) — settings
+/// already present from pReserved are kept, everything else (including
+/// `debug`/`dinout`/`libdebug`) is filled in from the file even when the
+/// file defines no connectors of its own. Only if no connectors were found
+/// anywhere does a default localhost connector get added.
 pub fn resolve(reserved: Option<&str>) -> Config {
-    // If pReserved contains connector= directly, use it
+    let mut config = Config::default();
+
     if let Some(r) = reserved {
-        let config = parse_config(r);
-        if !config.connectors.is_empty() {
-            return config;
-        }
-        // pReserved might be a file path
-        let file_config = load_from_file(r);
-        if !file_config.connectors.is_empty() {
-            return file_config;
-        }
+        merge(&mut config, parse_config(r));
     }
 
-    // Try YUBIHSM_PKCS11_CONF env
-    if let Ok(path) = env::var("YUBIHSM_PKCS11_CONF") {
-        let config = load_from_file(&path);
-        if !config.connectors.is_empty() {
-            return config;
-        }
-    }
+    let file_path =
+        env::var("YUBIHSM_PKCS11_CONF").unwrap_or_else(|_| "yubihsm_pkcs11.conf".to_string());
+    merge(&mut config, load_from_file(&file_path));
 
-    // Try ./yubihsm_pkcs11.conf
-    let config = load_from_file("yubihsm_pkcs11.conf");
-    if !config.connectors.is_empty() {
-        return config;
-    }
-
-    // Default: single connector at localhost
-    Config {
-        connectors: vec![ConnectorConfig {
+    if config.connectors.is_empty() {
+        config.connectors.push(ConnectorConfig {
             url: "http://127.0.0.1:12345".to_string(),
-        }],
-        ..Config::default()
+        });
     }
+
+    config
 }
