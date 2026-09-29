@@ -18,10 +18,6 @@ pub struct YubiHsmSlotData {
     pub device_session: Option<yubihsmrs::Session>,
 }
 
-// Safety: `hsm`/`device_session` are only ever accessed while the slot's
-// own `Mutex` is held.
-unsafe impl Send for YubiHsmSlotData {}
-
 impl YubiHsmSlotData {
     pub fn new(config: ConnectorConfig) -> Self {
         Self {

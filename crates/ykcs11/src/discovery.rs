@@ -11,7 +11,7 @@
 //! false`; reinserting the same reader reuses the same `CK_SLOT_ID`.
 
 use crate::backend::PivBackend;
-use crate::piv_slot::{PivSlotData, TokenInfo};
+use crate::piv_slot::{PivSlotData, PivTokenInfo};
 use parking_lot::Mutex;
 use pkcs11_common::backend::{ModuleState, Slot};
 use pkcs11_common::session::LoginState;
@@ -146,10 +146,10 @@ fn connect_slot(slot: &Arc<Mutex<Slot<PivBackend>>>, reader_name: &str, card_pre
     s.data.token_present = true;
 }
 
-fn build_token_info(device: &LocalYubiKeyDevice) -> TokenInfo {
+fn build_token_info(device: &LocalYubiKeyDevice) -> PivTokenInfo {
     let info = device.info();
     let serial = info.serial.map(|s| s.to_string()).unwrap_or_default();
-    TokenInfo {
+    PivTokenInfo {
         label: format!("YubiKey PIV #{serial}"),
         manufacturer: YKCS11_MANUFACTURER.to_string(),
         model: yubikit::device::get_name(info),

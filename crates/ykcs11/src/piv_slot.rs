@@ -9,7 +9,7 @@ use pkcs11_sys::CK_ULONG;
 
 pub const YKCS11_MAX_SESSIONS: usize = 16;
 
-pub struct TokenInfo {
+pub struct PivTokenInfo {
     pub label: String,
     pub manufacturer: String,
     pub model: String,
@@ -29,17 +29,13 @@ pub struct PivSlotData {
     pub hw_version: (u8, u8),
     pub fw_version: (u8, u8),
     pub token_present: bool,
-    pub token_info: Option<TokenInfo>,
+    pub token_info: Option<PivTokenInfo>,
     /// Live PC/SC connection + PIV application session for this slot, if
     /// currently connected. Established/refreshed by slot discovery
     /// (`C_GetSlotList`) and reused across sessions and PKCS#11 calls, same
     /// as `ykpiv_state` in the original C module.
     pub piv_session: Option<ActivePivSession>,
 }
-
-// Safety: `piv_session` (a PC/SC connection + PIV session) is only ever
-// accessed while the slot's own `Mutex` is held.
-unsafe impl Send for PivSlotData {}
 
 impl PivSlotData {
     pub fn new(reader_name: String) -> Self {
