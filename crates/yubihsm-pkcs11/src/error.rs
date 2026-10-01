@@ -3,13 +3,13 @@
 
 use pkcs11_sys::*;
 
-/// Map a Result to CK_RV: Ok → CKR_OK, Err → the error code.
-pub fn rv_from_result(result: Result<(), CK_RV>) -> CK_RV {
-    match result {
-        Ok(()) => CKR_OK.into(),
-        Err(rv) => rv,
-    }
-}
+// /// Map a Result to CK_RV: Ok → CKR_OK, Err → the error code.
+// pub fn rv_from_result(result: Result<(), CK_RV>) -> CK_RV {
+//     match result {
+//         Ok(()) => CKR_OK.into(),
+//         Err(rv) => rv,
+//     }
+// }
 
 /// Map a `yubihsmrs::Error` to a `CK_RV`. Currently only distinguishes
 /// rejected-credentials failures (`CKR_PIN_INCORRECT`, matching

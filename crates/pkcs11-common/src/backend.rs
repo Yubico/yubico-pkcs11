@@ -6,7 +6,7 @@
 //! `C_*` dispatch logic; the engine owns everything else (handle
 //! allocation, session tables, login-state tracking).
 
-use crate::session::{compute_state, LoginState};
+use crate::session::{LoginState, compute_state};
 use crate::str_pad;
 use parking_lot::Mutex;
 use pkcs11_sys::*;
@@ -103,7 +103,8 @@ pub trait Backend: Sized + 'static {
 
     /// Parse the (already-extracted) `pReserved` string from
     /// `C_Initialize` and build the initial module/slot state.
-    fn initialize(reserved: Option<&str>) -> Result<(Self::ModuleData, Vec<Self::SlotData>), CK_RV>;
+    fn initialize(reserved: Option<&str>)
+    -> Result<(Self::ModuleData, Vec<Self::SlotData>), CK_RV>;
 
     /// Backend-specific cleanup run during `C_Finalize`, before the module
     /// state is dropped. Default: nothing.
@@ -128,7 +129,8 @@ pub trait Backend: Sized + 'static {
     /// Details for one mechanism. `None` means the mechanism isn't
     /// supported (translated to `CKR_MECHANISM_INVALID`). Called with the
     /// token already confirmed present.
-    fn mechanism_info(data: &Self::SlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo>;
+    fn mechanism_info(data: &Self::SlotData, mechanism: CK_MECHANISM_TYPE)
+    -> Option<MechanismInfo>;
 
     /// Maximum concurrent sessions per slot, or `None` for unbounded
     /// (`CK_EFFECTIVELY_INFINITE`).
@@ -184,15 +186,17 @@ impl<B: Backend> Engine<B> {
     /// Extract the `pReserved` C string from a (possibly null)
     /// `CK_C_INITIALIZE_ARGS*`, shared by every module's `C_Initialize`.
     unsafe fn extract_reserved(p_init_args: CK_VOID_PTR) -> Option<String> {
-        if p_init_args.is_null() {
-            return None;
+        unsafe {
+            if p_init_args.is_null() {
+                return None;
+            }
+            let args = &*(p_init_args as *const CK_C_INITIALIZE_ARGS);
+            if args.pReserved.is_null() {
+                return None;
+            }
+            let c_str = std::ffi::CStr::from_ptr(args.pReserved as *const std::os::raw::c_char);
+            Some(c_str.to_string_lossy().into_owned())
         }
-        let args = &*(p_init_args as *const CK_C_INITIALIZE_ARGS);
-        if args.pReserved.is_null() {
-            return None;
-        }
-        let c_str = std::ffi::CStr::from_ptr(args.pReserved as *const std::os::raw::c_char);
-        Some(c_str.to_string_lossy().into_owned())
     }
 
     fn slot_arc(state: &ModuleState<B>, slot_id: CK_SLOT_ID) -> Result<Arc<Mutex<Slot<B>>>, CK_RV> {
@@ -204,30 +208,32 @@ impl<B: Backend> Engine<B> {
     }
 
     pub unsafe fn initialize(&self, p_init_args: CK_VOID_PTR) -> CK_RV {
-        let mut guard = self.state.lock();
-        if guard.is_some() {
-            return CKR_CRYPTOKI_ALREADY_INITIALIZED.into();
+        unsafe {
+            let mut guard = self.state.lock();
+            if guard.is_some() {
+                return CKR_CRYPTOKI_ALREADY_INITIALIZED.into();
+            }
+
+            let reserved = Self::extract_reserved(p_init_args);
+            let (data, slot_data) = match B::initialize(reserved.as_deref()) {
+                Ok(v) => v,
+                Err(rv) => return rv,
+            };
+
+            let slots = slot_data
+                .into_iter()
+                .map(|d| Arc::new(Mutex::new(Slot::new(d))))
+                .collect();
+
+            *guard = Some(ModuleState {
+                slots,
+                session_to_slot: HashMap::new(),
+                next_session_handle: 1,
+                data,
+            });
+
+            CKR_OK.into()
         }
-
-        let reserved = Self::extract_reserved(p_init_args);
-        let (data, slot_data) = match B::initialize(reserved.as_deref()) {
-            Ok(v) => v,
-            Err(rv) => return rv,
-        };
-
-        let slots = slot_data
-            .into_iter()
-            .map(|d| Arc::new(Mutex::new(Slot::new(d))))
-            .collect();
-
-        *guard = Some(ModuleState {
-            slots,
-            session_to_slot: HashMap::new(),
-            next_session_handle: 1,
-            data,
-        });
-
-        CKR_OK.into()
     }
 
     pub unsafe fn finalize(&self, p_reserved: CK_VOID_PTR) -> CK_RV {
@@ -244,25 +250,27 @@ impl<B: Backend> Engine<B> {
     }
 
     pub unsafe fn get_info(&self, p_info: CK_INFO_PTR) -> CK_RV {
-        let guard = self.state.lock();
-        if guard.is_none() {
-            return CKR_CRYPTOKI_NOT_INITIALIZED.into();
-        }
-        if p_info.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
+        unsafe {
+            let guard = self.state.lock();
+            if guard.is_none() {
+                return CKR_CRYPTOKI_NOT_INITIALIZED.into();
+            }
+            if p_info.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
 
-        let lib = B::library_info();
-        let info = &mut *p_info;
-        info.cryptokiVersion.major = lib.cryptoki_version.0;
-        info.cryptokiVersion.minor = lib.cryptoki_version.1;
-        str_pad(&mut info.manufacturerID, lib.manufacturer_id);
-        info.flags = 0;
-        str_pad(&mut info.libraryDescription, lib.library_description);
-        info.libraryVersion.major = lib.library_version.0;
-        info.libraryVersion.minor = lib.library_version.1;
+            let lib = B::library_info();
+            let info = &mut *p_info;
+            info.cryptokiVersion.major = lib.cryptoki_version.0;
+            info.cryptokiVersion.minor = lib.cryptoki_version.1;
+            str_pad(&mut info.manufacturerID, lib.manufacturer_id);
+            info.flags = 0;
+            str_pad(&mut info.libraryDescription, lib.library_description);
+            info.libraryVersion.major = lib.library_version.0;
+            info.libraryVersion.minor = lib.library_version.1;
 
-        CKR_OK.into()
+            CKR_OK.into()
+        }
     }
 
     /// Shared body for `C_GetFunctionList`: every module just points at its
@@ -272,11 +280,13 @@ impl<B: Backend> Engine<B> {
         pp_function_list: *mut CK_FUNCTION_LIST_PTR,
         table: &'static CK_FUNCTION_LIST,
     ) -> CK_RV {
-        if pp_function_list.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
+        unsafe {
+            if pp_function_list.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            *pp_function_list = table as *const CK_FUNCTION_LIST as CK_FUNCTION_LIST_PTR;
+            CKR_OK.into()
         }
-        *pp_function_list = table as *const CK_FUNCTION_LIST as CK_FUNCTION_LIST_PTR;
-        CKR_OK.into()
     }
 
     pub unsafe fn get_slot_list(
@@ -285,73 +295,77 @@ impl<B: Backend> Engine<B> {
         p_slot_list: CK_SLOT_ID_PTR,
         pul_count: CK_ULONG_PTR,
     ) -> CK_RV {
-        let mut guard = self.state.lock();
-        let state = match guard.as_mut() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if pul_count.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        if let Err(rv) = B::refresh_slots(state) {
-            return rv;
-        }
-
-        let mut slot_ids: Vec<CK_SLOT_ID> = Vec::new();
-        for (i, slot_arc) in state.slots.iter().enumerate() {
-            if token_present != 0 {
-                let slot = slot_arc.lock();
-                if !B::is_present(&slot.data) {
-                    continue;
-                }
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if pul_count.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
             }
-            slot_ids.push(i as CK_SLOT_ID);
-        }
+            if let Err(rv) = B::refresh_slots(state) {
+                return rv;
+            }
 
-        let count = slot_ids.len() as CK_ULONG;
-        if p_slot_list.is_null() {
+            let mut slot_ids: Vec<CK_SLOT_ID> = Vec::new();
+            for (i, slot_arc) in state.slots.iter().enumerate() {
+                if token_present != 0 {
+                    let slot = slot_arc.lock();
+                    if !B::is_present(&slot.data) {
+                        continue;
+                    }
+                }
+                slot_ids.push(i as CK_SLOT_ID);
+            }
+
+            let count = slot_ids.len() as CK_ULONG;
+            if p_slot_list.is_null() {
+                *pul_count = count;
+                return CKR_OK.into();
+            }
+            if *pul_count < count {
+                *pul_count = count;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+            for (i, id) in slot_ids.iter().enumerate() {
+                *p_slot_list.add(i) = *id;
+            }
             *pul_count = count;
-            return CKR_OK.into();
+            CKR_OK.into()
         }
-        if *pul_count < count {
-            *pul_count = count;
-            return CKR_BUFFER_TOO_SMALL.into();
-        }
-        for (i, id) in slot_ids.iter().enumerate() {
-            *p_slot_list.add(i) = *id;
-        }
-        *pul_count = count;
-        CKR_OK.into()
     }
 
     pub unsafe fn get_slot_info(&self, slot_id: CK_SLOT_ID, p_info: CK_SLOT_INFO_PTR) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if p_info.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        let slot = match Self::slot_arc(state, slot_id) {
-            Ok(s) => s,
-            Err(rv) => return rv,
-        };
-        let slot = slot.lock();
-        let sinfo = B::slot_info(slot_id, &slot.data);
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if p_info.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let slot = match Self::slot_arc(state, slot_id) {
+                Ok(s) => s,
+                Err(rv) => return rv,
+            };
+            let slot = slot.lock();
+            let sinfo = B::slot_info(slot_id, &slot.data);
 
-        let info = &mut *p_info;
-        str_pad(&mut info.slotDescription, &sinfo.description);
-        str_pad(&mut info.manufacturerID, &sinfo.manufacturer_id);
-        info.hardwareVersion.major = sinfo.hardware_version.0;
-        info.hardwareVersion.minor = sinfo.hardware_version.1;
-        info.firmwareVersion.major = sinfo.firmware_version.0;
-        info.firmwareVersion.minor = sinfo.firmware_version.1;
-        info.flags = CKF_HW_SLOT as CK_FLAGS | CKF_REMOVABLE_DEVICE as CK_FLAGS;
-        if B::is_present(&slot.data) {
-            info.flags |= CKF_TOKEN_PRESENT as CK_FLAGS;
+            let info = &mut *p_info;
+            str_pad(&mut info.slotDescription, &sinfo.description);
+            str_pad(&mut info.manufacturerID, &sinfo.manufacturer_id);
+            info.hardwareVersion.major = sinfo.hardware_version.0;
+            info.hardwareVersion.minor = sinfo.hardware_version.1;
+            info.firmwareVersion.major = sinfo.firmware_version.0;
+            info.firmwareVersion.minor = sinfo.firmware_version.1;
+            info.flags = CKF_HW_SLOT as CK_FLAGS | CKF_REMOVABLE_DEVICE as CK_FLAGS;
+            if B::is_present(&slot.data) {
+                info.flags |= CKF_TOKEN_PRESENT as CK_FLAGS;
+            }
+            CKR_OK.into()
         }
-        CKR_OK.into()
     }
 
     pub unsafe fn get_mechanism_list(
@@ -360,38 +374,40 @@ impl<B: Backend> Engine<B> {
         p_mechanism_list: CK_MECHANISM_TYPE_PTR,
         pul_count: CK_ULONG_PTR,
     ) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if pul_count.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        let slot = match Self::slot_arc(state, slot_id) {
-            Ok(s) => s,
-            Err(rv) => return rv,
-        };
-        let slot = slot.lock();
-        if !B::is_present(&slot.data) {
-            return CKR_TOKEN_NOT_PRESENT.into();
-        }
-        let mechanisms = B::mechanism_list(&slot.data);
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if pul_count.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let slot = match Self::slot_arc(state, slot_id) {
+                Ok(s) => s,
+                Err(rv) => return rv,
+            };
+            let slot = slot.lock();
+            if !B::is_present(&slot.data) {
+                return CKR_TOKEN_NOT_PRESENT.into();
+            }
+            let mechanisms = B::mechanism_list(&slot.data);
 
-        let count = mechanisms.len() as CK_ULONG;
-        if p_mechanism_list.is_null() {
+            let count = mechanisms.len() as CK_ULONG;
+            if p_mechanism_list.is_null() {
+                *pul_count = count;
+                return CKR_OK.into();
+            }
+            if *pul_count < count {
+                *pul_count = count;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+            for (i, m) in mechanisms.iter().enumerate() {
+                *p_mechanism_list.add(i) = *m;
+            }
             *pul_count = count;
-            return CKR_OK.into();
+            CKR_OK.into()
         }
-        if *pul_count < count {
-            *pul_count = count;
-            return CKR_BUFFER_TOO_SMALL.into();
-        }
-        for (i, m) in mechanisms.iter().enumerate() {
-            *p_mechanism_list.add(i) = *m;
-        }
-        *pul_count = count;
-        CKR_OK.into()
     }
 
     pub unsafe fn get_mechanism_info(
@@ -400,93 +416,97 @@ impl<B: Backend> Engine<B> {
         mechanism_type: CK_MECHANISM_TYPE,
         p_info: CK_MECHANISM_INFO_PTR,
     ) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if p_info.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        let slot = match Self::slot_arc(state, slot_id) {
-            Ok(s) => s,
-            Err(rv) => return rv,
-        };
-        let slot = slot.lock();
-        if !B::is_present(&slot.data) {
-            return CKR_TOKEN_NOT_PRESENT.into();
-        }
-        let info = match B::mechanism_info(&slot.data, mechanism_type) {
-            Some(i) => i,
-            None => return CKR_MECHANISM_INVALID.into(),
-        };
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if p_info.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let slot = match Self::slot_arc(state, slot_id) {
+                Ok(s) => s,
+                Err(rv) => return rv,
+            };
+            let slot = slot.lock();
+            if !B::is_present(&slot.data) {
+                return CKR_TOKEN_NOT_PRESENT.into();
+            }
+            let info = match B::mechanism_info(&slot.data, mechanism_type) {
+                Some(i) => i,
+                None => return CKR_MECHANISM_INVALID.into(),
+            };
 
-        let out = &mut *p_info;
-        out.ulMinKeySize = info.min_key_size;
-        out.ulMaxKeySize = info.max_key_size;
-        out.flags = info.flags;
-        CKR_OK.into()
+            let out = &mut *p_info;
+            out.ulMinKeySize = info.min_key_size;
+            out.ulMaxKeySize = info.max_key_size;
+            out.flags = info.flags;
+            CKR_OK.into()
+        }
     }
 
     pub unsafe fn get_token_info(&self, slot_id: CK_SLOT_ID, p_info: CK_TOKEN_INFO_PTR) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if p_info.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        let slot = match Self::slot_arc(state, slot_id) {
-            Ok(s) => s,
-            Err(rv) => return rv,
-        };
-        drop(guard);
-
-        let mut slot = slot.lock();
-        let max_sessions = B::max_sessions(&slot.data);
-        let tinfo = match B::token_info(&mut slot.data) {
-            Some(t) => t,
-            None => return CKR_TOKEN_NOT_PRESENT.into(),
-        };
-
-        let info = &mut *p_info;
-        *info = std::mem::zeroed();
-        str_pad(&mut info.label, &tinfo.label);
-        str_pad(&mut info.manufacturerID, &tinfo.manufacturer_id);
-        str_pad(&mut info.model, &tinfo.model);
-        str_pad(&mut info.serialNumber, &tinfo.serial_number);
-
-        info.flags = CKF_RNG as CK_FLAGS
-            | CKF_LOGIN_REQUIRED as CK_FLAGS
-            | CKF_USER_PIN_INITIALIZED as CK_FLAGS
-            | CKF_TOKEN_INITIALIZED as CK_FLAGS
-            | tinfo.extra_flags;
-
-        let max = max_sessions
-            .map(|n| n as CK_ULONG)
-            .unwrap_or(CK_EFFECTIVELY_INFINITE.into());
-        info.ulMaxSessionCount = max;
-        info.ulMaxRwSessionCount = max;
-        for session in slot.sessions.values() {
-            if (session.flags & CKF_RW_SESSION as CK_FLAGS) != 0 {
-                info.ulRwSessionCount += 1;
-            } else {
-                info.ulSessionCount += 1;
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if p_info.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
             }
-        }
-        info.ulMinPinLen = tinfo.min_pin_len;
-        info.ulMaxPinLen = tinfo.max_pin_len;
-        info.ulTotalPublicMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
-        info.ulFreePublicMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
-        info.ulTotalPrivateMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
-        info.ulFreePrivateMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
-        info.hardwareVersion.major = tinfo.hardware_version.0;
-        info.hardwareVersion.minor = tinfo.hardware_version.1;
-        info.firmwareVersion.major = tinfo.firmware_version.0;
-        info.firmwareVersion.minor = tinfo.firmware_version.1;
+            let slot = match Self::slot_arc(state, slot_id) {
+                Ok(s) => s,
+                Err(rv) => return rv,
+            };
+            drop(guard);
 
-        CKR_OK.into()
+            let mut slot = slot.lock();
+            let max_sessions = B::max_sessions(&slot.data);
+            let tinfo = match B::token_info(&mut slot.data) {
+                Some(t) => t,
+                None => return CKR_TOKEN_NOT_PRESENT.into(),
+            };
+
+            let info = &mut *p_info;
+            *info = std::mem::zeroed();
+            str_pad(&mut info.label, &tinfo.label);
+            str_pad(&mut info.manufacturerID, &tinfo.manufacturer_id);
+            str_pad(&mut info.model, &tinfo.model);
+            str_pad(&mut info.serialNumber, &tinfo.serial_number);
+
+            info.flags = CKF_RNG as CK_FLAGS
+                | CKF_LOGIN_REQUIRED as CK_FLAGS
+                | CKF_USER_PIN_INITIALIZED as CK_FLAGS
+                | CKF_TOKEN_INITIALIZED as CK_FLAGS
+                | tinfo.extra_flags;
+
+            let max = max_sessions
+                .map(|n| n as CK_ULONG)
+                .unwrap_or(CK_EFFECTIVELY_INFINITE.into());
+            info.ulMaxSessionCount = max;
+            info.ulMaxRwSessionCount = max;
+            for session in slot.sessions.values() {
+                if (session.flags & CKF_RW_SESSION as CK_FLAGS) != 0 {
+                    info.ulRwSessionCount += 1;
+                } else {
+                    info.ulSessionCount += 1;
+                }
+            }
+            info.ulMinPinLen = tinfo.min_pin_len;
+            info.ulMaxPinLen = tinfo.max_pin_len;
+            info.ulTotalPublicMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
+            info.ulFreePublicMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
+            info.ulTotalPrivateMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
+            info.ulFreePrivateMemory = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
+            info.hardwareVersion.major = tinfo.hardware_version.0;
+            info.hardwareVersion.minor = tinfo.hardware_version.1;
+            info.firmwareVersion.major = tinfo.firmware_version.0;
+            info.firmwareVersion.minor = tinfo.firmware_version.1;
+
+            CKR_OK.into()
+        }
     }
 
     pub unsafe fn open_session(
@@ -497,47 +517,49 @@ impl<B: Backend> Engine<B> {
         _notify: CK_NOTIFY,
         p_session: CK_SESSION_HANDLE_PTR,
     ) -> CK_RV {
-        let mut guard = self.state.lock();
-        let state = match guard.as_mut() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if p_session.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        if (flags & CKF_SERIAL_SESSION as CK_FLAGS) == 0 {
-            return CKR_SESSION_PARALLEL_NOT_SUPPORTED.into();
-        }
-        let slot = match Self::slot_arc(state, slot_id) {
-            Ok(s) => s,
-            Err(rv) => return rv,
-        };
-        let mut slot_guard = slot.lock();
-        if !B::is_present(&slot_guard.data) {
-            return CKR_TOKEN_NOT_PRESENT.into();
-        }
-        if let Some(max) = B::max_sessions(&slot_guard.data) {
-            if slot_guard.sessions.len() >= max {
-                return CKR_SESSION_COUNT.into();
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if p_session.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
             }
-        }
+            if (flags & CKF_SERIAL_SESSION as CK_FLAGS) == 0 {
+                return CKR_SESSION_PARALLEL_NOT_SUPPORTED.into();
+            }
+            let slot = match Self::slot_arc(state, slot_id) {
+                Ok(s) => s,
+                Err(rv) => return rv,
+            };
+            let mut slot_guard = slot.lock();
+            if !B::is_present(&slot_guard.data) {
+                return CKR_TOKEN_NOT_PRESENT.into();
+            }
+            if let Some(max) = B::max_sessions(&slot_guard.data) {
+                if slot_guard.sessions.len() >= max {
+                    return CKR_SESSION_COUNT.into();
+                }
+            }
 
-        let handle = state.next_session_handle;
-        state.next_session_handle += 1;
-        state.session_to_slot.insert(handle, slot_id);
+            let handle = state.next_session_handle;
+            state.next_session_handle += 1;
+            state.session_to_slot.insert(handle, slot_id);
 
-        let data = B::new_session_data(&mut slot_guard.data, handle, flags);
-        slot_guard.sessions.insert(
-            handle,
-            Session {
+            let data = B::new_session_data(&mut slot_guard.data, handle, flags);
+            slot_guard.sessions.insert(
                 handle,
-                flags,
-                data,
-            },
-        );
+                Session {
+                    handle,
+                    flags,
+                    data,
+                },
+            );
 
-        *p_session = handle;
-        CKR_OK.into()
+            *p_session = handle;
+            CKR_OK.into()
+        }
     }
 
     pub unsafe fn close_session(&self, h_session: CK_SESSION_HANDLE) -> CK_RV {
@@ -579,30 +601,36 @@ impl<B: Backend> Engine<B> {
         CKR_OK.into()
     }
 
-    pub unsafe fn get_session_info(&self, h_session: CK_SESSION_HANDLE, p_info: CK_SESSION_INFO_PTR) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        if p_info.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
+    pub unsafe fn get_session_info(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_info: CK_SESSION_INFO_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            if p_info.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].lock();
+            let session = match slot.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let info = &mut *p_info;
+            info.slotID = slot_id;
+            info.flags = session.flags;
+            info.state = compute_state(slot.login_state, session.flags);
+            info.ulDeviceError = 0;
+            CKR_OK.into()
         }
-        let slot_id = match state.session_to_slot.get(&h_session) {
-            Some(id) => *id,
-            None => return CKR_SESSION_HANDLE_INVALID.into(),
-        };
-        let slot = state.slots[slot_id as usize].lock();
-        let session = match slot.sessions.get(&h_session) {
-            Some(s) => s,
-            None => return CKR_SESSION_HANDLE_INVALID.into(),
-        };
-        let info = &mut *p_info;
-        info.slotID = slot_id;
-        info.flags = session.flags;
-        info.state = compute_state(slot.login_state, session.flags);
-        info.ulDeviceError = 0;
-        CKR_OK.into()
     }
 
     pub unsafe fn login(
@@ -614,35 +642,37 @@ impl<B: Backend> Engine<B> {
         p_username: CK_UTF8CHAR_PTR,
         ul_username_len: CK_ULONG,
     ) -> CK_RV {
-        let mut guard = self.state.lock();
-        let state = match guard.as_mut() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        let slot_id = match state.session_to_slot.get(&h_session) {
-            Some(id) => *id,
-            None => return CKR_SESSION_HANDLE_INVALID.into(),
-        };
-        let slot = state.slots[slot_id as usize].clone();
-        let mut slot_guard = slot.lock();
-        if !B::is_present(&slot_guard.data) {
-            return CKR_TOKEN_NOT_PRESENT.into();
-        }
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !B::is_present(&slot_guard.data) {
+                return CKR_TOKEN_NOT_PRESENT.into();
+            }
 
-        let pin: &[u8] = if p_pin.is_null() || ul_pin_len == 0 {
-            &[]
-        } else {
-            std::slice::from_raw_parts(p_pin as *const u8, ul_pin_len as usize)
-        };
-        let username: &[u8] = if p_username.is_null() || ul_username_len == 0 {
-            &[]
-        } else {
-            std::slice::from_raw_parts(p_username as *const u8, ul_username_len as usize)
-        };
+            let pin: &[u8] = if p_pin.is_null() || ul_pin_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_pin as *const u8, ul_pin_len as usize)
+            };
+            let username: &[u8] = if p_username.is_null() || ul_username_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_username as *const u8, ul_username_len as usize)
+            };
 
-        match B::login(&mut slot_guard, user_type, pin, username) {
-            Ok(()) => CKR_OK.into(),
-            Err(rv) => rv,
+            match B::login(&mut slot_guard, user_type, pin, username) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
         }
     }
 
@@ -673,32 +703,35 @@ impl<B: Backend> Engine<B> {
         p_random_data: CK_BYTE_PTR,
         ul_random_len: CK_ULONG,
     ) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        let slot_id = match state.session_to_slot.get(&h_session) {
-            Some(id) => *id,
-            None => return CKR_SESSION_HANDLE_INVALID.into(),
-        };
-        let slot = state.slots[slot_id as usize].clone();
-        let slot_guard = slot.lock();
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let slot_guard = slot.lock();
 
-        // Both C modules special-case a zero-length request to succeed
-        // without even looking at the pointer (needed by the OpenSC test
-        // suite, per their own comments) — matches here too.
-        if ul_random_len == 0 {
-            return CKR_OK.into();
-        }
-        if p_random_data.is_null() {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        let buf = std::slice::from_raw_parts_mut(p_random_data as *mut u8, ul_random_len as usize);
+            // Both C modules special-case a zero-length request to succeed
+            // without even looking at the pointer (needed by the OpenSC test
+            // suite, per their own comments) — matches here too.
+            if ul_random_len == 0 {
+                return CKR_OK.into();
+            }
+            if p_random_data.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let buf =
+                std::slice::from_raw_parts_mut(p_random_data as *mut u8, ul_random_len as usize);
 
-        match B::generate_random(&slot_guard, buf) {
-            Ok(()) => CKR_OK.into(),
-            Err(rv) => rv,
+            match B::generate_random(&slot_guard, buf) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
         }
     }
 
@@ -708,30 +741,32 @@ impl<B: Backend> Engine<B> {
         p_seed: CK_BYTE_PTR,
         ul_seed_len: CK_ULONG,
     ) -> CK_RV {
-        let guard = self.state.lock();
-        let state = match guard.as_ref() {
-            Some(s) => s,
-            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
-        };
-        let slot_id = match state.session_to_slot.get(&h_session) {
-            Some(id) => *id,
-            None => return CKR_SESSION_HANDLE_INVALID.into(),
-        };
-        let slot = state.slots[slot_id as usize].clone();
-        let slot_guard = slot.lock();
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let slot_guard = slot.lock();
 
-        if p_seed.is_null() && ul_seed_len != 0 {
-            return CKR_ARGUMENTS_BAD.into();
-        }
-        let seed: &[u8] = if p_seed.is_null() || ul_seed_len == 0 {
-            &[]
-        } else {
-            std::slice::from_raw_parts(p_seed as *const u8, ul_seed_len as usize)
-        };
+            if p_seed.is_null() && ul_seed_len != 0 {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let seed: &[u8] = if p_seed.is_null() || ul_seed_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_seed as *const u8, ul_seed_len as usize)
+            };
 
-        match B::seed_random(&slot_guard, seed) {
-            Ok(()) => CKR_OK.into(),
-            Err(rv) => rv,
+            match B::seed_random(&slot_guard, seed) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
         }
     }
 }
