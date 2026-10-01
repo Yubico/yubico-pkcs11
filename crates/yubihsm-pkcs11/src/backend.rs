@@ -217,6 +217,27 @@ impl Backend for YubiHsmBackend {
         slot.login_state = LoginState::Public;
         Ok(())
     }
+
+    fn generate_random(slot: &Slot<Self>, buf: &mut [u8]) -> Result<(), CK_RV> {
+        // Matches get_session(..., SESSION_AUTHENTICATED) in C_GenerateRandom
+        // (yubihsm_pkcs11.c:6225) — unlike ykcs11, randomness comes from the
+        // HSM hardware itself, over the authenticated session.
+        if slot.login_state != LoginState::User {
+            return Err(CKR_USER_NOT_LOGGED_IN.into());
+        }
+        let session = slot
+            .data
+            .device_session
+            .as_ref()
+            .ok_or(CK_RV::from(CKR_USER_NOT_LOGGED_IN))?;
+        let bytes = session.get_random(buf.len()).map_err(hsm_error_to_rv)?;
+        buf.copy_from_slice(&bytes);
+        Ok(())
+    }
+
+    // seed_random: not overridden — yubihsm_pkcs11.c's C_SeedRandom
+    // unconditionally returns CKR_RANDOM_SEED_NOT_SUPPORTED, matching the
+    // Backend trait's default.
 }
 
 pub static G_ENGINE: Engine<YubiHsmBackend> = Engine::new();

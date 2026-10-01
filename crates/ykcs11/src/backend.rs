@@ -216,6 +216,23 @@ impl Backend for PivBackend {
         slot.login_state = LoginState::Public;
         Ok(())
     }
+
+    fn generate_random(_slot: &Slot<Self>, buf: &mut [u8]) -> Result<(), CK_RV> {
+        // Matches do_rand_bytes (openssl_utils.c:39-46): host-side RNG, not
+        // the YubiKey hardware — PIV has no "get random bytes" APDU, so the
+        // C module never touches the card here either (just OpenSSL's
+        // RAND_bytes); `getrandom` is our equivalent OS-backed source.
+        getrandom::fill(buf).map_err(|_| CKR_FUNCTION_FAILED.into())
+    }
+
+    fn seed_random(_slot: &Slot<Self>, _seed: &[u8]) -> Result<(), CK_RV> {
+        // Matches do_rand_seed (openssl_utils.c:39-46): mixes the caller's
+        // bytes into OpenSSL's global RNG state and returns CKR_OK. `getrandom`
+        // has no equivalent "stir in extra entropy" hook into the OS RNG, so
+        // the seed is accepted (for API compatibility — real callers expect
+        // CKR_OK here, same as the C module) but has no actual effect.
+        Ok(())
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for

@@ -137,6 +137,27 @@ pub unsafe extern "C" fn C_Logout(hSession: CK_SESSION_HANDLE) -> CK_RV {
     traced!("C_Logout", G_ENGINE.logout(hSession))
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GenerateRandom(
+    hSession: CK_SESSION_HANDLE,
+    pRandomData: CK_BYTE_PTR,
+    ulRandomLen: CK_ULONG,
+) -> CK_RV {
+    traced!(
+        "C_GenerateRandom",
+        G_ENGINE.generate_random(hSession, pRandomData, ulRandomLen)
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_SeedRandom(
+    hSession: CK_SESSION_HANDLE,
+    pSeed: CK_BYTE_PTR,
+    ulSeedLen: CK_ULONG,
+) -> CK_RV {
+    traced!("C_SeedRandom", G_ENGINE.seed_random(hSession, pSeed, ulSeedLen))
+}
+
 // ============================================================
 // Function List
 // ============================================================
@@ -158,4 +179,6 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_get_session_info: Some(C_GetSessionInfo),
     c_login: Some(C_Login),
     c_logout: Some(C_Logout),
+    c_seed_random: Some(C_SeedRandom),
+    c_generate_random: Some(C_GenerateRandom),
 });

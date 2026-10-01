@@ -26,6 +26,8 @@ pub struct RealFunctions {
     pub c_get_session_info: CK_C_GetSessionInfo,
     pub c_login: CK_C_Login,
     pub c_logout: CK_C_Logout,
+    pub c_seed_random: CK_C_SeedRandom,
+    pub c_generate_random: CK_C_GenerateRandom,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -94,8 +96,8 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_WrapKey: Some(stubs::C_WrapKey),
         C_UnwrapKey: Some(stubs::C_UnwrapKey),
         C_DeriveKey: Some(stubs::C_DeriveKey),
-        C_SeedRandom: Some(stubs::C_SeedRandom),
-        C_GenerateRandom: Some(stubs::C_GenerateRandom),
+        C_SeedRandom: real.c_seed_random,
+        C_GenerateRandom: real.c_generate_random,
         C_GetFunctionStatus: Some(stubs::C_GetFunctionStatus),
         C_CancelFunction: Some(stubs::C_CancelFunction),
         C_WaitForSlotEvent: Some(stubs::C_WaitForSlotEvent),

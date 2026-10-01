@@ -152,6 +152,20 @@ pub trait Backend: Sized + 'static {
         username: &[u8],
     ) -> Result<(), CK_RV>;
     fn logout(slot: &mut Slot<Self>) -> Result<(), CK_RV>;
+
+    /// Fill `buf` with random bytes. The engine has already resolved and
+    /// locked `slot`; backends needing an authenticated session (e.g.
+    /// yubihsm-pkcs11, which draws randomness from the HSM itself) check
+    /// `slot.login_state` themselves — the two C reference modules differ
+    /// here (ykcs11 needs no login at all).
+    fn generate_random(slot: &Slot<Self>, buf: &mut [u8]) -> Result<(), CK_RV>;
+
+    /// Seed the token's RNG. Default: not supported, matching
+    /// yubihsm_pkcs11.c's `C_SeedRandom`, which unconditionally returns
+    /// `CKR_RANDOM_SEED_NOT_SUPPORTED`.
+    fn seed_random(_slot: &Slot<Self>, _seed: &[u8]) -> Result<(), CK_RV> {
+        Err(CKR_RANDOM_SEED_NOT_SUPPORTED.into())
+    }
 }
 
 /// The shared Cryptoki engine. One `static` instance per module, generic
@@ -648,6 +662,74 @@ impl<B: Backend> Engine<B> {
             return CKR_TOKEN_NOT_PRESENT.into();
         }
         match B::logout(&mut slot_guard) {
+            Ok(()) => CKR_OK.into(),
+            Err(rv) => rv,
+        }
+    }
+
+    pub unsafe fn generate_random(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_random_data: CK_BYTE_PTR,
+        ul_random_len: CK_ULONG,
+    ) -> CK_RV {
+        let guard = self.state.lock();
+        let state = match guard.as_ref() {
+            Some(s) => s,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+        };
+        let slot_id = match state.session_to_slot.get(&h_session) {
+            Some(id) => *id,
+            None => return CKR_SESSION_HANDLE_INVALID.into(),
+        };
+        let slot = state.slots[slot_id as usize].clone();
+        let slot_guard = slot.lock();
+
+        // Both C modules special-case a zero-length request to succeed
+        // without even looking at the pointer (needed by the OpenSC test
+        // suite, per their own comments) — matches here too.
+        if ul_random_len == 0 {
+            return CKR_OK.into();
+        }
+        if p_random_data.is_null() {
+            return CKR_ARGUMENTS_BAD.into();
+        }
+        let buf = std::slice::from_raw_parts_mut(p_random_data as *mut u8, ul_random_len as usize);
+
+        match B::generate_random(&slot_guard, buf) {
+            Ok(()) => CKR_OK.into(),
+            Err(rv) => rv,
+        }
+    }
+
+    pub unsafe fn seed_random(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_seed: CK_BYTE_PTR,
+        ul_seed_len: CK_ULONG,
+    ) -> CK_RV {
+        let guard = self.state.lock();
+        let state = match guard.as_ref() {
+            Some(s) => s,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+        };
+        let slot_id = match state.session_to_slot.get(&h_session) {
+            Some(id) => *id,
+            None => return CKR_SESSION_HANDLE_INVALID.into(),
+        };
+        let slot = state.slots[slot_id as usize].clone();
+        let slot_guard = slot.lock();
+
+        if p_seed.is_null() && ul_seed_len != 0 {
+            return CKR_ARGUMENTS_BAD.into();
+        }
+        let seed: &[u8] = if p_seed.is_null() || ul_seed_len == 0 {
+            &[]
+        } else {
+            std::slice::from_raw_parts(p_seed as *const u8, ul_seed_len as usize)
+        };
+
+        match B::seed_random(&slot_guard, seed) {
             Ok(()) => CKR_OK.into(),
             Err(rv) => rv,
         }
