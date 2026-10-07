@@ -8,6 +8,7 @@
 use crate::backend::G_ENGINE;
 use crate::{din, dout};
 use pkcs11_common::function_list::{RealFunctions, build_function_list};
+use pkcs11_common::stubs;
 use pkcs11_sys::*;
 
 /// Brackets a call into `G_ENGINE` with the same entry/exit tracing the
@@ -267,4 +268,10 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_logout: Some(C_Logout),
     c_seed_random: Some(C_SeedRandom),
     c_generate_random: Some(C_GenerateRandom),
+    // Object enumeration isn't implemented for yubihsm-pkcs11 yet — keep
+    // these wired to the shared not-yet-implemented stubs.
+    c_find_objects_init: Some(stubs::C_FindObjectsInit),
+    c_find_objects: Some(stubs::C_FindObjects),
+    c_find_objects_final: Some(stubs::C_FindObjectsFinal),
+    c_get_attribute_value: Some(stubs::C_GetAttributeValue),
 });

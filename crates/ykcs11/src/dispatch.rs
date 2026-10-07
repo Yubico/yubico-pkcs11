@@ -199,6 +199,55 @@ pub unsafe extern "C" fn C_SeedRandom(
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_FindObjectsInit(
+    hSession: CK_SESSION_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulCount: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_FindObjectsInit",
+            G_ENGINE.find_objects_init(hSession, pTemplate, ulCount)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_FindObjects(
+    hSession: CK_SESSION_HANDLE,
+    phObject: CK_OBJECT_HANDLE_PTR,
+    ulMaxObjectCount: CK_ULONG,
+    pulObjectCount: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_FindObjects",
+            G_ENGINE.find_objects(hSession, phObject, ulMaxObjectCount, pulObjectCount)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_FindObjectsFinal(hSession: CK_SESSION_HANDLE) -> CK_RV {
+    unsafe { traced!("C_FindObjectsFinal", G_ENGINE.find_objects_final(hSession)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GetAttributeValue(
+    hSession: CK_SESSION_HANDLE,
+    hObject: CK_OBJECT_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulCount: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GetAttributeValue",
+            G_ENGINE.get_attribute_value(hSession, hObject, pTemplate, ulCount)
+        )
+    }
+}
+
 // ============================================================
 // Function List
 // ============================================================
@@ -222,4 +271,8 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_logout: Some(C_Logout),
     c_seed_random: Some(C_SeedRandom),
     c_generate_random: Some(C_GenerateRandom),
+    c_find_objects_init: Some(C_FindObjectsInit),
+    c_find_objects: Some(C_FindObjects),
+    c_find_objects_final: Some(C_FindObjectsFinal),
+    c_get_attribute_value: Some(C_GetAttributeValue),
 });

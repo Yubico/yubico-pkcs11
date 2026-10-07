@@ -35,6 +35,11 @@ pub struct PivSlotData {
     /// (`C_GetSlotList`) and reused across sessions and PKCS#11 calls, same
     /// as `ykpiv_state` in the original C module.
     pub piv_session: Option<ActivePivSession>,
+    /// Cached PKCS#11 certificate/key objects, populated once on the first
+    /// `C_OpenSession` (see `PivBackend::new_session_data`) and shared by
+    /// every session on this slot — matches ykcs11.c's `slot->objects[]`
+    /// (`n_objects == 0` guard, ykcs11.c:980).
+    pub objects: Vec<crate::objects::PivObject>,
 }
 
 impl PivSlotData {
@@ -46,16 +51,21 @@ impl PivSlotData {
             token_present: false,
             token_info: None,
             piv_session: None,
+            objects: Vec::new(),
         }
     }
 
     /// Drop the live connection (if any) and reset token state. Mirrors
-    /// `cleanup_slot`/disconnect handling in the C module, minus the
-    /// cached-object bookkeeping (not yet ported). Login state is reset by
-    /// the caller, since it lives at the generic `Slot` level.
+    /// `cleanup_slot`/disconnect handling in the C module. Login state is
+    /// reset by the caller, since it lives at the generic `Slot` level.
+    /// Clearing `objects` here (unlike the C module, which only clears its
+    /// cache when the last session on a slot closes) means a card swapped
+    /// in the same reader always gets freshly discovered, not stale cached
+    /// certs from whatever was there before.
     pub fn disconnect(&mut self) {
         self.piv_session = None;
         self.token_present = false;
         self.token_info = None;
+        self.objects.clear();
     }
 }

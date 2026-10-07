@@ -8,7 +8,9 @@ use crate::debug;
 use crate::error::hsm_error_to_rv;
 use crate::slot::YubiHsmSlotData;
 use crate::{dbg_err, dbg_info, dbg_warn};
-use pkcs11_common::backend::{Backend, Engine, LibraryInfo, MechanismInfo, Slot, SlotInfo, TokenInfo};
+use pkcs11_common::backend::{
+    Backend, Engine, LibraryInfo, MechanismInfo, Slot, SlotInfo, TokenInfo,
+};
 use pkcs11_common::session::LoginState;
 use pkcs11_common::util::hex_decode;
 use pkcs11_sys::*;
@@ -78,7 +80,11 @@ impl Backend for YubiHsmBackend {
             let mut slot = YubiHsmSlotData::new(connector_config.clone());
             match slot.connect() {
                 Ok(()) => dbg_info!("initialize", "Connected to {}", connector_config.url),
-                Err(_) => dbg_warn!("initialize", "Failed to connect to {}", connector_config.url),
+                Err(_) => dbg_warn!(
+                    "initialize",
+                    "Failed to connect to {}",
+                    connector_config.url
+                ),
             }
             slots.push(slot);
         }
@@ -129,7 +135,10 @@ impl Backend for YubiHsmBackend {
         crate::mechanisms::mechanism_list(&algorithms)
     }
 
-    fn mechanism_info(data: &YubiHsmSlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
+    fn mechanism_info(
+        data: &YubiHsmSlotData,
+        mechanism: CK_MECHANISM_TYPE,
+    ) -> Option<MechanismInfo> {
         let algorithms = Self::device_algorithms(data)?;
         let info = crate::mechanisms::mechanism_info(&algorithms, mechanism)?;
         Some(MechanismInfo {
@@ -139,7 +148,8 @@ impl Backend for YubiHsmBackend {
         })
     }
 
-    fn new_session_data(_slot: &mut YubiHsmSlotData, _handle: CK_SESSION_HANDLE, _flags: CK_FLAGS) {}
+    fn new_session_data(_slot: &mut YubiHsmSlotData, _handle: CK_SESSION_HANDLE, _flags: CK_FLAGS) {
+    }
 
     fn login(
         slot: &mut Slot<Self>,
@@ -181,7 +191,11 @@ impl Backend for YubiHsmBackend {
             return Err(CKR_USER_ALREADY_LOGGED_IN.into());
         }
 
-        let hsm = slot.data.hsm.as_ref().ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
+        let hsm = slot
+            .data
+            .hsm
+            .as_ref()
+            .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
         // yubihsmrs's session-establishing API takes the password as `&str`;
         // the C module treats it as opaque KDF input bytes with no encoding
         // requirement, so a non-UTF8 password is a (rare) capability gap
@@ -238,6 +252,22 @@ impl Backend for YubiHsmBackend {
     // seed_random: not overridden — yubihsm_pkcs11.c's C_SeedRandom
     // unconditionally returns CKR_RANDOM_SEED_NOT_SUPPORTED, matching the
     // Backend trait's default.
+
+    // Object enumeration isn't implemented for yubihsm-pkcs11 yet (its
+    // dispatch.rs still wires C_FindObjects*/C_GetAttributeValue to the
+    // shared not-yet-implemented stubs) — these are never actually called,
+    // but the trait requires an impl.
+    fn object_handles(_slot: &Slot<Self>) -> Vec<CK_OBJECT_HANDLE> {
+        Vec::new()
+    }
+
+    fn get_one_attribute_value(
+        _data: &YubiHsmSlotData,
+        _handle: CK_OBJECT_HANDLE,
+        _attr_type: CK_ATTRIBUTE_TYPE,
+    ) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 pub static G_ENGINE: Engine<YubiHsmBackend> = Engine::new();

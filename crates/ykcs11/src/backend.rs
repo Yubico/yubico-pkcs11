@@ -125,7 +125,16 @@ impl Backend for PivBackend {
         })
     }
 
-    fn new_session_data(_slot: &mut PivSlotData, _handle: CK_SESSION_HANDLE, _flags: CK_FLAGS) {}
+    fn new_session_data(slot: &mut PivSlotData, _handle: CK_SESSION_HANDLE, _flags: CK_FLAGS) {
+        // Matches ykcs11.c:980's `n_objects == 0` guard: discover once per
+        // slot, on the first session opened against it, and reuse for every
+        // session after that.
+        if slot.objects.is_empty() {
+            if let Some(piv) = slot.piv_session.as_mut() {
+                slot.objects = crate::objects::read_objects(piv);
+            }
+        }
+    }
 
     fn login(
         slot: &mut Slot<Self>,
@@ -233,6 +242,18 @@ impl Backend for PivBackend {
         // CKR_OK here, same as the C module) but has no actual effect.
         Ok(())
     }
+
+    fn object_handles(slot: &Slot<Self>) -> Vec<CK_OBJECT_HANDLE> {
+        crate::objects::object_handles(&slot.data.objects, slot.login_state != LoginState::Public)
+    }
+
+    fn get_one_attribute_value(
+        data: &PivSlotData,
+        handle: CK_OBJECT_HANDLE,
+        attr_type: CK_ATTRIBUTE_TYPE,
+    ) -> Option<Vec<u8>> {
+        crate::objects::get_attribute(&data.objects, handle, attr_type)
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for
@@ -297,7 +318,8 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
     } else {
         // Not a PIN-length value: must be the literal hex-encoded
         // management key.
-        let key_bytes = pkcs11_common::util::hex_decode(pin).ok_or(CK_RV::from(CKR_ARGUMENTS_BAD))?;
+        let key_bytes =
+            pkcs11_common::util::hex_decode(pin).ok_or(CK_RV::from(CKR_ARGUMENTS_BAD))?;
         let key_type = piv.management_key_type();
         let key =
             ManagementKey::new(key_type, &key_bytes).map_err(|_| CK_RV::from(CKR_ARGUMENTS_BAD))?;

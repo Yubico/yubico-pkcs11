@@ -15,4 +15,6 @@ pkcs11-common = { workspace = true }
 parking_lot = { workspace = true }
 log = { workspace = true }
 getrandom = "0.4"
+der = "0.7"
+x509-cert = "0.2"
 yubikit = { git = "https://github.com/Yubico/yubikey-manager.git", branch = "experiment/rust", default-features = false, features = ["pcsc"] }

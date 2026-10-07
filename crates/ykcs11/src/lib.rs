@@ -5,11 +5,13 @@
 #![allow(unused_variables)]
 
 extern crate pkcs11_common;
+extern crate yubikit;
 
 mod backend;
 mod discovery;
 mod dispatch;
 mod mechanisms;
+mod objects;
 mod piv_slot;
 
 pub use dispatch::*;

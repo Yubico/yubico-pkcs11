@@ -52,10 +52,23 @@ pub struct MechanismInfo {
     pub flags: CK_FLAGS,
 }
 
+/// `C_FindObjectsInit`/`C_FindObjects`/`C_FindObjectsFinal` state for one
+/// session. Generic (not part of `Backend::SessionData`) since the
+/// find-object protocol itself — one active search at a time, a fixed
+/// result list handed out incrementally — is identical regardless of what
+/// a backend's objects actually are.
+#[derive(Default)]
+pub struct FindOp {
+    pub active: bool,
+    pub matches: Vec<CK_OBJECT_HANDLE>,
+    pub returned_offset: usize,
+}
+
 /// A single open session on a slot.
 pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
     pub flags: CK_FLAGS,
+    pub find_op: FindOp,
     pub data: S,
 }
 
@@ -168,6 +181,22 @@ pub trait Backend: Sized + 'static {
     fn seed_random(_slot: &Slot<Self>, _seed: &[u8]) -> Result<(), CK_RV> {
         Err(CKR_RANDOM_SEED_NOT_SUPPORTED.into())
     }
+
+    /// Every object handle currently visible on this token, already
+    /// filtered for login state (e.g. private-key objects omitted while
+    /// `slot.login_state == LoginState::Public`) — matches
+    /// `C_FindObjectsInit`'s `is_private_object` filter in ykcs11.c.
+    fn object_handles(slot: &Slot<Self>) -> Vec<CK_OBJECT_HANDLE>;
+
+    /// One attribute's raw value for a given object handle. `None` means
+    /// the attribute doesn't apply to this object (→
+    /// `CKR_ATTRIBUTE_TYPE_INVALID` at the caller) — object-handle validity
+    /// itself is checked separately, against `object_handles`.
+    fn get_one_attribute_value(
+        data: &Self::SlotData,
+        handle: CK_OBJECT_HANDLE,
+        attr_type: CK_ATTRIBUTE_TYPE,
+    ) -> Option<Vec<u8>>;
 }
 
 /// The shared Cryptoki engine. One `static` instance per module, generic
@@ -553,6 +582,7 @@ impl<B: Backend> Engine<B> {
                 Session {
                     handle,
                     flags,
+                    find_op: FindOp::default(),
                     data,
                 },
             );
@@ -766,6 +796,201 @@ impl<B: Backend> Engine<B> {
             match B::seed_random(&slot_guard, seed) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn find_objects_init(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_template: CK_ATTRIBUTE_PTR,
+        ul_count: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if slot_guard.sessions[&h_session].find_op.active {
+                return CKR_OPERATION_ACTIVE.into();
+            }
+            if ul_count > 0 && p_template.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let template: &[CK_ATTRIBUTE] = if ul_count == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_template, ul_count as usize)
+            };
+
+            let handles = B::object_handles(&slot_guard);
+            let mut matches = Vec::new();
+            'outer: for h in handles {
+                for attr in template {
+                    let value: &[u8] = if attr.pValue.is_null() || attr.ulValueLen == 0 {
+                        &[]
+                    } else {
+                        std::slice::from_raw_parts(
+                            attr.pValue as *const u8,
+                            attr.ulValueLen as usize,
+                        )
+                    };
+
+                    match B::get_one_attribute_value(&slot_guard.data, h, attr.type_) {
+                        Some(actual) if actual == value => {}
+                        _ => continue 'outer,
+                    }
+                }
+                matches.push(h);
+            }
+
+            let session = slot_guard.sessions.get_mut(&h_session).unwrap();
+            session.find_op = FindOp {
+                active: true,
+                matches,
+                returned_offset: 0,
+            };
+            CKR_OK.into()
+        }
+    }
+
+    pub unsafe fn find_objects(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_object: CK_OBJECT_HANDLE_PTR,
+        ul_max_object_count: CK_ULONG,
+        pul_object_count: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get_mut(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.find_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if p_object.is_null() || pul_object_count.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let remaining = &session.find_op.matches[session.find_op.returned_offset..];
+            let n = remaining.len().min(ul_max_object_count as usize);
+            for (i, h) in remaining[..n].iter().enumerate() {
+                *p_object.add(i) = *h;
+            }
+            session.find_op.returned_offset += n;
+            *pul_object_count = n as CK_ULONG;
+            CKR_OK.into()
+        }
+    }
+
+    pub unsafe fn find_objects_final(&self, h_session: CK_SESSION_HANDLE) -> CK_RV {
+        let mut guard = self.state.lock();
+        let state = match guard.as_mut() {
+            Some(s) => s,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+        };
+        let slot_id = match state.session_to_slot.get(&h_session) {
+            Some(id) => *id,
+            None => return CKR_SESSION_HANDLE_INVALID.into(),
+        };
+        let slot = state.slots[slot_id as usize].clone();
+        let mut slot_guard = slot.lock();
+        let session = match slot_guard.sessions.get_mut(&h_session) {
+            Some(s) => s,
+            None => return CKR_SESSION_HANDLE_INVALID.into(),
+        };
+        if !session.find_op.active {
+            return CKR_OPERATION_NOT_INITIALIZED.into();
+        }
+        session.find_op = FindOp::default();
+        CKR_OK.into()
+    }
+
+    pub unsafe fn get_attribute_value(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        h_object: CK_OBJECT_HANDLE,
+        p_template: CK_ATTRIBUTE_PTR,
+        ul_count: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if p_template.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            if !B::object_handles(&slot_guard).contains(&h_object) {
+                return CKR_OBJECT_HANDLE_INVALID.into();
+            }
+
+            let template = std::slice::from_raw_parts_mut(p_template, ul_count as usize);
+            let mut any_invalid = false;
+            let mut any_too_small = false;
+            for attr in template.iter_mut() {
+                match B::get_one_attribute_value(&slot_guard.data, h_object, attr.type_) {
+                    None => {
+                        attr.ulValueLen = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
+                        any_invalid = true;
+                    }
+                    Some(value) => {
+                        if attr.pValue.is_null() {
+                            attr.ulValueLen = value.len() as CK_ULONG;
+                        } else if (attr.ulValueLen as usize) < value.len() {
+                            attr.ulValueLen = CKR_BUFFER_TOO_SMALL as CK_ULONG;
+                            any_too_small = true;
+                        } else {
+                            std::ptr::copy_nonoverlapping(
+                                value.as_ptr(),
+                                attr.pValue as *mut u8,
+                                value.len(),
+                            );
+                            attr.ulValueLen = value.len() as CK_ULONG;
+                        }
+                    }
+                }
+            }
+
+            if any_invalid {
+                CKR_ATTRIBUTE_TYPE_INVALID.into()
+            } else if any_too_small {
+                CKR_BUFFER_TOO_SMALL.into()
+            } else {
+                CKR_OK.into()
             }
         }
     }

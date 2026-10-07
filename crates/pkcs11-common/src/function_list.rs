@@ -28,6 +28,10 @@ pub struct RealFunctions {
     pub c_logout: CK_C_Logout,
     pub c_seed_random: CK_C_SeedRandom,
     pub c_generate_random: CK_C_GenerateRandom,
+    pub c_find_objects_init: CK_C_FindObjectsInit,
+    pub c_find_objects: CK_C_FindObjects,
+    pub c_find_objects_final: CK_C_FindObjectsFinal,
+    pub c_get_attribute_value: CK_C_GetAttributeValue,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -57,11 +61,11 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_CopyObject: Some(stubs::C_CopyObject),
         C_DestroyObject: Some(stubs::C_DestroyObject),
         C_GetObjectSize: Some(stubs::C_GetObjectSize),
-        C_GetAttributeValue: Some(stubs::C_GetAttributeValue),
+        C_GetAttributeValue: real.c_get_attribute_value,
         C_SetAttributeValue: Some(stubs::C_SetAttributeValue),
-        C_FindObjectsInit: Some(stubs::C_FindObjectsInit),
-        C_FindObjects: Some(stubs::C_FindObjects),
-        C_FindObjectsFinal: Some(stubs::C_FindObjectsFinal),
+        C_FindObjectsInit: real.c_find_objects_init,
+        C_FindObjects: real.c_find_objects,
+        C_FindObjectsFinal: real.c_find_objects_final,
         C_EncryptInit: Some(stubs::C_EncryptInit),
         C_Encrypt: Some(stubs::C_Encrypt),
         C_EncryptUpdate: Some(stubs::C_EncryptUpdate),
