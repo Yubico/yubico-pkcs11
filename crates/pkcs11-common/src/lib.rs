@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod debug;
+pub mod digest;
 pub mod function_list;
 pub mod session;
 pub mod stubs;

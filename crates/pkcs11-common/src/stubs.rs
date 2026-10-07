@@ -30,11 +30,7 @@ pub unsafe extern "C" fn C_DecryptInit(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR
 pub unsafe extern "C" fn C_Decrypt(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_DecryptUpdate(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_DecryptFinal(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
-pub unsafe extern "C" fn C_DigestInit(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
-pub unsafe extern "C" fn C_Digest(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
-pub unsafe extern "C" fn C_DigestUpdate(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_DigestKey(_: CK_SESSION_HANDLE, _: CK_OBJECT_HANDLE) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
-pub unsafe extern "C" fn C_DigestFinal(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_SignInit(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR, _: CK_OBJECT_HANDLE) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_Sign(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_SignUpdate(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }

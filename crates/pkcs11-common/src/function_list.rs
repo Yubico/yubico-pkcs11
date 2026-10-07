@@ -32,6 +32,10 @@ pub struct RealFunctions {
     pub c_find_objects: CK_C_FindObjects,
     pub c_find_objects_final: CK_C_FindObjectsFinal,
     pub c_get_attribute_value: CK_C_GetAttributeValue,
+    pub c_digest_init: CK_C_DigestInit,
+    pub c_digest: CK_C_Digest,
+    pub c_digest_update: CK_C_DigestUpdate,
+    pub c_digest_final: CK_C_DigestFinal,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -74,11 +78,11 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_Decrypt: Some(stubs::C_Decrypt),
         C_DecryptUpdate: Some(stubs::C_DecryptUpdate),
         C_DecryptFinal: Some(stubs::C_DecryptFinal),
-        C_DigestInit: Some(stubs::C_DigestInit),
-        C_Digest: Some(stubs::C_Digest),
-        C_DigestUpdate: Some(stubs::C_DigestUpdate),
+        C_DigestInit: real.c_digest_init,
+        C_Digest: real.c_digest,
+        C_DigestUpdate: real.c_digest_update,
         C_DigestKey: Some(stubs::C_DigestKey),
-        C_DigestFinal: Some(stubs::C_DigestFinal),
+        C_DigestFinal: real.c_digest_final,
         C_SignInit: Some(stubs::C_SignInit),
         C_Sign: Some(stubs::C_Sign),
         C_SignUpdate: Some(stubs::C_SignUpdate),

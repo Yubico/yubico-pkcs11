@@ -234,6 +234,58 @@ pub unsafe extern "C" fn C_FindObjectsFinal(hSession: CK_SESSION_HANDLE) -> CK_R
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DigestInit(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+) -> CK_RV {
+    unsafe { traced!("C_DigestInit", G_ENGINE.digest_init(hSession, pMechanism)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_Digest(
+    hSession: CK_SESSION_HANDLE,
+    pData: CK_BYTE_PTR,
+    ulDataLen: CK_ULONG,
+    pDigest: CK_BYTE_PTR,
+    pulDigestLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_Digest",
+            G_ENGINE.digest(hSession, pData, ulDataLen, pDigest, pulDigestLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DigestUpdate(
+    hSession: CK_SESSION_HANDLE,
+    pPart: CK_BYTE_PTR,
+    ulPartLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DigestUpdate",
+            G_ENGINE.digest_update(hSession, pPart, ulPartLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DigestFinal(
+    hSession: CK_SESSION_HANDLE,
+    pDigest: CK_BYTE_PTR,
+    pulDigestLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DigestFinal",
+            G_ENGINE.digest_final(hSession, pDigest, pulDigestLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetAttributeValue(
     hSession: CK_SESSION_HANDLE,
     hObject: CK_OBJECT_HANDLE,
@@ -275,4 +327,8 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_find_objects: Some(C_FindObjects),
     c_find_objects_final: Some(C_FindObjectsFinal),
     c_get_attribute_value: Some(C_GetAttributeValue),
+    c_digest_init: Some(C_DigestInit),
+    c_digest: Some(C_Digest),
+    c_digest_update: Some(C_DigestUpdate),
+    c_digest_final: Some(C_DigestFinal),
 });

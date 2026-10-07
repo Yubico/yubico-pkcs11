@@ -8,3 +8,6 @@ description = "Shared PKCS#11 utilities for Yubico modules"
 [dependencies]
 pkcs11-sys = { workspace = true }
 parking_lot = { workspace = true }
+digest = { version = "0.10", features = ["alloc"] }
+sha1 = "0.10"
+sha2 = "0.10"

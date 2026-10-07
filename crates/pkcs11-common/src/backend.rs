@@ -6,6 +6,7 @@
 //! `C_*` dispatch logic; the engine owns everything else (handle
 //! allocation, session tables, login-state tracking).
 
+use crate::digest::DigestOp;
 use crate::session::{LoginState, compute_state};
 use crate::str_pad;
 use parking_lot::Mutex;
@@ -69,6 +70,13 @@ pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
     pub flags: CK_FLAGS,
     pub find_op: FindOp,
+    /// `C_DigestInit`/`C_Digest`/`C_DigestUpdate`/`C_DigestFinal` state —
+    /// `None` when no digest operation is active. Tracked independently of
+    /// `find_op`, matching both C references treating "object search" and
+    /// "active crypto operation" as separate state machines (ykcs11.c's
+    /// `session->find_obj` vs `session->op_info`; yubihsm_pkcs11.c's
+    /// per-session search state vs `session->operation`).
+    pub digest_op: Option<DigestOp>,
     pub data: S,
 }
 
@@ -583,6 +591,7 @@ impl<B: Backend> Engine<B> {
                     handle,
                     flags,
                     find_op: FindOp::default(),
+                    digest_op: None,
                     data,
                 },
             );
@@ -992,6 +1001,196 @@ impl<B: Backend> Engine<B> {
             } else {
                 CKR_OK.into()
             }
+        }
+    }
+
+    pub unsafe fn digest_init(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get_mut(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.digest_op.is_some() {
+                return CKR_OPERATION_ACTIVE.into();
+            }
+            if p_mechanism.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            match DigestOp::new((*p_mechanism).mechanism) {
+                Ok(op) => {
+                    session.digest_op = Some(op);
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// One-shot digest: equivalent to `C_DigestUpdate` (if any data is
+    /// passed) immediately followed by `C_DigestFinal`. Matches
+    /// `C_Digest`'s own length-query/buffer-too-small short-circuits — both
+    /// leave the operation active rather than terminating it, so a caller
+    /// that first probes the required length with `pDigest == NULL` can
+    /// still follow up with the real call.
+    pub unsafe fn digest(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_data: CK_BYTE_PTR,
+        ul_data_len: CK_ULONG,
+        p_digest: CK_BYTE_PTR,
+        pul_digest_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get_mut(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.digest_op.is_none() {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_digest_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let out_len = session.digest_op.as_ref().unwrap().output_len();
+
+            if p_digest.is_null() {
+                *pul_digest_len = out_len as CK_ULONG;
+                return CKR_OK.into();
+            }
+            if (*pul_digest_len as usize) < out_len {
+                *pul_digest_len = out_len as CK_ULONG;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+            if ul_data_len > 0 && p_data.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_data_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
+            };
+            let mut op = session.digest_op.take().unwrap();
+            op.update(data);
+            let digest = op.finalize();
+            std::ptr::copy_nonoverlapping(digest.as_ptr(), p_digest, digest.len());
+            *pul_digest_len = digest.len() as CK_ULONG;
+            CKR_OK.into()
+        }
+    }
+
+    pub unsafe fn digest_update(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_part: CK_BYTE_PTR,
+        ul_part_len: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get_mut(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let Some(digest_op) = session.digest_op.as_mut() else {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            };
+            if ul_part_len > 0 && p_part.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_part_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
+            };
+            digest_op.update(data);
+            CKR_OK.into()
+        }
+    }
+
+    pub unsafe fn digest_final(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_digest: CK_BYTE_PTR,
+        pul_digest_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get_mut(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.digest_op.is_none() {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_digest_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let out_len = session.digest_op.as_ref().unwrap().output_len();
+
+            if p_digest.is_null() {
+                *pul_digest_len = out_len as CK_ULONG;
+                return CKR_OK.into();
+            }
+            if (*pul_digest_len as usize) < out_len {
+                *pul_digest_len = out_len as CK_ULONG;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+
+            let op = session.digest_op.take().unwrap();
+            let digest = op.finalize();
+            std::ptr::copy_nonoverlapping(digest.as_ptr(), p_digest, digest.len());
+            *pul_digest_len = digest.len() as CK_ULONG;
+            CKR_OK.into()
         }
     }
 }
