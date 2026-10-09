@@ -297,6 +297,112 @@ pub unsafe extern "C" fn C_DigestFinal(
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_SignInit(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hKey: CK_OBJECT_HANDLE,
+) -> CK_RV {
+    unsafe { traced!("C_SignInit", G_ENGINE.sign_init(hSession, pMechanism, hKey)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_Sign(
+    hSession: CK_SESSION_HANDLE,
+    pData: CK_BYTE_PTR,
+    ulDataLen: CK_ULONG,
+    pSignature: CK_BYTE_PTR,
+    pulSignatureLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_Sign",
+            G_ENGINE.sign(hSession, pData, ulDataLen, pSignature, pulSignatureLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_SignUpdate(
+    hSession: CK_SESSION_HANDLE,
+    pPart: CK_BYTE_PTR,
+    ulPartLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_SignUpdate",
+            G_ENGINE.sign_update(hSession, pPart, ulPartLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_SignFinal(
+    hSession: CK_SESSION_HANDLE,
+    pSignature: CK_BYTE_PTR,
+    pulSignatureLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_SignFinal",
+            G_ENGINE.sign_final(hSession, pSignature, pulSignatureLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_VerifyInit(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hKey: CK_OBJECT_HANDLE,
+) -> CK_RV {
+    unsafe { traced!("C_VerifyInit", G_ENGINE.verify_init(hSession, pMechanism, hKey)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_Verify(
+    hSession: CK_SESSION_HANDLE,
+    pData: CK_BYTE_PTR,
+    ulDataLen: CK_ULONG,
+    pSignature: CK_BYTE_PTR,
+    ulSignatureLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_Verify",
+            G_ENGINE.verify(hSession, pData, ulDataLen, pSignature, ulSignatureLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_VerifyUpdate(
+    hSession: CK_SESSION_HANDLE,
+    pPart: CK_BYTE_PTR,
+    ulPartLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_VerifyUpdate",
+            G_ENGINE.verify_update(hSession, pPart, ulPartLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_VerifyFinal(
+    hSession: CK_SESSION_HANDLE,
+    pSignature: CK_BYTE_PTR,
+    ulSignatureLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_VerifyFinal",
+            G_ENGINE.verify_final(hSession, pSignature, ulSignatureLen)
+        )
+    }
+}
+
 // ============================================================
 // Function List (PKCS#11 3.0 compatible, using CK_FUNCTION_LIST)
 // ============================================================
@@ -330,4 +436,21 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_digest: Some(C_Digest),
     c_digest_update: Some(C_DigestUpdate),
     c_digest_final: Some(C_DigestFinal),
+    // Signing isn't implemented for yubihsm-pkcs11 yet — these route
+    // through the shared engine, which falls back to
+    // CKR_FUNCTION_NOT_SUPPORTED via Backend::sign_init's default impl
+    // since YubiHsmBackend doesn't override it.
+    c_sign_init: Some(C_SignInit),
+    c_sign: Some(C_Sign),
+    c_sign_update: Some(C_SignUpdate),
+    c_sign_final: Some(C_SignFinal),
+    // Verification isn't implemented for yubihsm-pkcs11 yet (see
+    // pkcs11-common's verify.rs doc comment) — these route through the
+    // shared engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::verify_init's default impl since YubiHsmBackend doesn't
+    // override it.
+    c_verify_init: Some(C_VerifyInit),
+    c_verify: Some(C_Verify),
+    c_verify_update: Some(C_VerifyUpdate),
+    c_verify_final: Some(C_VerifyFinal),
 });

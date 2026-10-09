@@ -4,8 +4,11 @@ pub mod backend;
 pub mod debug;
 pub mod digest;
 pub mod function_list;
+pub mod mechanism;
 pub mod session;
+pub mod sign;
 pub mod stubs;
+pub mod verify;
 pub mod util;
 #[cfg(windows)]
 mod win_dllmain;

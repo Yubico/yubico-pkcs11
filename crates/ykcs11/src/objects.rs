@@ -1034,6 +1034,34 @@ pub fn object_handles(objects: &[PivObject], include_private: bool) -> Vec<CK_OB
         .collect()
 }
 
+/// The PIV slot and public key backing a private-key object handle, for
+/// `C_SignInit` — `None` for any handle that isn't a `CKO_PRIVATE_KEY`
+/// object, matching `C_SignInit`'s own
+/// `hKey < PIV_PVTK_OBJ_PIV_AUTH || hKey > PIV_PVTK_OBJ_ATTESTATION` range
+/// check (ykcs11.c:2872), just expressed via the object's class instead of
+/// a contiguous handle range.
+pub fn find_signing_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
+    let obj = objects.iter().find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
+    if obj.class != ObjectClass::PrivateKey {
+        return None;
+    }
+    Some((obj.slot, obj.public_key.as_ref()?))
+}
+
+/// The public key backing a `CKO_PUBLIC_KEY` object handle, for
+/// `C_VerifyInit` — `None` for any handle that isn't a public-key object
+/// (certificates are not accepted, matching `C_VerifyInit`'s own
+/// `hKey < PIV_PUBK_OBJ_PIV_AUTH || hKey > PIV_PUBK_OBJ_ATTESTATION` range
+/// check, ykcs11.c:3189). No `Slot`/device access needed — verification
+/// never touches the token.
+pub fn find_verify_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<&PublicKey> {
+    let obj = objects.iter().find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
+    if obj.class != ObjectClass::PublicKey {
+        return None;
+    }
+    obj.public_key.as_ref()
+}
+
 pub fn get_attribute(
     objects: &[PivObject],
     handle: CK_OBJECT_HANDLE,

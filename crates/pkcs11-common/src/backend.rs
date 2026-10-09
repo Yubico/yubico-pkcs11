@@ -65,6 +65,31 @@ pub struct FindOp {
     pub returned_offset: usize,
 }
 
+/// `C_SignInit`/`C_Sign`/`C_SignUpdate`/`C_SignFinal` state for one session
+/// — just enough for the engine's own generic bookkeeping (is a signing
+/// operation active, and how many bytes will it produce, needed to answer a
+/// length-only query without asking the backend again). Everything
+/// mechanism/key-specific (hash state, which key, which padding) lives in
+/// `Backend::SessionData`, set by `Backend::sign_init` and read back by
+/// `Backend::sign_update`/`Backend::sign_final` — the engine itself never
+/// looks at it.
+#[derive(Default)]
+pub struct SignOp {
+    pub active: bool,
+    pub out_len: CK_ULONG,
+}
+
+/// `C_VerifyInit`/`C_Verify`/`C_VerifyUpdate`/`C_VerifyFinal` state for one
+/// session — just whether a verify operation is active. Unlike `SignOp`,
+/// there's no `out_len` to pre-compute: verification never produces output
+/// bytes, so there's no length-query (`pSignature == NULL`) convention to
+/// support in the first place — the caller already knows the signature
+/// length (it made the signature, or received it from someone who did).
+#[derive(Default)]
+pub struct VerifyOp {
+    pub active: bool,
+}
+
 /// A single open session on a slot.
 pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
@@ -77,6 +102,8 @@ pub struct Session<S> {
     /// `session->find_obj` vs `session->op_info`; yubihsm_pkcs11.c's
     /// per-session search state vs `session->operation`).
     pub digest_op: Option<DigestOp>,
+    pub sign_op: SignOp,
+    pub verify_op: VerifyOp,
     pub data: S,
 }
 
@@ -205,6 +232,87 @@ pub trait Backend: Sized + 'static {
         handle: CK_OBJECT_HANDLE,
         attr_type: CK_ATTRIBUTE_TYPE,
     ) -> Option<Vec<u8>>;
+
+    /// Begin a signing operation: validate the mechanism against `key_handle`
+    /// (wrong key type/class → `CKR_KEY_TYPE_INCONSISTENT`/
+    /// `CKR_KEY_HANDLE_INVALID`, unsupported mechanism →
+    /// `CKR_MECHANISM_INVALID`), and stash whatever per-operation state is
+    /// needed (hash state, which key, which padding) in this session's
+    /// `Backend::SessionData` — opaque to the engine, which only tracks
+    /// whether *some* sign operation is active and how long its output will
+    /// be. Default: not supported, matching a backend that hasn't
+    /// implemented signing yet.
+    /// `parameter` is the mechanism's raw `pParameter` bytes (e.g. a
+    /// `CK_RSA_PKCS_PSS_PARAMS` for a PSS mechanism), empty if the caller
+    /// didn't supply one.
+    fn sign_init(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<CK_ULONG, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Feed more data into the signing operation started by `sign_init`.
+    fn sign_update(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _data: &[u8],
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Finalize the signing operation started by `sign_init`, consuming
+    /// whatever per-operation state was stashed in `Backend::SessionData`
+    /// and returning the raw signature bytes.
+    fn sign_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Begin a verify operation: validate the mechanism against `key_handle`
+    /// (wrong key type/class → `CKR_KEY_TYPE_INCONSISTENT`/
+    /// `CKR_KEY_HANDLE_INVALID`, unsupported mechanism →
+    /// `CKR_MECHANISM_INVALID`), and stash whatever per-operation state is
+    /// needed (hash state, which key's public material, which padding) in
+    /// this session's `Backend::SessionData` — opaque to the engine, which
+    /// only tracks whether *some* verify operation is active. Unlike
+    /// `sign_init`, there's no device round-trip and (for ykcs11 at least) no
+    /// login requirement — verification only ever needs public key material.
+    /// `parameter` is the mechanism's raw `pParameter` bytes, empty if the
+    /// caller didn't supply one. Default: not supported.
+    fn verify_init(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Feed more data into the verify operation started by `verify_init`.
+    fn verify_update(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _data: &[u8],
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Finalize the verify operation started by `verify_init`, consuming
+    /// whatever per-operation state was stashed in `Backend::SessionData` and
+    /// checking `signature` against it. `Ok(())` means the signature is
+    /// valid; a well-formed but non-matching signature is a normal `Err`
+    /// return (`CKR_SIGNATURE_INVALID`/`CKR_SIGNATURE_LEN_RANGE`), not a bug.
+    fn verify_final(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _signature: &[u8],
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
 }
 
 /// The shared Cryptoki engine. One `static` instance per module, generic
@@ -592,6 +700,8 @@ impl<B: Backend> Engine<B> {
                     flags,
                     find_op: FindOp::default(),
                     digest_op: None,
+                    sign_op: SignOp::default(),
+                    verify_op: VerifyOp::default(),
                     data,
                 },
             );
@@ -1191,6 +1301,451 @@ impl<B: Backend> Engine<B> {
             std::ptr::copy_nonoverlapping(digest.as_ptr(), p_digest, digest.len());
             *pul_digest_len = digest.len() as CK_ULONG;
             CKR_OK.into()
+        }
+    }
+
+    pub unsafe fn sign_init(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_key: CK_OBJECT_HANDLE,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.sign_op.active {
+                return CKR_OPERATION_ACTIVE.into();
+            }
+            if p_mechanism.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            // ykcs11.c checks the key handle before the login state
+            // (ykcs11.c:2872-2891) — that ordering only matters when both
+            // are simultaneously wrong, but it's cheap to match exactly, so
+            // the login check happens inside `B::sign_init` itself (after
+            // its own key-handle lookup) rather than generically here.
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            match B::sign_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+                Ok(out_len) => {
+                    let session = slot_guard.sessions.get_mut(&h_session).unwrap();
+                    session.sign_op = SignOp {
+                        active: true,
+                        out_len,
+                    };
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// One-shot sign: equivalent to `C_SignUpdate` (with whatever data is
+    /// passed) immediately followed by `C_SignFinal`. Matches `C_Sign`'s own
+    /// length-query/buffer-too-small short-circuits — both leave the
+    /// operation active rather than terminating it; every other path
+    /// (success or any other error) terminates it, matching ykcs11.c's
+    /// unconditional `session->op_info.type = YKCS11_NOOP` once past those
+    /// two early returns (ykcs11.c:2907-2908).
+    pub unsafe fn sign(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_data: CK_BYTE_PTR,
+        ul_data_len: CK_ULONG,
+        p_signature: CK_BYTE_PTR,
+        pul_signature_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.sign_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if p_data.is_null() || pul_signature_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let out_len = session.sign_op.out_len;
+
+            if p_signature.is_null() {
+                *pul_signature_len = out_len;
+                return CKR_OK.into();
+            }
+            if *pul_signature_len < out_len {
+                *pul_signature_len = out_len;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+            if slot_guard.login_state == LoginState::Public {
+                slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                return CKR_USER_NOT_LOGGED_IN.into();
+            }
+
+            let data: &[u8] = if ul_data_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
+            };
+            let result = B::sign_update(&mut slot_guard, h_session, data)
+                .and_then(|()| B::sign_final(&mut slot_guard, h_session));
+            slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+
+            match result {
+                Ok(signature) => {
+                    std::ptr::copy_nonoverlapping(
+                        signature.as_ptr(),
+                        p_signature,
+                        signature.len(),
+                    );
+                    *pul_signature_len = signature.len() as CK_ULONG;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn sign_update(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_part: CK_BYTE_PTR,
+        ul_part_len: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.sign_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if p_part.is_null() {
+                slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_part_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
+            };
+            match B::sign_update(&mut slot_guard, h_session, data) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                    rv
+                }
+            }
+        }
+    }
+
+    pub unsafe fn sign_final(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_signature: CK_BYTE_PTR,
+        pul_signature_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.sign_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_signature_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let out_len = session.sign_op.out_len;
+
+            if p_signature.is_null() {
+                *pul_signature_len = out_len;
+                return CKR_OK.into();
+            }
+            if *pul_signature_len < out_len {
+                *pul_signature_len = out_len;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+            if slot_guard.login_state == LoginState::Public {
+                slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                return CKR_USER_NOT_LOGGED_IN.into();
+            }
+
+            let result = B::sign_final(&mut slot_guard, h_session);
+            slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+
+            match result {
+                Ok(signature) => {
+                    std::ptr::copy_nonoverlapping(
+                        signature.as_ptr(),
+                        p_signature,
+                        signature.len(),
+                    );
+                    *pul_signature_len = signature.len() as CK_ULONG;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn verify_init(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_key: CK_OBJECT_HANDLE,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.verify_op.active {
+                return CKR_OPERATION_ACTIVE.into();
+            }
+            if p_mechanism.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            match B::verify_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+                Ok(()) => {
+                    let session = slot_guard.sessions.get_mut(&h_session).unwrap();
+                    session.verify_op = VerifyOp { active: true };
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// One-shot verify: equivalent to `C_VerifyUpdate` (with whatever data is
+    /// passed) immediately followed by `C_VerifyFinal`. Unlike `C_Sign`,
+    /// there's no length-query/buffer-too-small short-circuit to preserve —
+    /// every path (a valid signature, an invalid one, or any other error)
+    /// terminates the operation, matching both C references (a failed
+    /// verify is a normal, operation-terminating outcome, not a retryable
+    /// one).
+    pub unsafe fn verify(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_data: CK_BYTE_PTR,
+        ul_data_len: CK_ULONG,
+        p_signature: CK_BYTE_PTR,
+        ul_signature_len: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.verify_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if (ul_data_len > 0 && p_data.is_null()) || (ul_signature_len > 0 && p_signature.is_null())
+            {
+                slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_data_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
+            };
+            let signature: &[u8] = if ul_signature_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_signature as *const u8, ul_signature_len as usize)
+            };
+            let result = B::verify_update(&mut slot_guard, h_session, data)
+                .and_then(|()| B::verify_final(&mut slot_guard, h_session, signature));
+            slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+
+            match result {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn verify_update(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_part: CK_BYTE_PTR,
+        ul_part_len: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.verify_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if p_part.is_null() {
+                slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_part_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
+            };
+            match B::verify_update(&mut slot_guard, h_session, data) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                    rv
+                }
+            }
+        }
+    }
+
+    pub unsafe fn verify_final(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_signature: CK_BYTE_PTR,
+        ul_signature_len: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.verify_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if ul_signature_len > 0 && p_signature.is_null() {
+                slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let signature: &[u8] = if ul_signature_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_signature as *const u8, ul_signature_len as usize)
+            };
+            let result = B::verify_final(&mut slot_guard, h_session, signature);
+            slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+
+            match result {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
         }
     }
 }

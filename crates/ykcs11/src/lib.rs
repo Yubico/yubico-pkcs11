@@ -13,5 +13,7 @@ mod dispatch;
 mod mechanisms;
 mod objects;
 mod piv_slot;
+mod sign;
+mod verify;
 
 pub use dispatch::*;

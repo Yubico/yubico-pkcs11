@@ -17,4 +17,6 @@ log = { workspace = true }
 getrandom = "0.4"
 der = "0.7"
 x509-cert = "0.2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+p384 = { version = "0.13", features = ["ecdsa"] }
 yubikit = { git = "https://github.com/Yubico/yubikey-manager.git", branch = "experiment/rust", default-features = false, features = ["pcsc"] }

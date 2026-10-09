@@ -19,9 +19,22 @@ const YKCS11_VERSION_MINOR: u8 = 0;
 
 pub struct PivBackend;
 
+/// Per-session state for whichever of `C_Sign*`/`C_Verify*` are currently in
+/// progress — two independent slots, since PKCS#11 allows a sign operation
+/// and a verify operation to be simultaneously active on the same session
+/// (they're unrelated operation types, same as the engine's own independent
+/// `digest_op`/`sign_op`/`verify_op` tracking). Each is opaque to the
+/// engine, which only tracks whether *some* operation of each type is
+/// active.
+#[derive(Default)]
+pub struct PivSessionData {
+    pub sign: Option<crate::sign::SignState>,
+    pub verify: Option<crate::verify::VerifyState>,
+}
+
 impl Backend for PivBackend {
     type SlotData = PivSlotData;
-    type SessionData = ();
+    type SessionData = PivSessionData;
     type ModuleData = ();
 
     fn library_info() -> LibraryInfo {
@@ -125,7 +138,11 @@ impl Backend for PivBackend {
         })
     }
 
-    fn new_session_data(slot: &mut PivSlotData, _handle: CK_SESSION_HANDLE, _flags: CK_FLAGS) {
+    fn new_session_data(
+        slot: &mut PivSlotData,
+        _handle: CK_SESSION_HANDLE,
+        _flags: CK_FLAGS,
+    ) -> PivSessionData {
         // Matches ykcs11.c:980's `n_objects == 0` guard: discover once per
         // slot, on the first session opened against it, and reuse for every
         // session after that.
@@ -134,6 +151,7 @@ impl Backend for PivBackend {
                 slot.objects = crate::objects::read_objects(piv);
             }
         }
+        PivSessionData::default()
     }
 
     fn login(
@@ -153,11 +171,14 @@ impl Backend for PivBackend {
         }
 
         // CKU_CONTEXT_SPECIFIC is only legal while a sign/decrypt operation
-        // is in progress on the calling session (ykcs11.c:1290-1296). This
-        // module doesn't track per-session crypto operations yet
-        // (C_SignInit/C_DecryptInit aren't implemented), so one can never
-        // legitimately be "in progress" — matches what the C module itself
-        // returns in that same state.
+        // is in progress on the calling session, to satisfy a key's
+        // CKA_ALWAYS_AUTHENTICATE PIN-per-operation requirement
+        // (ykcs11.c:1290-1296). Signing operations are now tracked
+        // (`Session::sign_op`/`PivBackend::SessionData`), but honoring this
+        // mid-operation re-authentication flow is a separate feature from
+        // plain C_SignInit/C_Sign support and isn't implemented yet — every
+        // CKU_CONTEXT_SPECIFIC login is rejected unconditionally for now,
+        // same outward behavior as before this comment was last true.
         if user_type == CKU_CONTEXT_SPECIFIC as CK_USER_TYPE {
             return Err(CKR_USER_TYPE_INVALID.into());
         }
@@ -254,6 +275,54 @@ impl Backend for PivBackend {
     ) -> Option<Vec<u8>> {
         crate::objects::get_attribute(&data.objects, handle, attr_type)
     }
+
+    fn sign_init(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<CK_ULONG, CK_RV> {
+        crate::sign::sign_init(slot, h_session, mechanism, parameter, key_handle)
+    }
+
+    fn sign_update(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        data: &[u8],
+    ) -> Result<(), CK_RV> {
+        crate::sign::sign_update(slot, h_session, data)
+    }
+
+    fn sign_final(slot: &mut Slot<Self>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+        crate::sign::sign_final(slot, h_session)
+    }
+
+    fn verify_init(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<(), CK_RV> {
+        crate::verify::verify_init(slot, h_session, mechanism, parameter, key_handle)
+    }
+
+    fn verify_update(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        data: &[u8],
+    ) -> Result<(), CK_RV> {
+        crate::verify::verify_update(slot, h_session, data)
+    }
+
+    fn verify_final(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        signature: &[u8],
+    ) -> Result<(), CK_RV> {
+        crate::verify::verify_final(slot, h_session, signature)
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for
@@ -262,10 +331,13 @@ impl Backend for PivBackend {
 const VERIFY_BIO: &[u8] = b"VERIFY_BIO";
 const VERIFY_NONE: &[u8] = b"VERIFY_NONE";
 
-/// Maps a failed PIN/UV verification the same way the C module's
-/// `yrc_to_rv` maps `YKPIV_WRONG_PIN`/`YKPIV_PIN_LOCKED` (utils.c:181,187):
-/// out of retries is a lockout, otherwise just an incorrect PIN.
-fn pin_error_to_rv(e: PivError) -> CK_RV {
+/// Generic `PivError` -> `CK_RV` mapping, used anywhere a `yubikit::piv`
+/// call can fail (PIN/UV verification, signing, ...) — mirrors the shape of
+/// the C module's `yrc_to_rv` (utils.c:159-199), coarsened to match
+/// `PivError`'s own, smaller set of variants: out of PIN retries is a
+/// lockout (`YKPIV_PIN_LOCKED`), otherwise just an incorrect PIN
+/// (`YKPIV_WRONG_PIN`).
+pub(crate) fn piv_error_to_rv(e: PivError) -> CK_RV {
     match e {
         PivError::InvalidPin(0) => CKR_PIN_LOCKED.into(),
         PivError::InvalidPin(_) => CKR_PIN_INCORRECT.into(),
@@ -283,7 +355,7 @@ fn verify_user_pin(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
         return piv
             .verify_uv(false, false)
             .map(|_| ())
-            .map_err(pin_error_to_rv);
+            .map_err(piv_error_to_rv);
     }
     if pin == VERIFY_NONE {
         return Ok(());
@@ -293,7 +365,7 @@ fn verify_user_pin(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
         .ok()
         .and_then(|s| PivPin::new(s).ok())
         .ok_or(CK_RV::from(CKR_ARGUMENTS_BAD))?;
-    piv.verify_pin(&piv_pin).map_err(pin_error_to_rv)
+    piv.verify_pin(&piv_pin).map_err(piv_error_to_rv)
 }
 
 /// Authenticate a `CKU_SO` login, matching `token_login`'s `CKU_SO` branch
@@ -307,14 +379,14 @@ fn verify_user_pin(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
 /// the C module falls back to when no PIN-protected key is configured.
 fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> {
     if pin.is_empty() || pin == VERIFY_BIO {
-        piv.verify_uv(false, false).map_err(pin_error_to_rv)?;
+        piv.verify_uv(false, false).map_err(piv_error_to_rv)?;
     } else if pin == VERIFY_NONE {
         return Ok(());
     } else if let Some(piv_pin) = std::str::from_utf8(pin)
         .ok()
         .and_then(|s| PivPin::new(s).ok())
     {
-        piv.verify_pin(&piv_pin).map_err(pin_error_to_rv)?;
+        piv.verify_pin(&piv_pin).map_err(piv_error_to_rv)?;
     } else {
         // Not a PIN-length value: must be the literal hex-encoded
         // management key.
@@ -327,7 +399,7 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
             // Matches token.c:366-367: a rejected response from the device
             // means the supplied key was wrong.
             PivError::InvalidData(_) => CK_RV::from(CKR_PIN_INCORRECT),
-            other => pin_error_to_rv(other),
+            other => piv_error_to_rv(other),
         });
     }
 
