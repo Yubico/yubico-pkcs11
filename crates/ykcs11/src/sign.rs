@@ -139,7 +139,7 @@ pub fn sign_init(
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<CK_ULONG, CK_RV> {
     let Some((piv_slot, public_key)) =
-        crate::objects::find_signing_key(&slot.data.objects, key_handle)
+        crate::objects::find_private_key(&slot.data.objects, key_handle)
     else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };

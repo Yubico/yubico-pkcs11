@@ -22,27 +22,31 @@ use crate::sign::{digest_info_prefix, mgf1, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
 use rsa::BigUint;
 
-/// The raw RSA public-key operation (`s^e mod n`), zero-padded to
-/// `modulus_len` bytes — the same operation RSA verification always starts
-/// from, regardless of padding scheme (PKCS#1 v1.5, PSS, or none at all for
-/// `CKM_RSA_X_509`). Uses `rsa::hazmat::rsa_encrypt` (the crate's deliberately
-/// low-level, no-padding primitive — verification needs exactly that raw
-/// operation, not any of the crate's own higher-level signature schemes,
-/// which this project can't use anyway since this project's modulus/exponent
-/// come from a device's public key, not an `rsa::RsaPublicKey` constructed
-/// from a private key).
-fn rsa_public_raw_op(
+/// The raw RSA public-key operation (`x^e mod n`), zero-padded to
+/// `modulus_len` bytes — the same operation both RSA verification (recovers
+/// the padded message from a signature) and RSA encryption (produces
+/// ciphertext from an already-padded message, in `encrypt.rs`) start from;
+/// it's the same modular exponentiation either way, just applied to a
+/// different semantic role of input/output. Uses `rsa::hazmat::rsa_encrypt`
+/// (the crate's deliberately low-level, no-padding primitive — this project
+/// can't use any of the crate's own higher-level signature/encryption
+/// schemes anyway, since the modulus/exponent come from a device's public
+/// key, not an `rsa::RsaPublicKey` constructed from a private key).
+///
+/// `pub(crate)` rather than a free-standing shared module since it's one
+/// small function reused by exactly two sibling modules in this crate.
+pub(crate) fn rsa_public_raw_op(
     n: &[u8],
     e: &[u8],
-    signature: &[u8],
+    input: &[u8],
     modulus_len: usize,
 ) -> Result<Vec<u8>, CK_RV> {
-    if signature.len() != modulus_len {
+    if input.len() != modulus_len {
         return Err(CKR_SIGNATURE_LEN_RANGE.into());
     }
     let pub_key = rsa::RsaPublicKey::new(BigUint::from_bytes_be(n), BigUint::from_bytes_be(e))
         .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
-    let m = BigUint::from_bytes_be(signature);
+    let m = BigUint::from_bytes_be(input);
     let result = rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
     zero_pad(&result.to_bytes_be(), modulus_len)
 }

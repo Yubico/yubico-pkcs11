@@ -2,7 +2,9 @@
 
 pub mod backend;
 pub mod debug;
+pub mod decrypt;
 pub mod digest;
+pub mod encrypt;
 pub mod function_list;
 pub mod mechanism;
 pub mod session;

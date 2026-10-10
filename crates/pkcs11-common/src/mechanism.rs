@@ -117,3 +117,69 @@ pub fn resolve_pss_params(
 
     Ok((pss.hashAlg, mgf_hash, pss.sLen as usize))
 }
+
+/// Every mechanism `C_Decrypt*` supports — a disjoint set from
+/// `MechanismKind` (no ECDSA/EdDSA/PSS; adds OAEP, which `C_Sign*` has no
+/// equivalent of) matching `decrypt_mechanism_init`
+/// (mechanisms.c:684-729).
+pub enum CryptMechanismKind {
+    RsaX509,
+    RsaPkcs1,
+    RsaOaep,
+}
+
+pub fn classify_crypt_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<CryptMechanismKind> {
+    Some(match mechanism as u32 {
+        CKM_RSA_X_509 => CryptMechanismKind::RsaX509,
+        CKM_RSA_PKCS => CryptMechanismKind::RsaPkcs1,
+        CKM_RSA_PKCS_OAEP => CryptMechanismKind::RsaOaep,
+        _ => return None,
+    })
+}
+
+/// Reads `CK_RSA_PKCS_OAEP_PARAMS` out of a mechanism's raw `pParameter`
+/// bytes, returning `(hashAlg, mgf hash, label bytes)` — matches
+/// `decrypt_mechanism_init`'s OAEP case (mechanisms.c:704-722). Unlike
+/// `CK_RSA_PKCS_PSS_PARAMS`, this struct carries an out-of-line label
+/// (`pSourceData`/`ulSourceDataLen`, used only when `source ==
+/// CKZ_DATA_SPECIFIED`) — a second, separate raw pointer the caller gives
+/// us, not bytes embedded in `parameter` itself.
+pub fn resolve_oaep_params(parameter: &[u8]) -> Result<(CK_MECHANISM_TYPE, CK_MECHANISM_TYPE, Vec<u8>), CK_RV> {
+    if parameter.len() != std::mem::size_of::<CK_RSA_PKCS_OAEP_PARAMS>() {
+        return Err(CKR_MECHANISM_PARAM_INVALID.into());
+    }
+    // SAFETY: length just checked above; read_unaligned for the same reason
+    // as `resolve_pss_params` (PKCS#11 callers aren't guaranteed to hand us
+    // an aligned pointer).
+    let oaep: CK_RSA_PKCS_OAEP_PARAMS =
+        unsafe { std::ptr::read_unaligned(parameter.as_ptr() as *const CK_RSA_PKCS_OAEP_PARAMS) };
+
+    if !is_supported_pss_hash(oaep.hashAlg) {
+        return Err(CKR_ARGUMENTS_BAD.into());
+    }
+    let mgf_hash = mgf_hash_mechanism(oaep.mgf).ok_or(CK_RV::from(CKR_ARGUMENTS_BAD))?;
+
+    let label = if oaep.source == 0 || oaep.ulSourceDataLen == 0 {
+        // `source == 0` ("empty"/unspecified) and an explicit
+        // `CKZ_DATA_SPECIFIED` source with a zero-length label are
+        // equivalent here — both mean "no label", matching OAEP's own
+        // default of an empty string when none is given.
+        Vec::new()
+    } else if oaep.source == CKZ_DATA_SPECIFIED as CK_RSA_PKCS_OAEP_SOURCE_TYPE {
+        if oaep.pSourceData.is_null() {
+            return Err(CKR_MECHANISM_PARAM_INVALID.into());
+        }
+        // SAFETY: `pSourceData`/`ulSourceDataLen` are a second
+        // caller-supplied pointer+length pair, out-of-line from `parameter`
+        // itself — same trust boundary as `parameter` (a PKCS#11 caller is
+        // expected to keep it valid for the duration of this call).
+        unsafe {
+            std::slice::from_raw_parts(oaep.pSourceData as *const u8, oaep.ulSourceDataLen as usize)
+                .to_vec()
+        }
+    } else {
+        return Err(CKR_MECHANISM_PARAM_INVALID.into());
+    };
+
+    Ok((oaep.hashAlg, mgf_hash, label))
+}

@@ -90,6 +90,33 @@ pub struct VerifyOp {
     pub active: bool,
 }
 
+/// `C_EncryptInit`/`C_Encrypt`/`C_EncryptUpdate`/`C_EncryptFinal` state for
+/// one session — same shape as `SignOp`: unlike decryption, encryption's
+/// output length (`modulus_len`, for every RSA mechanism implemented so far)
+/// is always known from the key alone, before any padding/crypto work runs.
+#[derive(Default)]
+pub struct EncryptOp {
+    pub active: bool,
+    pub out_len: CK_ULONG,
+}
+
+/// `C_DecryptInit`/`C_Decrypt`/`C_DecryptUpdate`/`C_DecryptFinal` state for
+/// one session. Unlike `SignOp`, the output length can't be known upfront
+/// from the key alone (removing PKCS#1/OAEP padding shrinks the plaintext by
+/// a variable amount only known after actually doing the device round-trip
+/// and the unpadding) — so `pending` caches the one-time result of that work
+/// the first time it's needed (whether that's a length-query call or the
+/// real one), and every subsequent call for this same operation (serving a
+/// `CKR_BUFFER_TOO_SMALL` retry, or the matching real call after a length
+/// query) is served from the cache instead of re-touching the device. This
+/// relies on PKCS#11's own documented idiom of passing identical input
+/// across the length-query and real calls of a one-shot function.
+#[derive(Default)]
+pub struct DecryptOp {
+    pub active: bool,
+    pub pending: Option<Vec<u8>>,
+}
+
 /// A single open session on a slot.
 pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
@@ -104,6 +131,8 @@ pub struct Session<S> {
     pub digest_op: Option<DigestOp>,
     pub sign_op: SignOp,
     pub verify_op: VerifyOp,
+    pub encrypt_op: EncryptOp,
+    pub decrypt_op: DecryptOp,
     pub data: S,
 }
 
@@ -311,6 +340,82 @@ pub trait Backend: Sized + 'static {
         _h_session: CK_SESSION_HANDLE,
         _signature: &[u8],
     ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Begin an encrypt operation: validate the mechanism against
+    /// `key_handle` (wrong key type/class → `CKR_KEY_TYPE_INCONSISTENT`/
+    /// `CKR_KEY_HANDLE_INVALID`, unsupported mechanism →
+    /// `CKR_MECHANISM_INVALID`), and stash whatever per-operation state is
+    /// needed in this session's `Backend::SessionData` — opaque to the
+    /// engine, which only tracks whether *some* encrypt operation is active
+    /// and how long its output will be (always computable from the key
+    /// alone for RSA, unlike decrypt). `parameter` is the mechanism's raw
+    /// `pParameter` bytes, empty if the caller didn't supply one. Default:
+    /// not supported.
+    fn encrypt_init(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<CK_ULONG, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Feed more plaintext into the encrypt operation started by
+    /// `encrypt_init`.
+    fn encrypt_update(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _data: &[u8],
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Finalize the encrypt operation started by `encrypt_init`, consuming
+    /// whatever per-operation state was stashed in `Backend::SessionData`
+    /// and returning the ciphertext.
+    fn encrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Begin a decrypt operation: validate the mechanism against
+    /// `key_handle`, and stash whatever per-operation state is needed in
+    /// this session's `Backend::SessionData`. `parameter` is the
+    /// mechanism's raw `pParameter` bytes (e.g. a `CK_RSA_PKCS_OAEP_PARAMS`),
+    /// empty if the caller didn't supply one. Default: not supported.
+    fn decrypt_init(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Feed more ciphertext into the decrypt operation started by
+    /// `decrypt_init`. Unlike `sign_update`, PKCS#11 allows `C_DecryptUpdate`
+    /// to produce incremental plaintext output for streaming mechanisms —
+    /// the engine handles that convention generically (always reporting zero
+    /// output bytes for now, since every mechanism implemented so far is a
+    /// single-block RSA operation with nothing to stream); this only ever
+    /// needs to buffer input.
+    fn decrypt_update(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _data: &[u8],
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Finalize the decrypt operation started by `decrypt_init`, consuming
+    /// whatever per-operation state was stashed in `Backend::SessionData`
+    /// and returning the plaintext. Called at most once per operation by the
+    /// engine (see `DecryptOp::pending`) — safe to do the real device
+    /// round-trip and unpadding unconditionally here.
+    fn decrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 }
@@ -702,6 +807,8 @@ impl<B: Backend> Engine<B> {
                     digest_op: None,
                     sign_op: SignOp::default(),
                     verify_op: VerifyOp::default(),
+                    encrypt_op: EncryptOp::default(),
+                    decrypt_op: DecryptOp::default(),
                     data,
                 },
             );
@@ -1746,6 +1853,556 @@ impl<B: Backend> Engine<B> {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => rv,
             }
+        }
+    }
+
+    pub unsafe fn encrypt_init(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_key: CK_OBJECT_HANDLE,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.encrypt_op.active {
+                return CKR_OPERATION_ACTIVE.into();
+            }
+            if p_mechanism.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            match B::encrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+                Ok(out_len) => {
+                    let session = slot_guard.sessions.get_mut(&h_session).unwrap();
+                    session.encrypt_op = EncryptOp {
+                        active: true,
+                        out_len,
+                    };
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// One-shot encrypt: equivalent to `C_EncryptUpdate` (with whatever data
+    /// is passed) immediately followed by `C_EncryptFinal`. Matches
+    /// `C_Sign`'s own length-query/buffer-too-small short-circuits — no
+    /// login check anywhere (encryption only ever needs public key
+    /// material).
+    pub unsafe fn encrypt(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_data: CK_BYTE_PTR,
+        ul_data_len: CK_ULONG,
+        p_encrypted_data: CK_BYTE_PTR,
+        pul_encrypted_data_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.encrypt_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if p_data.is_null() || pul_encrypted_data_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let out_len = session.encrypt_op.out_len;
+
+            if p_encrypted_data.is_null() {
+                *pul_encrypted_data_len = out_len;
+                return CKR_OK.into();
+            }
+            if *pul_encrypted_data_len < out_len {
+                *pul_encrypted_data_len = out_len;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+
+            let data: &[u8] = if ul_data_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
+            };
+            let result = B::encrypt_update(&mut slot_guard, h_session, data)
+                .and_then(|()| B::encrypt_final(&mut slot_guard, h_session));
+            slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+
+            match result {
+                Ok(ciphertext) => {
+                    std::ptr::copy_nonoverlapping(
+                        ciphertext.as_ptr(),
+                        p_encrypted_data,
+                        ciphertext.len(),
+                    );
+                    *pul_encrypted_data_len = ciphertext.len() as CK_ULONG;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// `C_EncryptUpdate` never produces incremental output for any
+    /// mechanism implemented so far (same reasoning as `decrypt_update`) —
+    /// this only buffers `part` and always reports zero output bytes.
+    pub unsafe fn encrypt_update(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_part: CK_BYTE_PTR,
+        ul_part_len: CK_ULONG,
+        _p_encrypted_part: CK_BYTE_PTR,
+        pul_encrypted_part_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.encrypt_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_encrypted_part_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            *pul_encrypted_part_len = 0;
+            if ul_part_len > 0 && p_part.is_null() {
+                slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_part_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
+            };
+            match B::encrypt_update(&mut slot_guard, h_session, data) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+                    rv
+                }
+            }
+        }
+    }
+
+    pub unsafe fn encrypt_final(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_last_encrypted_part: CK_BYTE_PTR,
+        pul_last_encrypted_part_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.encrypt_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_last_encrypted_part_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let out_len = session.encrypt_op.out_len;
+
+            if p_last_encrypted_part.is_null() {
+                *pul_last_encrypted_part_len = out_len;
+                return CKR_OK.into();
+            }
+            if *pul_last_encrypted_part_len < out_len {
+                *pul_last_encrypted_part_len = out_len;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+
+            let result = B::encrypt_final(&mut slot_guard, h_session);
+            slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+
+            match result {
+                Ok(ciphertext) => {
+                    std::ptr::copy_nonoverlapping(
+                        ciphertext.as_ptr(),
+                        p_last_encrypted_part,
+                        ciphertext.len(),
+                    );
+                    *pul_last_encrypted_part_len = ciphertext.len() as CK_ULONG;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn decrypt_init(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_key: CK_OBJECT_HANDLE,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if session.decrypt_op.active {
+                return CKR_OPERATION_ACTIVE.into();
+            }
+            if p_mechanism.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            match B::decrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+                Ok(()) => {
+                    let session = slot_guard.sessions.get_mut(&h_session).unwrap();
+                    session.decrypt_op = DecryptOp {
+                        active: true,
+                        pending: None,
+                    };
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// One-shot decrypt: equivalent to `C_DecryptUpdate` (with whatever data
+    /// is passed) immediately followed by `C_DecryptFinal`. Unlike
+    /// `C_Sign`'s out_len (known from the key alone, before any crypto
+    /// runs), decrypt's output length is only known after actually removing
+    /// the padding — so the first call here (whether it's a length query or
+    /// the real thing) does the real device round-trip and unpadding once,
+    /// caching the result in `DecryptOp::pending`; a subsequent matching
+    /// call (buffer-too-small retry, or the real call after a length query)
+    /// is served from that cache instead of touching the device again.
+    pub unsafe fn decrypt(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_encrypted_data: CK_BYTE_PTR,
+        ul_encrypted_data_len: CK_ULONG,
+        p_data: CK_BYTE_PTR,
+        pul_data_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.decrypt_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_data_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            if slot_guard
+                .sessions
+                .get(&h_session)
+                .unwrap()
+                .decrypt_op
+                .pending
+                .is_none()
+            {
+                if ul_encrypted_data_len > 0 && p_encrypted_data.is_null() {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    return CKR_ARGUMENTS_BAD.into();
+                }
+                if slot_guard.login_state == LoginState::Public {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    return CKR_USER_NOT_LOGGED_IN.into();
+                }
+
+                let data: &[u8] = if ul_encrypted_data_len == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        p_encrypted_data as *const u8,
+                        ul_encrypted_data_len as usize,
+                    )
+                };
+                let result = B::decrypt_update(&mut slot_guard, h_session, data)
+                    .and_then(|()| B::decrypt_final(&mut slot_guard, h_session));
+                match result {
+                    Ok(plaintext) => {
+                        slot_guard
+                            .sessions
+                            .get_mut(&h_session)
+                            .unwrap()
+                            .decrypt_op
+                            .pending = Some(plaintext);
+                    }
+                    Err(rv) => {
+                        slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
+                            DecryptOp::default();
+                        return rv;
+                    }
+                }
+            }
+
+            let out_len = slot_guard.sessions[&h_session]
+                .decrypt_op
+                .pending
+                .as_ref()
+                .unwrap()
+                .len() as CK_ULONG;
+
+            if p_data.is_null() {
+                *pul_data_len = out_len;
+                return CKR_OK.into();
+            }
+            if *pul_data_len < out_len {
+                *pul_data_len = out_len;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+
+            let plaintext = slot_guard
+                .sessions
+                .get_mut(&h_session)
+                .unwrap()
+                .decrypt_op
+                .pending
+                .take()
+                .unwrap();
+            slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+            std::ptr::copy_nonoverlapping(plaintext.as_ptr(), p_data, plaintext.len());
+            *pul_data_len = plaintext.len() as CK_ULONG;
+            CKR_OK.into()
+        }
+    }
+
+    /// `C_DecryptUpdate` never produces incremental output for any mechanism
+    /// implemented so far (a bare RSA private-key operation has nothing to
+    /// stream) — this only buffers `encrypted_part` and always reports zero
+    /// output bytes, regardless of whether `p_part` is a length query.
+    pub unsafe fn decrypt_update(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_encrypted_part: CK_BYTE_PTR,
+        ul_encrypted_part_len: CK_ULONG,
+        _p_part: CK_BYTE_PTR,
+        pul_part_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.decrypt_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_part_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            *pul_part_len = 0;
+            if ul_encrypted_part_len > 0 && p_encrypted_part.is_null() {
+                slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let data: &[u8] = if ul_encrypted_part_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_encrypted_part as *const u8, ul_encrypted_part_len as usize)
+            };
+            match B::decrypt_update(&mut slot_guard, h_session, data) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    rv
+                }
+            }
+        }
+    }
+
+    pub unsafe fn decrypt_final(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_last_part: CK_BYTE_PTR,
+        pul_last_part_len: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            let session = match slot_guard.sessions.get(&h_session) {
+                Some(s) => s,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            if !session.decrypt_op.active {
+                return CKR_OPERATION_NOT_INITIALIZED.into();
+            }
+            if pul_last_part_len.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            if slot_guard
+                .sessions
+                .get(&h_session)
+                .unwrap()
+                .decrypt_op
+                .pending
+                .is_none()
+            {
+                if slot_guard.login_state == LoginState::Public {
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    return CKR_USER_NOT_LOGGED_IN.into();
+                }
+                match B::decrypt_final(&mut slot_guard, h_session) {
+                    Ok(plaintext) => {
+                        slot_guard
+                            .sessions
+                            .get_mut(&h_session)
+                            .unwrap()
+                            .decrypt_op
+                            .pending = Some(plaintext);
+                    }
+                    Err(rv) => {
+                        slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
+                            DecryptOp::default();
+                        return rv;
+                    }
+                }
+            }
+
+            let out_len = slot_guard.sessions[&h_session]
+                .decrypt_op
+                .pending
+                .as_ref()
+                .unwrap()
+                .len() as CK_ULONG;
+
+            if p_last_part.is_null() {
+                *pul_last_part_len = out_len;
+                return CKR_OK.into();
+            }
+            if *pul_last_part_len < out_len {
+                *pul_last_part_len = out_len;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+
+            let plaintext = slot_guard
+                .sessions
+                .get_mut(&h_session)
+                .unwrap()
+                .decrypt_op
+                .pending
+                .take()
+                .unwrap();
+            slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+            std::ptr::copy_nonoverlapping(plaintext.as_ptr(), p_last_part, plaintext.len());
+            *pul_last_part_len = plaintext.len() as CK_ULONG;
+            CKR_OK.into()
         }
     }
 }

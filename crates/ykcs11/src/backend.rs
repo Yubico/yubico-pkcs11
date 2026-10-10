@@ -30,6 +30,8 @@ pub struct PivBackend;
 pub struct PivSessionData {
     pub sign: Option<crate::sign::SignState>,
     pub verify: Option<crate::verify::VerifyState>,
+    pub encrypt: Option<crate::encrypt::EncryptState>,
+    pub decrypt: Option<crate::decrypt::DecryptState>,
 }
 
 impl Backend for PivBackend {
@@ -322,6 +324,50 @@ impl Backend for PivBackend {
         signature: &[u8],
     ) -> Result<(), CK_RV> {
         crate::verify::verify_final(slot, h_session, signature)
+    }
+
+    fn encrypt_init(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<CK_ULONG, CK_RV> {
+        crate::encrypt::encrypt_init(slot, h_session, mechanism, parameter, key_handle)
+    }
+
+    fn encrypt_update(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        data: &[u8],
+    ) -> Result<(), CK_RV> {
+        crate::encrypt::encrypt_update(slot, h_session, data)
+    }
+
+    fn encrypt_final(slot: &mut Slot<Self>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+        crate::encrypt::encrypt_final(slot, h_session)
+    }
+
+    fn decrypt_init(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        key_handle: CK_OBJECT_HANDLE,
+    ) -> Result<(), CK_RV> {
+        crate::decrypt::decrypt_init(slot, h_session, mechanism, parameter, key_handle)
+    }
+
+    fn decrypt_update(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        data: &[u8],
+    ) -> Result<(), CK_RV> {
+        crate::decrypt::decrypt_update(slot, h_session, data)
+    }
+
+    fn decrypt_final(slot: &mut Slot<Self>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+        crate::decrypt::decrypt_final(slot, h_session)
     }
 }
 

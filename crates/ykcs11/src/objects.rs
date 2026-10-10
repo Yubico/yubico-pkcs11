@@ -1035,12 +1035,12 @@ pub fn object_handles(objects: &[PivObject], include_private: bool) -> Vec<CK_OB
 }
 
 /// The PIV slot and public key backing a private-key object handle, for
-/// `C_SignInit` — `None` for any handle that isn't a `CKO_PRIVATE_KEY`
-/// object, matching `C_SignInit`'s own
+/// `C_SignInit`/`C_DecryptInit` — `None` for any handle that isn't a
+/// `CKO_PRIVATE_KEY` object, matching `C_SignInit`'s own
 /// `hKey < PIV_PVTK_OBJ_PIV_AUTH || hKey > PIV_PVTK_OBJ_ATTESTATION` range
-/// check (ykcs11.c:2872), just expressed via the object's class instead of
-/// a contiguous handle range.
-pub fn find_signing_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
+/// check (ykcs11.c:2872) — `C_DecryptInit`'s is identical (ykcs11.c:2347-
+/// 2351) since both operations use the same private-key object class.
+pub fn find_private_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
     let obj = objects.iter().find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
     if obj.class != ObjectClass::PrivateKey {
         return None;

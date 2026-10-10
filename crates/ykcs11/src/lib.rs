@@ -8,7 +8,9 @@ extern crate pkcs11_common;
 extern crate yubikit;
 
 mod backend;
+mod decrypt;
 mod discovery;
+mod encrypt;
 mod dispatch;
 mod mechanisms;
 mod objects;

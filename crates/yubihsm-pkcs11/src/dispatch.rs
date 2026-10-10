@@ -403,6 +403,116 @@ pub unsafe extern "C" fn C_VerifyFinal(
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_EncryptInit(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hKey: CK_OBJECT_HANDLE,
+) -> CK_RV {
+    unsafe { traced!("C_EncryptInit", G_ENGINE.encrypt_init(hSession, pMechanism, hKey)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_Encrypt(
+    hSession: CK_SESSION_HANDLE,
+    pData: CK_BYTE_PTR,
+    ulDataLen: CK_ULONG,
+    pEncryptedData: CK_BYTE_PTR,
+    pulEncryptedDataLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_Encrypt",
+            G_ENGINE.encrypt(hSession, pData, ulDataLen, pEncryptedData, pulEncryptedDataLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_EncryptUpdate(
+    hSession: CK_SESSION_HANDLE,
+    pPart: CK_BYTE_PTR,
+    ulPartLen: CK_ULONG,
+    pEncryptedPart: CK_BYTE_PTR,
+    pulEncryptedPartLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_EncryptUpdate",
+            G_ENGINE.encrypt_update(hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_EncryptFinal(
+    hSession: CK_SESSION_HANDLE,
+    pLastEncryptedPart: CK_BYTE_PTR,
+    pulLastEncryptedPartLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_EncryptFinal",
+            G_ENGINE.encrypt_final(hSession, pLastEncryptedPart, pulLastEncryptedPartLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DecryptInit(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hKey: CK_OBJECT_HANDLE,
+) -> CK_RV {
+    unsafe { traced!("C_DecryptInit", G_ENGINE.decrypt_init(hSession, pMechanism, hKey)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_Decrypt(
+    hSession: CK_SESSION_HANDLE,
+    pEncryptedData: CK_BYTE_PTR,
+    ulEncryptedDataLen: CK_ULONG,
+    pData: CK_BYTE_PTR,
+    pulDataLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_Decrypt",
+            G_ENGINE.decrypt(hSession, pEncryptedData, ulEncryptedDataLen, pData, pulDataLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DecryptUpdate(
+    hSession: CK_SESSION_HANDLE,
+    pEncryptedPart: CK_BYTE_PTR,
+    ulEncryptedPartLen: CK_ULONG,
+    pPart: CK_BYTE_PTR,
+    pulPartLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DecryptUpdate",
+            G_ENGINE.decrypt_update(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DecryptFinal(
+    hSession: CK_SESSION_HANDLE,
+    pLastPart: CK_BYTE_PTR,
+    pulLastPartLen: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DecryptFinal",
+            G_ENGINE.decrypt_final(hSession, pLastPart, pulLastPartLen)
+        )
+    }
+}
+
 // ============================================================
 // Function List (PKCS#11 3.0 compatible, using CK_FUNCTION_LIST)
 // ============================================================
@@ -453,4 +563,17 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_verify: Some(C_Verify),
     c_verify_update: Some(C_VerifyUpdate),
     c_verify_final: Some(C_VerifyFinal),
+    // Encryption/decryption aren't implemented for yubihsm-pkcs11 yet (same
+    // object-model gap as Sign/Verify) — these route through the shared
+    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::encrypt_init's/decrypt_init's default impls since
+    // YubiHsmBackend doesn't override them.
+    c_encrypt_init: Some(C_EncryptInit),
+    c_encrypt: Some(C_Encrypt),
+    c_encrypt_update: Some(C_EncryptUpdate),
+    c_encrypt_final: Some(C_EncryptFinal),
+    c_decrypt_init: Some(C_DecryptInit),
+    c_decrypt: Some(C_Decrypt),
+    c_decrypt_update: Some(C_DecryptUpdate),
+    c_decrypt_final: Some(C_DecryptFinal),
 });
