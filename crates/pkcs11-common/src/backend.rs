@@ -418,6 +418,23 @@ pub trait Backend: Sized + 'static {
     fn decrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
+
+    /// Generate a key pair, validating both templates and the mechanism,
+    /// and returning `(public_key_handle, private_key_handle)`. Unlike
+    /// sign/verify/encrypt/decrypt this is a single atomic call — no
+    /// `Init`/`Update`/`Final` split, no per-session operation state for the
+    /// engine to track. `public_key_template`/`private_key_template` are
+    /// each `(attribute type, raw value bytes)` pairs, already extracted
+    /// from the caller's `CK_ATTRIBUTE` arrays. Default: not supported.
+    fn generate_key_pair(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+        _private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
 }
 
 /// The shared Cryptoki engine. One `static` instance per module, generic
@@ -2403,6 +2420,82 @@ impl<B: Backend> Engine<B> {
             std::ptr::copy_nonoverlapping(plaintext.as_ptr(), p_last_part, plaintext.len());
             *pul_last_part_len = plaintext.len() as CK_ULONG;
             CKR_OK.into()
+        }
+    }
+
+    pub unsafe fn generate_key_pair(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        p_public_key_template: CK_ATTRIBUTE_PTR,
+        ul_public_key_attribute_count: CK_ULONG,
+        p_private_key_template: CK_ATTRIBUTE_PTR,
+        ul_private_key_attribute_count: CK_ULONG,
+        ph_public_key: CK_OBJECT_HANDLE_PTR,
+        ph_private_key: CK_OBJECT_HANDLE_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if p_mechanism.is_null() || ph_public_key.is_null() || ph_private_key.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            if (ul_public_key_attribute_count > 0 && p_public_key_template.is_null())
+                || (ul_private_key_attribute_count > 0 && p_private_key_template.is_null())
+            {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let extract_template = |p: CK_ATTRIBUTE_PTR, count: CK_ULONG| -> Vec<(CK_ATTRIBUTE_TYPE, Vec<u8>)> {
+                if count == 0 {
+                    return Vec::new();
+                }
+                let attrs = std::slice::from_raw_parts(p, count as usize);
+                attrs
+                    .iter()
+                    .map(|a| {
+                        let value = if a.pValue.is_null() || a.ulValueLen == 0 {
+                            Vec::new()
+                        } else {
+                            std::slice::from_raw_parts(a.pValue as *const u8, a.ulValueLen as usize).to_vec()
+                        };
+                        (a.type_, value)
+                    })
+                    .collect()
+            };
+
+            let mechanism = (*p_mechanism).mechanism;
+            let public_key_template =
+                extract_template(p_public_key_template, ul_public_key_attribute_count);
+            let private_key_template =
+                extract_template(p_private_key_template, ul_private_key_attribute_count);
+
+            match B::generate_key_pair(
+                &mut slot_guard,
+                h_session,
+                mechanism,
+                &public_key_template,
+                &private_key_template,
+            ) {
+                Ok((pub_handle, priv_handle)) => {
+                    *ph_public_key = pub_handle;
+                    *ph_private_key = priv_handle;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
         }
     }
 }

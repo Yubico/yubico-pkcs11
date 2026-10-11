@@ -11,6 +11,7 @@ mod backend;
 mod decrypt;
 mod discovery;
 mod encrypt;
+mod generate;
 mod dispatch;
 mod mechanisms;
 mod objects;

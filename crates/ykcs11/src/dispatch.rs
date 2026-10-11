@@ -516,6 +516,34 @@ pub unsafe extern "C" fn C_DecryptFinal(
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GenerateKeyPair(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    pPublicKeyTemplate: CK_ATTRIBUTE_PTR,
+    ulPublicKeyAttributeCount: CK_ULONG,
+    pPrivateKeyTemplate: CK_ATTRIBUTE_PTR,
+    ulPrivateKeyAttributeCount: CK_ULONG,
+    phPublicKey: CK_OBJECT_HANDLE_PTR,
+    phPrivateKey: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GenerateKeyPair",
+            G_ENGINE.generate_key_pair(
+                hSession,
+                pMechanism,
+                pPublicKeyTemplate,
+                ulPublicKeyAttributeCount,
+                pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount,
+                phPublicKey,
+                phPrivateKey,
+            )
+        )
+    }
+}
+
 // ============================================================
 // Function List
 // ============================================================
@@ -563,4 +591,5 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_decrypt: Some(C_Decrypt),
     c_decrypt_update: Some(C_DecryptUpdate),
     c_decrypt_final: Some(C_DecryptFinal),
+    c_generate_key_pair: Some(C_GenerateKeyPair),
 });

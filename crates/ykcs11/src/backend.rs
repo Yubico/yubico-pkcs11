@@ -369,6 +369,22 @@ impl Backend for PivBackend {
     fn decrypt_final(slot: &mut Slot<Self>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
         crate::decrypt::decrypt_final(slot, h_session)
     }
+
+    fn generate_key_pair(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+        private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE), CK_RV> {
+        crate::generate::generate_key_pair(
+            slot,
+            h_session,
+            mechanism,
+            public_key_template,
+            private_key_template,
+        )
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for

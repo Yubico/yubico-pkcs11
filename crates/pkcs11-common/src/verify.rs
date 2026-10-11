@@ -197,15 +197,34 @@ pub fn verify_rsa_pss(
     )
 }
 
+/// Applies SEC1 §2.3.8's `bits2int` conversion by hand: left-truncate an
+/// over-length digest to `curve_byte_len`, left-zero-pad an under-length
+/// one. Needed because `ecdsa::Signature::verify_prehash` doesn't just do
+/// this — it calls `bits2field` internally, which *additionally* rejects
+/// any input shorter than *half* the curve's field width (`ecdsa` crate's
+/// own defensive minimum, not a SEC1/PKCS#11 requirement). That silently
+/// breaks `CKM_ECDSA_SHA1` against a P-384 key: a 20-byte digest is below
+/// P-384's 24-byte half-field threshold, so `verify_prehash` errors out
+/// before any actual verification math runs, rejecting a perfectly valid
+/// signature (confirmed independently: a real P-384 keypair + real
+/// `ECDSA-SHA1` signature, built with Python's `cryptography` library,
+/// reproduced this exact rejection; pre-sizing the digest ourselves first
+/// fixes it). Pre-sizing to exactly `curve_byte_len` here means
+/// `bits2field` always sees an already-correct-length input and passes it
+/// through unchanged, regardless of the original digest's length.
+fn bits2field_manual(digest: &[u8], curve_byte_len: usize) -> Vec<u8> {
+    let mut field_bytes = vec![0u8; curve_byte_len];
+    if digest.len() >= curve_byte_len {
+        field_bytes.copy_from_slice(&digest[..curve_byte_len]);
+    } else {
+        field_bytes[curve_byte_len - digest.len()..].copy_from_slice(digest);
+    }
+    field_bytes
+}
+
 /// `CKM_ECDSA`/`CKM_ECDSA_SHAx` verify. `point` is the key's raw SEC1 point
 /// bytes (the same bytes `CKA_EC_POINT` wraps); `signature` is PKCS#11's
-/// fixed-width `r || s`. No manual truncation of `prehash` to the curve's
-/// field width is needed here (unlike the signing side, where
-/// `yubikit::piv::sign()` is a dumb passthrough) — `ecdsa::Signature`'s own
-/// `verify_prehash` already reduces an over/under-length digest via
-/// `bits2field` (SEC1 §2.3.8's `bits2int`), which left-truncates/left-pads
-/// exactly like the PIV hardware does when signing (both rules agree
-/// byte-for-byte here since P-256/P-384's order is itself byte-aligned).
+/// fixed-width `r || s`.
 pub fn verify_ecdsa(
     curve_byte_len: usize,
     point: &[u8],
@@ -217,6 +236,7 @@ pub fn verify_ecdsa(
     if signature.len() != curve_byte_len * 2 {
         return Err(CKR_SIGNATURE_LEN_RANGE.into());
     }
+    let prehash = bits2field_manual(prehash, curve_byte_len);
 
     match curve_byte_len {
         32 => {
@@ -225,7 +245,7 @@ pub fn verify_ecdsa(
             let vk: p256::ecdsa::VerifyingKey = pk.into();
             let sig = p256::ecdsa::Signature::from_slice(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
-            vk.verify_prehash(prehash, &sig)
+            vk.verify_prehash(&prehash, &sig)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
         }
         48 => {
@@ -234,7 +254,7 @@ pub fn verify_ecdsa(
             let vk: p384::ecdsa::VerifyingKey = pk.into();
             let sig = p384::ecdsa::Signature::from_slice(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
-            vk.verify_prehash(prehash, &sig)
+            vk.verify_prehash(&prehash, &sig)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
         }
         // Callers only ever resolve 32 (P-256) or 48 (P-384).
@@ -430,6 +450,55 @@ mod tests {
             verify_ecdsa(32, point.as_bytes(), &prehash, &raw),
             Err(CKR_SIGNATURE_INVALID.into())
         );
+    }
+
+    /// Regression test for a real bug: `CKM_ECDSA_SHA1` (a 20-byte digest)
+    /// against a P-384 key (48-byte field, 24-byte half-field minimum) used
+    /// to always fail, because `ecdsa::Signature::verify_prehash`'s
+    /// internal `bits2field` call rejects anything shorter than half the
+    /// field width — a stricter-than-SEC1/PKCS#11 requirement this
+    /// function now works around by pre-sizing the digest itself
+    /// (`bits2field_manual`) before ever calling into `verify_prehash`.
+    /// Can't build this fixture with this crate's own `sign_prehash` (it
+    /// hits the *exact same* `bits2field` minimum when signing, so it
+    /// can't produce a short-digest signature to test against) — so this
+    /// uses a real P-384 keypair, a real `ECDSA-SHA1` signature, and a real
+    /// SHA-1 digest, all independently generated with Python's
+    /// `cryptography` library (confirmed there to verify correctly),
+    /// matching this project's existing practice of using independently-
+    /// sourced reference vectors rather than self-referential round trips
+    /// when the round trip itself can't be constructed.
+    #[test]
+    fn verify_ecdsa_p384_accepts_a_short_digest_below_bits2fields_own_minimum() {
+        let point = hex(
+            "046f6c874601e0ac461e4916cccf0e3b7dc312411075dc036460a80b7e8189546cc4525388e894d2c03603858de264eb3942aaf68e28a5094e6e84596b8fd779555136061b30362d5835881c2e38a839979ac10526787bd6997b2953529c461955",
+        );
+        let sha1_digest = hex("7e0158d38462b3d08339790de6c4dde18390264e");
+        let signature = hex(
+            "2b3162e57bdb0b97a03758468c9eb6b2225a55f08694db4cd87c824080183bf797942d41cd30fefcffd1ba1a8539a645d4e62a6c0392468273dbcdf61b5c9ebfa14f3812867de8be742367da3b8ff3928f261b3fb8ae2b71b6b1510ecf2773c0",
+        );
+
+        verify_ecdsa(48, &point, &sha1_digest, &signature).unwrap();
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn verify_ecdsa_p384_accepts_a_genuine_signature() {
+        let sk = p384::ecdsa::SigningKey::from_bytes(&[0x7Au8; 48].into()).unwrap();
+        let vk = p384::ecdsa::VerifyingKey::from(&sk);
+        let point = vk.to_encoded_point(false);
+        let prehash = [0x55u8; 48];
+
+        use p384::ecdsa::signature::hazmat::PrehashSigner;
+        let sig: p384::ecdsa::Signature = sk.sign_prehash(&prehash).unwrap();
+
+        verify_ecdsa(48, point.as_bytes(), &prehash, &sig.to_bytes()).unwrap();
     }
 
     #[test]

@@ -16,7 +16,12 @@ parking_lot = { workspace = true }
 log = { workspace = true }
 getrandom = "0.4"
 der = "0.7"
-x509-cert = "0.2"
-p256 = { version = "0.13", features = ["ecdsa"] }
+x509-cert = { version = "0.2", features = ["builder"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 p384 = { version = "0.13", features = ["ecdsa"] }
+# "oid" is needed for ecdsa-core's `SignatureAlgorithmIdentifier` impl
+# (x509-cert's CertificateBuilder needs it to self-sign the placeholder
+# cert in generate.rs) -- not on by default, and p256's own "sha256"
+# feature doesn't turn it on either.
+sha2 = { version = "0.10", features = ["oid"] }
 yubikit = { git = "https://github.com/Yubico/yubikey-manager.git", branch = "experiment/rust", default-features = false, features = ["pcsc"] }

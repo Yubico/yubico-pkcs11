@@ -459,6 +459,34 @@ pub unsafe extern "C" fn C_EncryptFinal(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GenerateKeyPair(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    pPublicKeyTemplate: CK_ATTRIBUTE_PTR,
+    ulPublicKeyAttributeCount: CK_ULONG,
+    pPrivateKeyTemplate: CK_ATTRIBUTE_PTR,
+    ulPrivateKeyAttributeCount: CK_ULONG,
+    phPublicKey: CK_OBJECT_HANDLE_PTR,
+    phPrivateKey: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GenerateKeyPair",
+            G_ENGINE.generate_key_pair(
+                hSession,
+                pMechanism,
+                pPublicKeyTemplate,
+                ulPublicKeyAttributeCount,
+                pPrivateKeyTemplate,
+                ulPrivateKeyAttributeCount,
+                phPublicKey,
+                phPrivateKey,
+            )
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_DecryptInit(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -576,4 +604,10 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_decrypt: Some(C_Decrypt),
     c_decrypt_update: Some(C_DecryptUpdate),
     c_decrypt_final: Some(C_DecryptFinal),
+    // Key generation isn't implemented for yubihsm-pkcs11 yet (same
+    // object-model gap as Sign/Verify/Encrypt/Decrypt) — routes through the
+    // shared engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::generate_key_pair's default impl since YubiHsmBackend
+    // doesn't override it.
+    c_generate_key_pair: Some(C_GenerateKeyPair),
 });
