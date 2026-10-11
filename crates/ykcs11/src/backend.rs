@@ -158,6 +158,7 @@ impl Backend for PivBackend {
 
     fn login(
         slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
         user_type: CK_USER_TYPE,
         pin: &[u8],
         _username: &[u8],
@@ -175,14 +176,18 @@ impl Backend for PivBackend {
         // CKU_CONTEXT_SPECIFIC is only legal while a sign/decrypt operation
         // is in progress on the calling session, to satisfy a key's
         // CKA_ALWAYS_AUTHENTICATE PIN-per-operation requirement
-        // (ykcs11.c:1290-1296). Signing operations are now tracked
-        // (`Session::sign_op`/`PivBackend::SessionData`), but honoring this
-        // mid-operation re-authentication flow is a separate feature from
-        // plain C_SignInit/C_Sign support and isn't implemented yet — every
-        // CKU_CONTEXT_SPECIFIC login is rejected unconditionally for now,
-        // same outward behavior as before this comment was last true.
+        // (ykcs11.c:1290-1296). `sign_op`/`decrypt_op` are the engine's own
+        // generic bookkeeping (set active at *Init, cleared at *Final),
+        // exactly mirroring the lifetime of the C reference's
+        // `session->op_info.type`.
         if user_type == CKU_CONTEXT_SPECIFIC as CK_USER_TYPE {
-            return Err(CKR_USER_TYPE_INVALID.into());
+            let op_in_progress = slot
+                .sessions
+                .get(&h_session)
+                .is_some_and(|s| s.sign_op.active || s.decrypt_op.active);
+            if !op_in_progress {
+                return Err(CKR_USER_TYPE_INVALID.into());
+            }
         }
 
         let piv = slot
@@ -191,17 +196,22 @@ impl Backend for PivBackend {
             .as_mut()
             .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
 
-        // Safe to narrow: already validated above to be CKU_SO or CKU_USER,
-        // both small enough to round-trip through u32 (CK_USER_TYPE is only
-        // ever u32 or u64 depending on platform).
+        // Safe to narrow: already validated above to be CKU_SO, CKU_USER, or
+        // CKU_CONTEXT_SPECIFIC, all small enough to round-trip through u32
+        // (CK_USER_TYPE is only ever u32 or u64 depending on platform).
         match user_type as u32 {
-            CKU_USER => {
-                // Matches ykcs11.c:1301-1314.
-                if slot.login_state == LoginState::User {
-                    return Err(CKR_USER_ALREADY_LOGGED_IN.into());
-                }
-                if slot.login_state == LoginState::SO {
-                    return Err(CKR_USER_ANOTHER_ALREADY_LOGGED_IN.into());
+            CKU_USER | CKU_CONTEXT_SPECIFIC => {
+                // Matches ykcs11.c:1301-1314 — these "already logged in"
+                // rejections only apply to a plain CKU_USER login; the C
+                // reference deliberately allows repeat CKU_CONTEXT_SPECIFIC
+                // logins on top of an existing session (ykcs11.c:1300/1308).
+                if user_type == CKU_USER as CK_USER_TYPE {
+                    if slot.login_state == LoginState::User {
+                        return Err(CKR_USER_ALREADY_LOGGED_IN.into());
+                    }
+                    if slot.login_state == LoginState::SO {
+                        return Err(CKR_USER_ANOTHER_ALREADY_LOGGED_IN.into());
+                    }
                 }
 
                 verify_user_pin(piv, pin)?;
@@ -385,6 +395,14 @@ impl Backend for PivBackend {
             private_key_template,
         )
     }
+
+    fn create_object(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
+        crate::create_object::create_object(slot, h_session, template)
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for
@@ -469,3 +487,72 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
 }
 
 pub static G_ENGINE: Engine<PivBackend> = Engine::new();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pkcs11_common::backend::{DecryptOp, EncryptOp, FindOp, Session, SignOp, VerifyOp};
+    use std::collections::HashMap;
+
+    fn slot_with_session(h_session: CK_SESSION_HANDLE, sign_active: bool, decrypt_active: bool) -> Slot<PivBackend> {
+        let mut sessions = HashMap::new();
+        sessions.insert(
+            h_session,
+            Session {
+                handle: h_session,
+                flags: 0,
+                find_op: FindOp::default(),
+                digest_op: None,
+                sign_op: SignOp {
+                    active: sign_active,
+                    ..Default::default()
+                },
+                verify_op: VerifyOp::default(),
+                encrypt_op: EncryptOp::default(),
+                decrypt_op: DecryptOp {
+                    active: decrypt_active,
+                    ..Default::default()
+                },
+                data: PivSessionData::default(),
+            },
+        );
+        Slot {
+            login_state: LoginState::Public,
+            sessions,
+            data: crate::piv_slot::PivSlotData::new("test reader".to_string()),
+        }
+    }
+
+    #[test]
+    fn context_specific_login_rejected_with_no_operation_in_progress() {
+        let mut slot = slot_with_session(1, false, false);
+        let rv = PivBackend::login(&mut slot, 1, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        assert_eq!(rv, Err(CKR_USER_TYPE_INVALID.into()));
+    }
+
+    #[test]
+    fn context_specific_login_passes_the_gate_while_a_sign_operation_is_active() {
+        let mut slot = slot_with_session(1, true, false);
+        // No real `piv_session` is wired up in this test, so once the
+        // CKU_CONTEXT_SPECIFIC gate is passed, the next thing `login` does
+        // is look up `slot.data.piv_session` and fail with
+        // CKR_TOKEN_NOT_PRESENT -- proving it got past the gate instead of
+        // being rejected with CKR_USER_TYPE_INVALID.
+        let rv = PivBackend::login(&mut slot, 1, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        assert_eq!(rv, Err(CKR_TOKEN_NOT_PRESENT.into()));
+    }
+
+    #[test]
+    fn context_specific_login_passes_the_gate_while_a_decrypt_operation_is_active() {
+        let mut slot = slot_with_session(1, false, true);
+        let rv = PivBackend::login(&mut slot, 1, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        assert_eq!(rv, Err(CKR_TOKEN_NOT_PRESENT.into()));
+    }
+
+    #[test]
+    fn context_specific_login_rejected_on_an_unknown_session_handle() {
+        let mut slot = slot_with_session(1, true, true);
+        let rv = PivBackend::login(&mut slot, 2, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        assert_eq!(rv, Err(CKR_USER_TYPE_INVALID.into()));
+    }
+}

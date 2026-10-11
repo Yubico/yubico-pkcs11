@@ -8,6 +8,7 @@ extern crate pkcs11_common;
 extern crate yubikit;
 
 mod backend;
+mod create_object;
 mod decrypt;
 mod discovery;
 mod encrypt;
@@ -17,6 +18,7 @@ mod mechanisms;
 mod objects;
 mod piv_slot;
 mod sign;
+mod template;
 mod verify;
 
 pub use dispatch::*;

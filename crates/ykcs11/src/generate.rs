@@ -34,27 +34,18 @@
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;
+use crate::template::{
+    P256_CURVE_OID, P384_CURVE_OID, find_attr, find_byte, require_so_login, resolve_policies,
+};
 use der::{Decode, Encode};
 use pkcs11_common::backend::Slot;
-use pkcs11_common::session::LoginState;
 use pkcs11_sys::*;
 use x509_cert::builder::{Builder, CertificateBuilder, Profile};
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::SubjectPublicKeyInfoOwned;
 use x509_cert::time::Validity;
-use yubikit::piv::{KeyType, PinPolicy, Slot as PivSlot, TouchPolicy};
-
-/// `prime256v1`/P-256 (1.2.840.10045.3.1.7) as a DER `OBJECT IDENTIFIER` —
-/// independently re-derived via base-128 arc encoding (not transcribed):
-/// first arc pair `1,2` → `40*1+2 = 42 = 0x2A`; `840` → `0x86,0x48`
-/// (6*128+72); `10045` → `0xCE,0x3D` (78*128+61, continuation bit set on
-/// `0xCE`); `3,1,7` → `0x03,0x01,0x07`.
-const P256_CURVE_OID: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
-/// `secp384r1`/P-384 (1.3.132.0.34) as a DER `OBJECT IDENTIFIER` — same
-/// re-derivation: `1,3` → `40*1+3 = 43 = 0x2B`; `132` → `0x81,0x04`
-/// (1*128+4); `0` → `0x00`; `34` → `0x22`.
-const P384_CURVE_OID: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
+use yubikit::piv::{KeyType, Slot as PivSlot};
 
 enum KeyFamily {
     Rsa,
@@ -71,24 +62,6 @@ fn classify_generate_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<KeyFamily
         CKM_EC_MONTGOMERY_KEY_PAIR_GEN => KeyFamily::X25519,
         _ => return None,
     })
-}
-
-fn find_attr<'a>(template: &'a [(CK_ATTRIBUTE_TYPE, Vec<u8>)], attr: u32) -> Option<&'a [u8]> {
-    template
-        .iter()
-        .find(|(t, _)| *t == attr as CK_ATTRIBUTE_TYPE)
-        .map(|(_, v)| v.as_slice())
-}
-
-fn find_byte(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)], attr: u32) -> Result<Option<u8>, CK_RV> {
-    match find_attr(template, attr) {
-        Some(bytes) => Ok(Some(
-            *bytes
-                .first()
-                .ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        )),
-        None => Ok(None),
-    }
 }
 
 /// `CKA_ID`, required in at least one template — present in both, they must
@@ -208,39 +181,6 @@ fn resolve_key_type(
     }
 }
 
-/// `CKA_YUBICO_PIN_POLICY`/`CKA_YUBICO_TOUCH_POLICY` (objects.c:3047-3079),
-/// plus `CKA_ALWAYS_AUTHENTICATE` forcing `PinPolicy::Always` (objects.c:
-/// 3023-3046) — conflicting with an already-explicit non-`Always` pin
-/// policy is `CKR_TEMPLATE_INCONSISTENT`.
-fn resolve_policies(
-    private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
-) -> Result<(PinPolicy, TouchPolicy), CK_RV> {
-    let mut pin_policy = match find_byte(private_key_template, CKA_YUBICO_PIN_POLICY)? {
-        Some(b) => PinPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        None => PinPolicy::Default,
-    };
-    let touch_policy = match find_byte(private_key_template, CKA_YUBICO_TOUCH_POLICY)? {
-        Some(b) => TouchPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        None => TouchPolicy::Default,
-    };
-    if let Some(always) = find_byte(private_key_template, CKA_ALWAYS_AUTHENTICATE)? {
-        if always != 0 {
-            match pin_policy {
-                PinPolicy::Default => pin_policy = PinPolicy::Always,
-                PinPolicy::Always => {}
-                _ => return Err(CKR_TEMPLATE_INCONSISTENT.into()),
-            }
-        } else if matches!(pin_policy, PinPolicy::Always) {
-            return Err(CKR_TEMPLATE_INCONSISTENT.into());
-        }
-    }
-    Ok((pin_policy, touch_policy))
-}
-
-const CKA_YUBICO: u32 = CKA_VENDOR_DEFINED + 0x59554200;
-const CKA_YUBICO_TOUCH_POLICY: u32 = CKA_YUBICO + 1;
-const CKA_YUBICO_PIN_POLICY: u32 = CKA_YUBICO + 2;
-
 fn random_p256_signing_key() -> Result<p256::ecdsa::SigningKey, CK_RV> {
     loop {
         let mut bytes = [0u8; 32];
@@ -310,9 +250,7 @@ pub fn generate_key_pair(
     // Matches C_GenerateKeyPair's own login check (ykcs11.c:3587-3592):
     // requires SO (PIV management key) authentication, not just a verified
     // PIN — generating a new key is a card-management operation.
-    if slot.login_state != LoginState::SO {
-        return Err(CKR_USER_TYPE_INVALID.into());
-    }
+    require_so_login(slot.login_state)?;
 
     let Some(family) = classify_generate_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
@@ -354,7 +292,9 @@ pub fn generate_key_pair(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::objects::CKA_YUBICO_PIN_POLICY;
     use yubikit::keys::{EcCurve, EcPublicKey, PublicKey};
+    use yubikit::piv::{PinPolicy, TouchPolicy};
 
     fn attr(ty: u32, value: &[u8]) -> (CK_ATTRIBUTE_TYPE, Vec<u8>) {
         (ty as CK_ATTRIBUTE_TYPE, value.to_vec())

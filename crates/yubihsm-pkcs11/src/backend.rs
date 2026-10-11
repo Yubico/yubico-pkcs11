@@ -153,6 +153,7 @@ impl Backend for YubiHsmBackend {
 
     fn login(
         slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
         user_type: CK_USER_TYPE,
         pin: &[u8],
         username: &[u8],

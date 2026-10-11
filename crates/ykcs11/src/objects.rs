@@ -36,8 +36,8 @@ use yubikit::smartcard::{SmartCardError, Sw};
 /// Yubico defined attributes
 const YUBICO_BASE_VENDOR: u32 = 0x59554200;
 const CKA_YUBICO: u32 = CKA_VENDOR_DEFINED + YUBICO_BASE_VENDOR;
-const CKA_YUBICO_TOUCH_POLICY: u32 = CKA_YUBICO + 1;
-const CKA_YUBICO_PIN_POLICY: u32 = CKA_YUBICO + 2;
+pub(crate) const CKA_YUBICO_TOUCH_POLICY: u32 = CKA_YUBICO + 1;
+pub(crate) const CKA_YUBICO_PIN_POLICY: u32 = CKA_YUBICO + 2;
 
 /// YKPIV_OID_USAGE_POLICY (ykpiv.h:808) — the Yubico-private X.509 extension
 /// an attestation certificate carries its origin slot's PIN/touch policy in.

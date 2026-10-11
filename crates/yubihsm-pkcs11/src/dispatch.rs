@@ -459,6 +459,21 @@ pub unsafe extern "C" fn C_EncryptFinal(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_CreateObject(
+    hSession: CK_SESSION_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulCount: CK_ULONG,
+    phObject: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_CreateObject",
+            G_ENGINE.create_object(hSession, pTemplate, ulCount, phObject)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -610,4 +625,10 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     // Backend::generate_key_pair's default impl since YubiHsmBackend
     // doesn't override it.
     c_generate_key_pair: Some(C_GenerateKeyPair),
+    // Object creation/import isn't implemented for yubihsm-pkcs11 yet (same
+    // object-model gap as everything else) — routes through the shared
+    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::create_object's default impl since YubiHsmBackend doesn't
+    // override it.
+    c_create_object: Some(C_CreateObject),
 });

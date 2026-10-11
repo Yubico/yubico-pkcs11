@@ -224,8 +224,12 @@ pub trait Backend: Sized + 'static {
     /// `username` is the PKCS#11 3.0 `C_LoginUser` identity string, empty
     /// when called from the base `C_Login` (which has no such concept) —
     /// backends that don't distinguish users (e.g. ykcs11) can ignore it.
+    /// `h_session` identifies the calling session, needed by backends that
+    /// support `CKU_CONTEXT_SPECIFIC` (legal only while a sign/decrypt
+    /// operation is active on that exact session).
     fn login(
         slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
         user_type: CK_USER_TYPE,
         pin: &[u8],
         username: &[u8],
@@ -434,6 +438,46 @@ pub trait Backend: Sized + 'static {
         _private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE), CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Create (import) an object from a single template, returning its
+    /// handle. `template` is `(attribute type, raw value bytes)` pairs,
+    /// already extracted from the caller's `CK_ATTRIBUTE` array. Same
+    /// single-atomic-call shape as `generate_key_pair` — no engine-tracked
+    /// operation state. Default: not supported.
+    fn create_object(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+}
+
+/// Extracts a `CK_ATTRIBUTE` array into owned `(type, value bytes)` pairs —
+/// shared by `Engine::generate_key_pair` (two templates) and
+/// `Engine::create_object` (one), both of which hand their `Backend` impl
+/// already-safe owned data rather than raw pointers.
+unsafe fn extract_attribute_template(
+    p: CK_ATTRIBUTE_PTR,
+    count: CK_ULONG,
+) -> Vec<(CK_ATTRIBUTE_TYPE, Vec<u8>)> {
+    unsafe {
+        if count == 0 {
+            return Vec::new();
+        }
+        let attrs = std::slice::from_raw_parts(p, count as usize);
+        attrs
+            .iter()
+            .map(|a| {
+                let value = if a.pValue.is_null() || a.ulValueLen == 0 {
+                    Vec::new()
+                } else {
+                    std::slice::from_raw_parts(a.pValue as *const u8, a.ulValueLen as usize).to_vec()
+                };
+                (a.type_, value)
+            })
+            .collect()
     }
 }
 
@@ -942,7 +986,7 @@ impl<B: Backend> Engine<B> {
                 std::slice::from_raw_parts(p_username as *const u8, ul_username_len as usize)
             };
 
-            match B::login(&mut slot_guard, user_type, pin, username) {
+            match B::login(&mut slot_guard, h_session, user_type, pin, username) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => rv,
             }
@@ -2458,29 +2502,11 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let extract_template = |p: CK_ATTRIBUTE_PTR, count: CK_ULONG| -> Vec<(CK_ATTRIBUTE_TYPE, Vec<u8>)> {
-                if count == 0 {
-                    return Vec::new();
-                }
-                let attrs = std::slice::from_raw_parts(p, count as usize);
-                attrs
-                    .iter()
-                    .map(|a| {
-                        let value = if a.pValue.is_null() || a.ulValueLen == 0 {
-                            Vec::new()
-                        } else {
-                            std::slice::from_raw_parts(a.pValue as *const u8, a.ulValueLen as usize).to_vec()
-                        };
-                        (a.type_, value)
-                    })
-                    .collect()
-            };
-
             let mechanism = (*p_mechanism).mechanism;
             let public_key_template =
-                extract_template(p_public_key_template, ul_public_key_attribute_count);
+                extract_attribute_template(p_public_key_template, ul_public_key_attribute_count);
             let private_key_template =
-                extract_template(p_private_key_template, ul_private_key_attribute_count);
+                extract_attribute_template(p_private_key_template, ul_private_key_attribute_count);
 
             match B::generate_key_pair(
                 &mut slot_guard,
@@ -2492,6 +2518,44 @@ impl<B: Backend> Engine<B> {
                 Ok((pub_handle, priv_handle)) => {
                     *ph_public_key = pub_handle;
                     *ph_private_key = priv_handle;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn create_object(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_template: CK_ATTRIBUTE_PTR,
+        ul_count: CK_ULONG,
+        ph_object: CK_OBJECT_HANDLE_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if ph_object.is_null() || (ul_count > 0 && p_template.is_null()) {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let template = extract_attribute_template(p_template, ul_count);
+
+            match B::create_object(&mut slot_guard, h_session, &template) {
+                Ok(handle) => {
+                    *ph_object = handle;
                     CKR_OK.into()
                 }
                 Err(rv) => rv,

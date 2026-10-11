@@ -53,6 +53,7 @@ pub struct RealFunctions {
     pub c_decrypt_update: CK_C_DecryptUpdate,
     pub c_decrypt_final: CK_C_DecryptFinal,
     pub c_generate_key_pair: CK_C_GenerateKeyPair,
+    pub c_create_object: CK_C_CreateObject,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -78,7 +79,7 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_SetOperationState: Some(stubs::C_SetOperationState),
         C_Login: real.c_login,
         C_Logout: real.c_logout,
-        C_CreateObject: Some(stubs::C_CreateObject),
+        C_CreateObject: real.c_create_object,
         C_CopyObject: Some(stubs::C_CopyObject),
         C_DestroyObject: Some(stubs::C_DestroyObject),
         C_GetObjectSize: Some(stubs::C_GetObjectSize),
