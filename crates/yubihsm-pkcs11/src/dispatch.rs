@@ -474,6 +474,23 @@ pub unsafe extern "C" fn C_CreateObject(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DeriveKey(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hBaseKey: CK_OBJECT_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulAttributeCount: CK_ULONG,
+    phKey: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DeriveKey",
+            G_ENGINE.derive_key(hSession, pMechanism, hBaseKey, pTemplate, ulAttributeCount, phKey)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -631,4 +648,10 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     // Backend::create_object's default impl since YubiHsmBackend doesn't
     // override it.
     c_create_object: Some(C_CreateObject),
+    // Key derivation isn't implemented for yubihsm-pkcs11 yet (same
+    // object-model gap as everything else) — routes through the shared
+    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::derive_key's default impl since YubiHsmBackend doesn't
+    // override it.
+    c_derive_key: Some(C_DeriveKey),
 });

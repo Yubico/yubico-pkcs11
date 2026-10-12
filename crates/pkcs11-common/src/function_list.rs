@@ -54,6 +54,7 @@ pub struct RealFunctions {
     pub c_decrypt_final: CK_C_DecryptFinal,
     pub c_generate_key_pair: CK_C_GenerateKeyPair,
     pub c_create_object: CK_C_CreateObject,
+    pub c_derive_key: CK_C_DeriveKey,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -121,7 +122,7 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_GenerateKeyPair: real.c_generate_key_pair,
         C_WrapKey: Some(stubs::C_WrapKey),
         C_UnwrapKey: Some(stubs::C_UnwrapKey),
-        C_DeriveKey: Some(stubs::C_DeriveKey),
+        C_DeriveKey: real.c_derive_key,
         C_SeedRandom: real.c_seed_random,
         C_GenerateRandom: real.c_generate_random,
         C_GetFunctionStatus: Some(stubs::C_GetFunctionStatus),

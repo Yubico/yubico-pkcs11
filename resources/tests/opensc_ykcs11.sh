@@ -106,6 +106,15 @@ for c in ${EC_CURVES[@]}; do
       test "pkcs11-tool --module $MODULE --login --pin 123456 --verify -m ECDSA-SHA$h --id $s -i data.txt --signature-file data.sig --signature-format openssl" "Verify signature with ykcs11"
     done
 
+    # Derive ECDH
+    echo "=== Test EDCH"
+    openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:$c -x509 -nodes -days 365 -subj "/CN=OpenSSLGeneratedECKeyPeer/" -out peer_cert.pem -keyout peer_key.pem
+    openssl x509 -in peer_cert.pem -pubkey -noout -out peer_pubkey.pem
+    openssl pkey -pubin -in peer_pubkey.pem -outform DER -out peer_pubkey.der
+    test "pkcs11-tool --module $MODULE --login --pin 123456 --derive --id $s --input-file peer_pubkey.der --output-file ecdh_ykcs11.bin" "Derive ECDH with ykcs11"
+    test "openssl pkeyutl -derive -inkey key.pem -peerkey peer_pubkey.pem -out ecdh_openssl.bin" "Derive ECDH with OpenSSL"
+    test "cmp ecdh_ykcs11.bin ecdh_openssl.bin" "Compare the derived ECDH keys"
+
   done
 
 done

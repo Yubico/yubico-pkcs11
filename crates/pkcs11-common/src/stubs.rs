@@ -33,7 +33,6 @@ pub unsafe extern "C" fn C_DecryptVerifyUpdate(_: CK_SESSION_HANDLE, _: CK_BYTE_
 pub unsafe extern "C" fn C_GenerateKey(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR, _: CK_ATTRIBUTE_PTR, _: CK_ULONG, _: CK_OBJECT_HANDLE_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_WrapKey(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR, _: CK_OBJECT_HANDLE, _: CK_OBJECT_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_UnwrapKey(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR, _: CK_OBJECT_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG, _: CK_ATTRIBUTE_PTR, _: CK_ULONG, _: CK_OBJECT_HANDLE_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
-pub unsafe extern "C" fn C_DeriveKey(_: CK_SESSION_HANDLE, _: CK_MECHANISM_PTR, _: CK_OBJECT_HANDLE, _: CK_ATTRIBUTE_PTR, _: CK_ULONG, _: CK_OBJECT_HANDLE_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_GetFunctionStatus(_: CK_SESSION_HANDLE) -> CK_RV { CKR_FUNCTION_NOT_PARALLEL.into() }
 pub unsafe extern "C" fn C_CancelFunction(_: CK_SESSION_HANDLE) -> CK_RV { CKR_FUNCTION_NOT_PARALLEL.into() }
 pub unsafe extern "C" fn C_WaitForSlotEvent(_: CK_FLAGS, _: CK_SLOT_ID_PTR, _: CK_VOID_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }

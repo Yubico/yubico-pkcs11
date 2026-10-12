@@ -452,6 +452,25 @@ pub trait Backend: Sized + 'static {
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
+
+    /// Derive a new key from `base_key_handle`, returning the new object's
+    /// handle. Same single-atomic-call shape as `generate_key_pair`/
+    /// `create_object` — no engine-tracked operation state. `parameter` is
+    /// the mechanism's raw `pParameter` bytes (e.g. a
+    /// `CK_ECDH1_DERIVE_PARAMS`), empty if the caller didn't supply one;
+    /// `template` is `(attribute type, raw value bytes)` pairs, already
+    /// extracted from the caller's `CK_ATTRIBUTE` array. Default: not
+    /// supported.
+    fn derive_key(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _base_key_handle: CK_OBJECT_HANDLE,
+        _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
 }
 
 /// Extracts a `CK_ATTRIBUTE` array into owned `(type, value bytes)` pairs —
@@ -2556,6 +2575,58 @@ impl<B: Backend> Engine<B> {
             match B::create_object(&mut slot_guard, h_session, &template) {
                 Ok(handle) => {
                     *ph_object = handle;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    pub unsafe fn derive_key(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_base_key: CK_OBJECT_HANDLE,
+        p_template: CK_ATTRIBUTE_PTR,
+        ul_attribute_count: CK_ULONG,
+        ph_key: CK_OBJECT_HANDLE_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if p_mechanism.is_null() || ph_key.is_null() || (ul_attribute_count > 0 && p_template.is_null())
+            {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            let template = extract_attribute_template(p_template, ul_attribute_count);
+
+            match B::derive_key(&mut slot_guard, h_session, mechanism, parameter, h_base_key, &template) {
+                Ok(handle) => {
+                    *ph_key = handle;
                     CKR_OK.into()
                 }
                 Err(rv) => rv,

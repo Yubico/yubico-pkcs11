@@ -532,6 +532,23 @@ pub unsafe extern "C" fn C_CreateObject(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DeriveKey(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hBaseKey: CK_OBJECT_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulAttributeCount: CK_ULONG,
+    phKey: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DeriveKey",
+            G_ENGINE.derive_key(hSession, pMechanism, hBaseKey, pTemplate, ulAttributeCount, phKey)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -608,4 +625,5 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_decrypt_final: Some(C_DecryptFinal),
     c_generate_key_pair: Some(C_GenerateKeyPair),
     c_create_object: Some(C_CreateObject),
+    c_derive_key: Some(C_DeriveKey),
 });

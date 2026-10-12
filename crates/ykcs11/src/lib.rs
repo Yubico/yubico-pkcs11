@@ -10,6 +10,7 @@ extern crate yubikit;
 mod backend;
 mod create_object;
 mod decrypt;
+mod derive;
 mod discovery;
 mod encrypt;
 mod generate;

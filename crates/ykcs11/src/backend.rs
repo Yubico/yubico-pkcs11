@@ -403,6 +403,17 @@ impl Backend for PivBackend {
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
         crate::create_object::create_object(slot, h_session, template)
     }
+
+    fn derive_key(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        base_key_handle: CK_OBJECT_HANDLE,
+        template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
+        crate::derive::derive_key(slot, h_session, mechanism, parameter, base_key_handle, template)
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for
