@@ -14,7 +14,6 @@ pub unsafe extern "C" fn C_SetPIN(_: CK_SESSION_HANDLE, _: CK_UTF8CHAR_PTR, _: C
 pub unsafe extern "C" fn C_GetOperationState(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_SetOperationState(_: CK_SESSION_HANDLE, _: CK_BYTE_PTR, _: CK_ULONG, _: CK_OBJECT_HANDLE, _: CK_OBJECT_HANDLE) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_CopyObject(_: CK_SESSION_HANDLE, _: CK_OBJECT_HANDLE, _: CK_ATTRIBUTE_PTR, _: CK_ULONG, _: CK_OBJECT_HANDLE_PTR) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
-pub unsafe extern "C" fn C_DestroyObject(_: CK_SESSION_HANDLE, _: CK_OBJECT_HANDLE) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_GetAttributeValue(_: CK_SESSION_HANDLE, _: CK_OBJECT_HANDLE, _: CK_ATTRIBUTE_PTR, _: CK_ULONG) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_SetAttributeValue(_: CK_SESSION_HANDLE, _: CK_OBJECT_HANDLE, _: CK_ATTRIBUTE_PTR, _: CK_ULONG) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }
 pub unsafe extern "C" fn C_FindObjectsInit(_: CK_SESSION_HANDLE, _: CK_ATTRIBUTE_PTR, _: CK_ULONG) -> CK_RV { CKR_FUNCTION_NOT_SUPPORTED.into() }

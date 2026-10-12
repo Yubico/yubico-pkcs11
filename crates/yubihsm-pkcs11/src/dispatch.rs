@@ -505,6 +505,11 @@ pub unsafe extern "C" fn C_DeriveKey(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DestroyObject(hSession: CK_SESSION_HANDLE, hObject: CK_OBJECT_HANDLE) -> CK_RV {
+    unsafe { traced!("C_DestroyObject", G_ENGINE.destroy_object(hSession, hObject)) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -675,4 +680,10 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     // this is wired up for real here, not routed through a not-yet-supported
     // fallback.
     c_get_object_size: Some(C_GetObjectSize),
+    // Object destruction isn't implemented for yubihsm-pkcs11 yet (same
+    // object-model gap as everything else) — routes through the shared
+    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::destroy_object's default impl since YubiHsmBackend doesn't
+    // override it.
+    c_destroy_object: Some(C_DestroyObject),
 });

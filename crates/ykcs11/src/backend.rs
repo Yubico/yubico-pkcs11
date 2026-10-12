@@ -414,6 +414,14 @@ impl Backend for PivBackend {
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
         crate::derive::derive_key(slot, h_session, mechanism, parameter, base_key_handle, template)
     }
+
+    fn destroy_object(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        handle: CK_OBJECT_HANDLE,
+    ) -> Result<(), CK_RV> {
+        crate::destroy_object::destroy_object(slot, h_session, handle)
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for

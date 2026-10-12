@@ -759,8 +759,8 @@ impl PivObjectId {
 #[derive(Clone)]
 pub struct PivObject {
     pub id: PivObjectId,
-    class: ObjectClass,
-    slot: Slot,
+    pub(crate) class: ObjectClass,
+    pub(crate) slot: Slot,
     pin_policy: PinPolicy,
     touch_policy: TouchPolicy,
     generated: bool,
@@ -1949,5 +1949,103 @@ fn get_data_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<V
             yk_dbg!("UNKNOWN ATTRIBUTE {:x} ({})", attr_type, attr_type);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::PivBackend;
+    use crate::piv_slot::PivSlotData;
+    use pkcs11_common::backend::Slot as EngineSlot;
+    use pkcs11_common::session::LoginState;
+
+    fn test_object(id: PivObjectId, class: ObjectClass, slot: Slot) -> PivObject {
+        PivObject {
+            id,
+            class,
+            slot,
+            pin_policy: PinPolicy::Default,
+            touch_policy: TouchPolicy::Default,
+            generated: false,
+            public_key: None,
+            cert_der: None,
+            subject_der: None,
+            issuer_der: None,
+            serial_der: None,
+            ec_params_der: None,
+            data: None,
+        }
+    }
+
+    fn test_slot(objects: Vec<PivObject>, login_state: LoginState) -> EngineSlot<PivBackend> {
+        let mut data = PivSlotData::new("test reader".to_string());
+        data.objects = objects;
+        EngineSlot {
+            login_state,
+            sessions: std::collections::HashMap::new(),
+            data,
+        }
+    }
+
+    #[test]
+    fn destroy_object_rejects_an_unknown_handle() {
+        let mut slot = test_slot(Vec::new(), LoginState::SO);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, 999),
+            Err(CKR_OBJECT_HANDLE_INVALID.into())
+        );
+    }
+
+    #[test]
+    fn destroy_object_removes_the_secret_key_singleton_without_login() {
+        let obj = test_object(PivObjectId::PIV_SECRET_OBJ, ObjectClass::SecretKey, Slot::Authentication);
+        let mut slot = test_slot(vec![obj], LoginState::Public);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE),
+            Ok(())
+        );
+        assert!(slot.data.objects.is_empty());
+    }
+
+    #[test]
+    fn destroy_object_always_rejects_a_private_key_handle() {
+        let obj = test_object(
+            PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
+            ObjectClass::PrivateKey,
+            Slot::Authentication,
+        );
+        let handle = obj.id as CK_OBJECT_HANDLE;
+        let mut slot = test_slot(vec![obj], LoginState::SO);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, handle),
+            Err(CKR_OBJECT_HANDLE_INVALID.into())
+        );
+    }
+
+    #[test]
+    fn destroy_object_rejects_a_data_object_as_a_deliberate_scope_limit() {
+        let obj = test_object(PivObjectId::PIV_DATA_OBJ_CHUI, ObjectClass::Data, Slot::Authentication);
+        let handle = obj.id as CK_OBJECT_HANDLE;
+        let mut slot = test_slot(vec![obj], LoginState::SO);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, handle),
+            Err(CKR_ACTION_PROHIBITED.into())
+        );
+    }
+
+    #[test]
+    fn destroy_object_requires_so_login_for_a_certificate_handle() {
+        let obj = test_object(
+            PivObjectId::PIV_CERT_OBJ_X509_PIV_AUTH,
+            ObjectClass::Certificate,
+            Slot::Authentication,
+        );
+        let handle = obj.id as CK_OBJECT_HANDLE;
+        let mut slot = test_slot(vec![obj], LoginState::User);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, handle),
+            Err(CKR_USER_TYPE_INVALID.into())
+        );
     }
 }

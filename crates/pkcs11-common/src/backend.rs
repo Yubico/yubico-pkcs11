@@ -471,6 +471,17 @@ pub trait Backend: Sized + 'static {
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
+
+    /// Destroy an object, given its handle. Single atomic call, same as
+    /// `create_object`/`derive_key` — no engine-tracked operation state.
+    /// Default: not supported.
+    fn destroy_object(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _handle: CK_OBJECT_HANDLE,
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
 }
 
 /// Extracts a `CK_ATTRIBUTE` array into owned `(type, value bytes)` pairs —
@@ -2701,6 +2712,28 @@ impl<B: Backend> Engine<B> {
                 }
                 Err(rv) => rv,
             }
+        }
+    }
+
+    pub unsafe fn destroy_object(&self, h_session: CK_SESSION_HANDLE, h_object: CK_OBJECT_HANDLE) -> CK_RV {
+        let mut guard = self.state.lock();
+        let state = match guard.as_mut() {
+            Some(s) => s,
+            None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+        };
+        let slot_id = match state.session_to_slot.get(&h_session) {
+            Some(id) => *id,
+            None => return CKR_SESSION_HANDLE_INVALID.into(),
+        };
+        let slot = state.slots[slot_id as usize].clone();
+        let mut slot_guard = slot.lock();
+        if !slot_guard.sessions.contains_key(&h_session) {
+            return CKR_SESSION_HANDLE_INVALID.into();
+        }
+
+        match B::destroy_object(&mut slot_guard, h_session, h_object) {
+            Ok(()) => CKR_OK.into(),
+            Err(rv) => rv,
         }
     }
 }

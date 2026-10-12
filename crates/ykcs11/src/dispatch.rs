@@ -563,6 +563,11 @@ pub unsafe extern "C" fn C_DeriveKey(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DestroyObject(hSession: CK_SESSION_HANDLE, hObject: CK_OBJECT_HANDLE) -> CK_RV {
+    unsafe { traced!("C_DestroyObject", G_ENGINE.destroy_object(hSession, hObject)) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -641,4 +646,5 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_create_object: Some(C_CreateObject),
     c_derive_key: Some(C_DeriveKey),
     c_get_object_size: Some(C_GetObjectSize),
+    c_destroy_object: Some(C_DestroyObject),
 });

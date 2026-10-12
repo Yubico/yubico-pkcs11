@@ -11,6 +11,7 @@ mod backend;
 mod create_object;
 mod decrypt;
 mod derive;
+mod destroy_object;
 mod discovery;
 mod encrypt;
 mod generate;

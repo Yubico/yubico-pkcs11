@@ -84,7 +84,6 @@ for c in ${EC_CURVES[@]}; do
       test "pkcs11-tool --module $MODULE --sign --pin 123456 --id $s -m ECDSA-SHA$h --signature-format openssl -i data.txt -o data.sig" "Sign data with ECDSA-SHA$h"
       test "openssl dgst -sha$h -verify pubkey.pem -signature data.sig data.txt" "Verify signature with OpenSSL"
       test "pkcs11-tool --module $MODULE --login --pin 123456 --verify -m ECDSA-SHA$h --id $s -i data.txt --signature-file data.sig --signature-format openssl" "Verify signature with ykcs11"
-
     done
 
     echo "===== Import key into slot $s"
@@ -115,6 +114,9 @@ for c in ${EC_CURVES[@]}; do
     test "openssl pkeyutl -derive -inkey key.pem -peerkey peer_pubkey.pem -out ecdh_openssl.bin" "Derive ECDH with OpenSSL"
     test "cmp ecdh_ykcs11.bin ecdh_openssl.bin" "Compare the derived ECDH keys"
 
+
+    test "pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --delete-object --id $s --type cert" "Delete object"
+
   done
 
 done
@@ -138,6 +140,7 @@ if [ $newkey -eq 0 ]; then
     test "openssl pkeyutl -verify -pubin -inkey pubkey.pem -rawin -in data.txt -sigfile data.sig" "Verify signature with OpenSSL"
     test "pkcs11-tool --module $MODULE --pin 123456 --verify --id $s -m EDDSA --signature-format openssl -i data.txt --signature-file data.sig" "Verify signature with ykcs11"
 
+    test "pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --delete-object --id $s --type cert" "Delete object"
   done
   rm data.sig
 fi
@@ -283,6 +286,8 @@ for k in ${RSA_KEYSIZES[@]}; do
         test "cmp data.dec.ykcs11 data.txt" "Compare decrypted data with plain text data"
       done
     done
+
+    test "pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --delete-object --id $s --type cert" "Delete object"
 
   done
 done
