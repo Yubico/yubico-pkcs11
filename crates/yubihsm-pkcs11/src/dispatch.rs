@@ -474,6 +474,20 @@ pub unsafe extern "C" fn C_CreateObject(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GetObjectSize(
+    hSession: CK_SESSION_HANDLE,
+    hObject: CK_OBJECT_HANDLE,
+    pulSize: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GetObjectSize",
+            G_ENGINE.get_object_size(hSession, hObject, pulSize)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_DeriveKey(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -654,4 +668,11 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     // Backend::derive_key's default impl since YubiHsmBackend doesn't
     // override it.
     c_derive_key: Some(C_DeriveKey),
+    // Unlike the other `Real*` fields above, `Engine::get_object_size` is
+    // fully generic (no `Backend` trait method to override) — it just asks
+    // `object_handles`/`get_one_attribute_value` for the `CKA_VALUE` length,
+    // both of which yubihsm-pkcs11 already has to implement regardless. So
+    // this is wired up for real here, not routed through a not-yet-supported
+    // fallback.
+    c_get_object_size: Some(C_GetObjectSize),
 });

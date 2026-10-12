@@ -1301,6 +1301,76 @@ impl<B: Backend> Engine<B> {
         }
     }
 
+    /// Matches `get_data_len` (objects.c:1599-1602): reports the byte
+    /// length of this object's underlying raw storage. Generic over every
+    /// `Backend` -- no per-backend logic needed, since `object_handles`/
+    /// `get_one_attribute_value` already answer this.
+    ///
+    /// For data/certificate/secret-key objects this keys off `CKA_VALUE`,
+    /// which exactly matches the C reference (those are the object classes
+    /// whose `CKA_VALUE` is the same raw bytes `s->data[]` caches). Key
+    /// objects (public *and* private) have no `CKA_VALUE` in this object
+    /// model, so this falls back to whichever attribute carries their
+    /// natural public key material instead -- `CKA_MODULUS` for RSA,
+    /// `CKA_EC_POINT` for EC/Ed25519/X25519 -- which both public and
+    /// private key objects already serve (a private key object exposes its
+    /// own public counterpart's modulus/point, never the private
+    /// scalar/exponent itself).
+    ///
+    /// This deliberately does *not* replicate ykcs11.c's own behavior for
+    /// private key handles: `get_sub_id` only resolves a per-slot sub_id for
+    /// DATA/CERT/PUBK-range ids and silently defaults to sub_id 0 for
+    /// anything outside that range (private keys), which means the C
+    /// reference's `C_GetObjectSize` on a private key handle actually
+    /// reports the byte length of whatever `C_DeriveKey` last cached at
+    /// sub_id 0 (or 0 if nothing has been derived yet) -- coincidental
+    /// aliasing from its internal array layout, not meaningful protocol
+    /// behavior.
+    pub unsafe fn get_object_size(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        h_object: CK_OBJECT_HANDLE,
+        pul_size: CK_ULONG_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if pul_size.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            if !B::object_handles(&slot_guard).contains(&h_object) {
+                return CKR_OBJECT_HANDLE_INVALID.into();
+            }
+
+            let attr = |attr_type: u32| {
+                B::get_one_attribute_value(&slot_guard.data, h_object, attr_type as CK_ATTRIBUTE_TYPE)
+            };
+
+            let size = attr(CKA_VALUE).map(|v| v.len()).or_else(|| {
+                let key_type = CK_ULONG::from_ne_bytes(attr(CKA_KEY_TYPE)?.try_into().ok()?);
+                match key_type as u32 {
+                    CKK_RSA => attr(CKA_MODULUS).map(|v| v.len()),
+                    CKK_EC | CKK_EC_EDWARDS | CKK_EC_MONTGOMERY => attr(CKA_EC_POINT).map(|v| v.len()),
+                    _ => None,
+                }
+            });
+            *pul_size = size.unwrap_or(0) as CK_ULONG;
+            CKR_OK.into()
+        }
+    }
+
     pub unsafe fn digest_init(
         &self,
         h_session: CK_SESSION_HANDLE,

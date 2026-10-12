@@ -55,6 +55,7 @@ pub struct RealFunctions {
     pub c_generate_key_pair: CK_C_GenerateKeyPair,
     pub c_create_object: CK_C_CreateObject,
     pub c_derive_key: CK_C_DeriveKey,
+    pub c_get_object_size: CK_C_GetObjectSize,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -83,7 +84,7 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_CreateObject: real.c_create_object,
         C_CopyObject: Some(stubs::C_CopyObject),
         C_DestroyObject: Some(stubs::C_DestroyObject),
-        C_GetObjectSize: Some(stubs::C_GetObjectSize),
+        C_GetObjectSize: real.c_get_object_size,
         C_GetAttributeValue: real.c_get_attribute_value,
         C_SetAttributeValue: Some(stubs::C_SetAttributeValue),
         C_FindObjectsInit: real.c_find_objects_init,
