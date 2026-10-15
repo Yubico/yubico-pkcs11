@@ -44,6 +44,7 @@ jobs:
       - name: Build ykcs11
         run: |
             cargo build -p ykcs11 --verbose
+            cargo test -p ykcs11
             test -f "target/debug/libykcs11.so" || { echo "::error::expected artifact target/debug/libykcs11.so was not produced"; exit 1; }
             pkcs11-tool --module target/debug/libykcs11.so --show-info | grep "PKCS#11 PIV Library"
 
@@ -77,6 +78,7 @@ jobs:
           ls $GITHUB_WORKSPACE/../yubihsm-shell/build/lib
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
+          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo test
           cd target/debug
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           cat yubihsm_pkcs11.conf
@@ -112,6 +114,7 @@ jobs:
       - name: Build ykcs11
         run: |
             cargo build -p ykcs11 --verbose
+            cargo test -p ykcs11
             test -f "target/debug/libykcs11.dylib" || { echo "::error::expected artifact target/debug/libykcs11.dylib was not produced"; exit 1; }
             pkcs11-tool --module target/debug/libykcs11.dylib --show-info | grep "PKCS#11 PIV Library"
 
@@ -129,10 +132,9 @@ jobs:
 
           cd yubico-pkcs11
           YUBIHSM_LIB_DIR=/usr/local/lib cargo build -p yubihsm-pkcs11 --verbose
-
-          ls target/debug
-
           test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
+          YUBIHSM_LIB_DIR=/usr/local/lib cargo test
+          
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           #DYLD_LIBRARY_PATH=/usr/local/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubihsm_pkcs11.conf pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info
           output="$(DYLD_LIBRARY_PATH=/usr/local/lib \
@@ -169,6 +171,9 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
             cargo build -p ykcs11 --verbose
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          
+            cargo test -p ykcs11
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
             ls target/debug
@@ -218,8 +223,8 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo.exe build -p yubihsm-pkcs11 --verbose
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-          ls target/debug
+          cargo.exe test
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           Test-Path target/debug/yubihsm_pkcs11.dll -PathType Leaf
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

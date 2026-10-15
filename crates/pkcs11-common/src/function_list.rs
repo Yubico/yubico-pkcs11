@@ -57,6 +57,8 @@ pub struct RealFunctions {
     pub c_derive_key: CK_C_DeriveKey,
     pub c_get_object_size: CK_C_GetObjectSize,
     pub c_destroy_object: CK_C_DestroyObject,
+    pub c_set_pin: CK_C_SetPIN,
+    pub c_init_token: CK_C_InitToken,
 }
 
 pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
@@ -71,9 +73,9 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_GetTokenInfo: real.c_get_token_info,
         C_GetMechanismList: real.c_get_mechanism_list,
         C_GetMechanismInfo: real.c_get_mechanism_info,
-        C_InitToken: Some(stubs::C_InitToken),
+        C_InitToken: real.c_init_token,
         C_InitPIN: Some(stubs::C_InitPIN),
-        C_SetPIN: Some(stubs::C_SetPIN),
+        C_SetPIN: real.c_set_pin,
         C_OpenSession: real.c_open_session,
         C_CloseSession: real.c_close_session,
         C_CloseAllSessions: real.c_close_all_sessions,

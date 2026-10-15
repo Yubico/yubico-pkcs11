@@ -63,6 +63,13 @@ if [ $newkey -eq 0 ]; then
   RSA_KEYSIZES=(${RSA_KEYSIZES[@]} "3072" "4096")
 fi
 
+
+echo "**********************************"
+echo "            Reset Token"
+echo "**********************************"
+
+pkcs11-tool --module $MODULE --init-token --so-pin 010203040506070801020304050607080102030405060708 --label "YubiKey"
+
 for c in ${EC_CURVES[@]}; do
 
   echo "**********************************"

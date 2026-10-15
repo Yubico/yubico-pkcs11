@@ -422,6 +422,19 @@ impl Backend for PivBackend {
     ) -> Result<(), CK_RV> {
         crate::destroy_object::destroy_object(slot, h_session, handle)
     }
+
+    fn set_pin(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        old_pin: &[u8],
+        new_pin: &[u8],
+    ) -> Result<(), CK_RV> {
+        crate::set_pin::set_pin(slot, h_session, old_pin, new_pin)
+    }
+
+    fn init_token(slot: &mut Slot<Self>, pin: &[u8]) -> Result<(), CK_RV> {
+        crate::init_token::init_token(slot, pin)
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for

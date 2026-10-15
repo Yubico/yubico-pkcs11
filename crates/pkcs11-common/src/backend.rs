@@ -482,6 +482,28 @@ pub trait Backend: Sized + 'static {
     ) -> Result<(), CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
+
+    /// Change the PIN/PUK/management key, per whatever convention the
+    /// backend uses to pack that into two byte strings (PKCS#11's
+    /// `C_SetPIN` itself only ever supplies old/new byte strings — no
+    /// explicit "which secret" parameter). Default: not supported.
+    fn set_pin(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _old_pin: &[u8],
+        _new_pin: &[u8],
+    ) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Re-initialize a token: wipe it back to factory defaults and restore
+    /// `pin` as the SO credential (a PIV management key, for `ykcs11`).
+    /// Slot-level, not session-level — `Engine::init_token` already checked
+    /// the slot has zero open sessions before calling this. Default: not
+    /// supported.
+    fn init_token(_slot: &mut Slot<Self>, _pin: &[u8]) -> Result<(), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
 }
 
 /// Extracts a `CK_ATTRIBUTE` array into owned `(type, value bytes)` pairs —
@@ -2734,6 +2756,93 @@ impl<B: Backend> Engine<B> {
         match B::destroy_object(&mut slot_guard, h_session, h_object) {
             Ok(()) => CKR_OK.into(),
             Err(rv) => rv,
+        }
+    }
+
+    pub unsafe fn set_pin(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_old_pin: CK_UTF8CHAR_PTR,
+        ul_old_len: CK_ULONG,
+        p_new_pin: CK_UTF8CHAR_PTR,
+        ul_new_len: CK_ULONG,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+
+            let old_pin: &[u8] = if p_old_pin.is_null() || ul_old_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_old_pin as *const u8, ul_old_len as usize)
+            };
+            let new_pin: &[u8] = if p_new_pin.is_null() || ul_new_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_new_pin as *const u8, ul_new_len as usize)
+            };
+
+            match B::set_pin(&mut slot_guard, h_session, old_pin, new_pin) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// `C_InitToken` is slot-level, not session-level — it takes a
+    /// `CK_SLOT_ID` directly, no session handle, and requires zero open
+    /// sessions on that slot (matches ykcs11.c:773-779's `CKR_SESSION_EXISTS`
+    /// check — pure session bookkeeping the engine already owns, not
+    /// `Backend`-specific).
+    pub unsafe fn init_token(
+        &self,
+        slot_id: CK_SLOT_ID,
+        p_pin: CK_UTF8CHAR_PTR,
+        ul_pin_len: CK_ULONG,
+        _p_label: CK_UTF8CHAR_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let guard = self.state.lock();
+            let state = match guard.as_ref() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot = match Self::slot_arc(state, slot_id) {
+                Ok(s) => s,
+                Err(rv) => return rv,
+            };
+            let mut slot_guard = slot.lock();
+            if !B::is_present(&slot_guard.data) {
+                return CKR_TOKEN_NOT_PRESENT.into();
+            }
+            if !slot_guard.sessions.is_empty() {
+                return CKR_SESSION_EXISTS.into();
+            }
+            if p_pin.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let pin: &[u8] = if ul_pin_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_pin as *const u8, ul_pin_len as usize)
+            };
+
+            match B::init_token(&mut slot_guard, pin) {
+                Ok(()) => CKR_OK.into(),
+                Err(rv) => rv,
+            }
         }
     }
 }

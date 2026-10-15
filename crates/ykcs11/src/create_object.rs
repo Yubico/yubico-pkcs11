@@ -25,7 +25,7 @@
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;
-use crate::template::{P256_CURVE_OID, P384_CURVE_OID, find_attr, require_so_login};
+use crate::template::{P256_CURVE_OID, P384_CURVE_OID, find_attr, is_public_exponent_65537, require_so_login};
 use der::Decode;
 use pkcs11_common::backend::Slot;
 use pkcs11_sys::*;
@@ -75,17 +75,7 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             let dq = find_attr(template, CKA_EXPONENT_2).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let qinv = find_attr(template, CKA_COEFFICIENT).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
 
-            // Matches do_check_public_exponent — the device always uses
-            // 65537 internally, so this is purely a sanity check against a
-            // caller asking for something it won't get.
-            let mut padded = vec![0u8; 8usize.saturating_sub(e.len())];
-            padded.extend_from_slice(e);
-            let e_value = CK_ULONG::from_be_bytes(
-                padded
-                    .try_into()
-                    .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-            );
-            if e_value != 0x10001 {
+            if !is_public_exponent_65537(e) {
                 return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
             }
 

@@ -28,6 +28,33 @@ macro_rules! traced {
     }};
 }
 
+/// Forwards `yubikit`'s own `log::debug!`/`log::info!` calls (APDU-level
+/// detail like "Authenticating with management key"/"Resetting PIV
+/// application") to stderr, gated by the same `YKCS11_DBG` verbosity switch
+/// as `yk_dbg!` -- without this, those calls are silently discarded, since
+/// nothing otherwise installs a `log` backend. A dedicated logging crate
+/// (e.g. `env_logger`) would be the usual choice here, but would need its
+/// own `RUST_LOG` convention alongside this module's existing `YKCS11_DBG`
+/// one; reusing the same switch (and the same `DBG:` prefix style as
+/// `yk_dbg!`) is more consistent for this module's existing users.
+struct ForwardingLogger;
+
+impl log::Log for ForwardingLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        debug::is_verbose()
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            eprintln!("DBG: [{}] {}: {}", record.level(), record.target(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: ForwardingLogger = ForwardingLogger;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
     unsafe {
@@ -36,6 +63,11 @@ pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         debug::set_verbose(dbg_level);
+        // Ignore the error: harmless if a logger is already installed (e.g.
+        // a second C_Initialize after C_Finalize).
+        if log::set_logger(&LOGGER).is_ok() {
+            log::set_max_level(log::LevelFilter::Debug);
+        }
         traced!("C_Initialize", G_ENGINE.initialize(pInitArgs))
     }
 }
@@ -568,6 +600,32 @@ pub unsafe extern "C" fn C_DestroyObject(hSession: CK_SESSION_HANDLE, hObject: C
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_SetPIN(
+    hSession: CK_SESSION_HANDLE,
+    pOldPin: CK_UTF8CHAR_PTR,
+    ulOldLen: CK_ULONG,
+    pNewPin: CK_UTF8CHAR_PTR,
+    ulNewLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_SetPIN",
+            G_ENGINE.set_pin(hSession, pOldPin, ulOldLen, pNewPin, ulNewLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_InitToken(
+    slotID: CK_SLOT_ID,
+    pPin: CK_UTF8CHAR_PTR,
+    ulPinLen: CK_ULONG,
+    pLabel: CK_UTF8CHAR_PTR,
+) -> CK_RV {
+    unsafe { traced!("C_InitToken", G_ENGINE.init_token(slotID, pPin, ulPinLen, pLabel)) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -647,4 +705,6 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_derive_key: Some(C_DeriveKey),
     c_get_object_size: Some(C_GetObjectSize),
     c_destroy_object: Some(C_DestroyObject),
+    c_set_pin: Some(C_SetPIN),
+    c_init_token: Some(C_InitToken),
 });

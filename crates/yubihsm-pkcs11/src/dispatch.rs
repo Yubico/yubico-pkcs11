@@ -510,6 +510,32 @@ pub unsafe extern "C" fn C_DestroyObject(hSession: CK_SESSION_HANDLE, hObject: C
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_SetPIN(
+    hSession: CK_SESSION_HANDLE,
+    pOldPin: CK_UTF8CHAR_PTR,
+    ulOldLen: CK_ULONG,
+    pNewPin: CK_UTF8CHAR_PTR,
+    ulNewLen: CK_ULONG,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_SetPIN",
+            G_ENGINE.set_pin(hSession, pOldPin, ulOldLen, pNewPin, ulNewLen)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_InitToken(
+    slotID: CK_SLOT_ID,
+    pPin: CK_UTF8CHAR_PTR,
+    ulPinLen: CK_ULONG,
+    pLabel: CK_UTF8CHAR_PTR,
+) -> CK_RV {
+    unsafe { traced!("C_InitToken", G_ENGINE.init_token(slotID, pPin, ulPinLen, pLabel)) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GenerateKeyPair(
     hSession: CK_SESSION_HANDLE,
     pMechanism: CK_MECHANISM_PTR,
@@ -686,4 +712,16 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     // Backend::destroy_object's default impl since YubiHsmBackend doesn't
     // override it.
     c_destroy_object: Some(C_DestroyObject),
+    // PIN/PUK/management-key change isn't implemented for yubihsm-pkcs11 yet
+    // (same object-model gap as everything else) — routes through the
+    // shared engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::set_pin's default impl since YubiHsmBackend doesn't
+    // override it.
+    c_set_pin: Some(C_SetPIN),
+    // Token re-initialization isn't implemented for yubihsm-pkcs11 yet (same
+    // object-model gap as everything else) — routes through the shared
+    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
+    // Backend::init_token's default impl since YubiHsmBackend doesn't
+    // override it.
+    c_init_token: Some(C_InitToken),
 });

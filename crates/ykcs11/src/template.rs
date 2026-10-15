@@ -78,6 +78,25 @@ pub(crate) fn resolve_policies(
     Ok((pin_policy, touch_policy))
 }
 
+/// Matches `do_check_public_exponent` — the device always uses 65537
+/// internally, so a caller's `CKA_PUBLIC_EXPONENT` is just a sanity check
+/// against asking for something it won't get. `CKA_PUBLIC_EXPONENT` is a
+/// raw big-endian byte string per the PKCS#11 spec (arbitrary length,
+/// possibly leading-zero-padded) -- *not* a native `CK_ULONG`, so this
+/// compares bytes directly rather than padding into a `CK_ULONG`-sized
+/// buffer and reinterpreting (which previously hardcoded an 8-byte pad,
+/// silently assuming `CK_ULONG` is always 8 bytes -- true on Linux/macOS's
+/// LP64 `unsigned long`, but `CK_ULONG` is only 4 bytes on Windows's LLP64
+/// one, where that padding would always fail to convert and reject every
+/// otherwise-valid RSA template).
+pub(crate) fn is_public_exponent_65537(e: &[u8]) -> bool {
+    let trimmed = match e.iter().position(|&b| b != 0) {
+        Some(i) => &e[i..],
+        None => &[][..],
+    };
+    trimmed == [0x01, 0x00, 0x01]
+}
+
 /// `slot.login_state != LoginState::SO` → `CKR_USER_TYPE_INVALID`, the
 /// login requirement shared by `C_GenerateKeyPair` (ykcs11.c:3587-3592) and
 /// `C_CreateObject` (ykcs11.c:1499-1504/1604-1609) alike — both are
