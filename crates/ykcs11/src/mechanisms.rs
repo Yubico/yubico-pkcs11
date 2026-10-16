@@ -253,6 +253,17 @@ pub fn mechanism_table() -> Vec<MechanismEntry> {
                 | CKF_EC_NAMEDCURVE as CK_FLAGS
                 | CKF_EC_UNCOMPRESS as CK_FLAGS,
         },
+        // No C reference entry to match (see generate.rs's own doc comment)
+        // — min/max key size are 0 like the digest mechanisms above, since
+        // ML-DSA has no bit-length key size concept (yubikit's own
+        // `KeyType::bit_len()` likewise returns 0 for it); the actual
+        // parameter set is selected via `CKA_PARAMETER_SET`, not this field.
+        MechanismEntry {
+            mechanism: CKM_ML_DSA_KEY_PAIR_GEN.into(),
+            min_key_size: 0,
+            max_key_size: 0,
+            flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
+        },
     ]
 }
 

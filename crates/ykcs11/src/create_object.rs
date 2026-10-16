@@ -117,8 +117,10 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             let key = X25519PrivateKey::new(secret.to_vec()).map_err(map_key_error)?;
             Ok(PrivateKey::X25519(key))
         }
-        // No ML-DSA/ML-KEM here either, same disclosed scope limit as
-        // `generate::generate_key_pair`.
+        // No ML-DSA/ML-KEM here — unlike `generate::generate_key_pair`
+        // (which now generates ML-DSA 44/65/87 on-device), importing
+        // externally generated ML-DSA/ML-KEM key material is still out of
+        // scope.
         _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
     }
 }

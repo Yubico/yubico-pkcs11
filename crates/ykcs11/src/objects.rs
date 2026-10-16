@@ -5,8 +5,8 @@
 //! object.c/objects.c model across all 25 PIV slots: the 4 standard
 //! containers (9a/9c/9d/9e), the 20 retired key-management slots (82-95),
 //! and the dynamically-generated attestation certificate (f9). RSA, EC
-//! (NIST/Brainpool), Ed25519, and X25519 keys are modeled; post-quantum
-//! (ML-DSA/ML-KEM) PIV keys are a known gap to close later. Also modeled:
+//! (NIST/Brainpool), Ed25519, X25519, and ML-DSA (44/65/87) keys are
+//! modeled; ML-KEM PIV keys are a known gap to close later. Also modeled:
 //! the 7 non-per-slot generic data objects the C reference itself discovers
 //! (CCC, CHUID, Security Object, Discovery Object, Key History Object, SM
 //! Signer, Pairing Code Reference Data — `token_objects[]`, token.c:107-118)
@@ -29,7 +29,7 @@ use der::{Decode, Encode};
 use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 use x509_cert::Certificate;
-use yubikit::keys::PublicKey;
+use yubikit::keys::{MlDsaParameterSet, PublicKey};
 use yubikit::piv::{ObjectId, PinPolicy, PivError, Slot, TouchPolicy};
 use yubikit::smartcard::{SmartCardError, Sw};
 
@@ -947,6 +947,7 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
                             | PublicKey::Ec(_)
                             | PublicKey::Ed25519(_)
                             | PublicKey::X25519(_)
+                            | PublicKey::MlDsa(_)
                     ) {
                         ec_params_der = tbs
                             .subject_public_key_info
@@ -1314,9 +1315,38 @@ fn key_type_attr(key: &PublicKey) -> Option<Vec<u8>> {
         // Matches do_get_key_type (openssl_utils.c:372-373).
         PublicKey::Ed25519(_) => CKK_EC_EDWARDS,
         PublicKey::X25519(_) => CKK_EC_MONTGOMERY,
+        PublicKey::MlDsa(_) => CKK_ML_DSA,
         _ => return None,
     };
     Some(cka_ulong(kt))
+}
+
+/// `CKA_PARAMETER_SET` (PKCS#11 3.2) — the ML-DSA analogue of `CKA_EC_PARAMS`,
+/// identifying which of the 44/65/87 variants this key is. No C reference to
+/// match.
+fn parameter_set_attr(key: &PublicKey) -> Option<Vec<u8>> {
+    match key {
+        PublicKey::MlDsa(k) => Some(cka_ulong(match k.parameter_set {
+            MlDsaParameterSet::MlDsa44 => CKP_ML_DSA_44,
+            MlDsaParameterSet::MlDsa65 => CKP_ML_DSA_65,
+            MlDsaParameterSet::MlDsa87 => CKP_ML_DSA_87,
+            // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] — every
+            // variant that exists today is covered above, this only guards
+            // future additions.
+            _ => return None,
+        })),
+        _ => None,
+    }
+}
+
+/// `CKA_VALUE` for an ML-DSA public key object — the raw public key bytes
+/// (PKCS#11 3.2's analogue of `CKA_EC_POINT`/`CKA_MODULUS` for this
+/// algorithm family, which has neither).
+fn ml_dsa_value_attr(key: &PublicKey) -> Option<Vec<u8>> {
+    match key {
+        PublicKey::MlDsa(k) => Some(k.key.clone()),
+        _ => None,
+    }
 }
 
 /// `CKA_EC_PARAMS` for Ed25519/X25519 keys isn't a real OID — yubico-piv-tool
@@ -1574,6 +1604,14 @@ fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option
                 _ => None,
             }
         }
+        CKA_PARAMETER_SET => {
+            yk_dbg!("PARAMETER_SET");
+            parameter_set_attr(public_key)
+        }
+        CKA_VALUE => {
+            yk_dbg!("VALUE");
+            ml_dsa_value_attr(public_key)
+        }
         CKA_MODIFIABLE => {
             yk_dbg!("MODIFIABLE");
             Some(cka_bool(false))
@@ -1714,6 +1752,10 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
                 PublicKey::Rsa(k) => Some(k.e.clone()),
                 _ => None,
             }
+        }
+        CKA_PARAMETER_SET => {
+            yk_dbg!("PARAMETER_SET");
+            parameter_set_attr(public_key)
         }
         CKA_ALWAYS_AUTHENTICATE => {
             yk_dbg!("ALWAYS AUTHENTICATE");
