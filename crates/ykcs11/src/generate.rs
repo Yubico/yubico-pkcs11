@@ -3,16 +3,17 @@
 
 //! `C_GenerateKeyPair` backend logic for the YubiKey PIV module. Scope
 //! matches ykcs11.c's own `generation_mechanisms[]` (mechanisms.c:41-47)
-//! plus one deliberate addition: `CKM_RSA_PKCS_KEY_PAIR_GEN`,
+//! plus two deliberate additions: `CKM_RSA_PKCS_KEY_PAIR_GEN`,
 //! `CKM_EC_KEY_PAIR_GEN`, `CKM_EC_EDWARDS_KEY_PAIR_GEN`,
 //! `CKM_EC_MONTGOMERY_KEY_PAIR_GEN` — RSA 1024/2048/3072/4096, EC
-//! P-256/P-384, Ed25519, X25519 — and `CKM_ML_DSA_KEY_PAIR_GEN` covering all
-//! three ML-DSA parameter sets (`CKA_PARAMETER_SET` = `CKP_ML_DSA_44`/`_65`/
-//! `_87`, selecting `yubikit::piv::KeyType::MlDsa44`/`MlDsa65`/`MlDsa87`
-//! respectively). `yubikit::piv`'s `generate_key` already supports ML-KEM
-//! too, but the C reference has no concept of it (no `CKK_ML_KEM` mechanism
-//! exists anywhere in it), so that stays out of scope here, same disclosed
-//! gap as `objects.rs`'s own doc comment.
+//! P-256/P-384, Ed25519, X25519 — `CKM_ML_DSA_KEY_PAIR_GEN` covering all
+//! three ML-DSA parameter sets, and `CKM_ML_KEM_KEY_PAIR_GEN` covering all
+//! three ML-KEM parameter sets (`CKA_PARAMETER_SET` = `CKP_ML_DSA_44`/`_65`/
+//! `_87` or `CKP_ML_KEM_512`/`_768`/`_1024`, selecting the corresponding
+//! `yubikit::piv::KeyType` variant). Only key *generation* is in scope here —
+//! PKCS#11 3.2's `C_EncapsulateKey`/`C_DecapsulateKey` (ML-KEM) and
+//! `C_Sign`/`C_Verify` support for `CKM_ML_DSA` aren't implemented, same
+//! disclosed gap as `objects.rs`'s own doc comment.
 //!
 //! Unlike `C_Sign*`/`C_Verify*`/`C_Encrypt*`/`C_Decrypt*`, this is a single
 //! atomic call with no `Init`/`Update`/`Final` split and no per-session
@@ -57,6 +58,7 @@ enum KeyFamily {
     Ed25519,
     X25519,
     MlDsa,
+    MlKem,
 }
 
 fn classify_generate_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<KeyFamily> {
@@ -66,6 +68,7 @@ fn classify_generate_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<KeyFamily
         CKM_EC_EDWARDS_KEY_PAIR_GEN => KeyFamily::Ed25519,
         CKM_EC_MONTGOMERY_KEY_PAIR_GEN => KeyFamily::X25519,
         CKM_ML_DSA_KEY_PAIR_GEN => KeyFamily::MlDsa,
+        CKM_ML_KEM_KEY_PAIR_GEN => KeyFamily::MlKem,
         _ => return None,
     })
 }
@@ -101,6 +104,7 @@ fn check_key_type_consistency(
         KeyFamily::Ed25519 => CKK_EC_EDWARDS,
         KeyFamily::X25519 => CKK_EC_MONTGOMERY,
         KeyFamily::MlDsa => CKK_ML_DSA,
+        KeyFamily::MlKem => CKK_ML_KEM,
     };
     for template in [public_key_template, private_key_template] {
         if let Some(bytes) = find_attr(template, CKA_KEY_TYPE) {
@@ -118,14 +122,16 @@ fn check_key_type_consistency(
 }
 
 /// `CKA_MODULUS_BITS` (RSA), `CKA_EC_PARAMS` (EC/Ed25519/X25519), or
-/// `CKA_PARAMETER_SET` (ML-DSA) → `KeyType`. Matches
+/// `CKA_PARAMETER_SET` (ML-DSA/ML-KEM) → `KeyType`. Matches
 /// `check_rsa_pubkey_template`/`check_ec_pubkey_template`/
 /// `check_ed_pubkey_template`/`check_x_pubkey_template` (objects.c:2638-
 /// 2923): RSA size and EC curve are required; Ed25519/X25519 default purely
 /// from the mechanism, with `CKA_EC_PARAMS` only checked if the caller
-/// bothered to supply it. ML-DSA has no C reference to match — required
-/// here since `CKM_ML_DSA_KEY_PAIR_GEN` alone doesn't disambiguate 44/65/87;
-/// `CKP_ML_DSA_44`/`_65`/`_87` select the corresponding `KeyType` variant.
+/// bothered to supply it. ML-DSA/ML-KEM have no C reference to match —
+/// `CKA_PARAMETER_SET` is required here since neither `CKM_ML_DSA_KEY_PAIR_GEN`
+/// nor `CKM_ML_KEM_KEY_PAIR_GEN` alone disambiguates their three parameter
+/// sets; `CKP_ML_DSA_44`/`_65`/`_87` and `CKP_ML_KEM_512`/`_768`/`_1024`
+/// select the corresponding `KeyType` variant.
 fn resolve_key_type(
     family: KeyFamily,
     public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
@@ -190,6 +196,21 @@ fn resolve_key_type(
                 CKP_ML_DSA_44 => Ok(KeyType::MlDsa44),
                 CKP_ML_DSA_65 => Ok(KeyType::MlDsa65),
                 CKP_ML_DSA_87 => Ok(KeyType::MlDsa87),
+                _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
+            }
+        }
+        KeyFamily::MlKem => {
+            let bytes = find_attr(public_key_template, CKA_PARAMETER_SET)
+                .ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let parameter_set = CK_ULONG::from_ne_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+            );
+            match parameter_set as u32 {
+                CKP_ML_KEM_512 => Ok(KeyType::MlKem512),
+                CKP_ML_KEM_768 => Ok(KeyType::MlKem768),
+                CKP_ML_KEM_1024 => Ok(KeyType::MlKem1024),
                 _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
             }
         }
@@ -339,6 +360,10 @@ mod tests {
         assert!(matches!(
             classify_generate_mechanism(CKM_ML_DSA_KEY_PAIR_GEN as CK_MECHANISM_TYPE),
             Some(KeyFamily::MlDsa)
+        ));
+        assert!(matches!(
+            classify_generate_mechanism(CKM_ML_KEM_KEY_PAIR_GEN as CK_MECHANISM_TYPE),
+            Some(KeyFamily::MlKem)
         ));
         assert!(classify_generate_mechanism(CKM_AES_CBC as CK_MECHANISM_TYPE).is_none());
     }
@@ -497,6 +522,35 @@ mod tests {
     fn resolve_key_type_ml_dsa_requires_parameter_set() {
         assert_eq!(
             resolve_key_type(KeyFamily::MlDsa, &[]),
+            Err(CKR_TEMPLATE_INCOMPLETE.into())
+        );
+    }
+
+    #[test]
+    fn resolve_key_type_ml_kem_parameter_sets() {
+        for (param_set, expected) in [
+            (CKP_ML_KEM_512, KeyType::MlKem512),
+            (CKP_ML_KEM_768, KeyType::MlKem768),
+            (CKP_ML_KEM_1024, KeyType::MlKem1024),
+        ] {
+            let pub_t = [ulong_attr(CKA_PARAMETER_SET, param_set as CK_ULONG)];
+            assert_eq!(resolve_key_type(KeyFamily::MlKem, &pub_t), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn resolve_key_type_ml_kem_rejects_unknown_parameter_set() {
+        let bad_t = [ulong_attr(CKA_PARAMETER_SET, 0xFFFF)];
+        assert_eq!(
+            resolve_key_type(KeyFamily::MlKem, &bad_t),
+            Err(CKR_ATTRIBUTE_VALUE_INVALID.into())
+        );
+    }
+
+    #[test]
+    fn resolve_key_type_ml_kem_requires_parameter_set() {
+        assert_eq!(
+            resolve_key_type(KeyFamily::MlKem, &[]),
             Err(CKR_TEMPLATE_INCOMPLETE.into())
         );
     }

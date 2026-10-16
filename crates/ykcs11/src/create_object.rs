@@ -118,9 +118,9 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             Ok(PrivateKey::X25519(key))
         }
         // No ML-DSA/ML-KEM here — unlike `generate::generate_key_pair`
-        // (which now generates ML-DSA 44/65/87 on-device), importing
-        // externally generated ML-DSA/ML-KEM key material is still out of
-        // scope.
+        // (which now generates ML-DSA 44/65/87 and ML-KEM 512/768/1024
+        // on-device), importing externally generated ML-DSA/ML-KEM key
+        // material is still out of scope.
         _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
     }
 }

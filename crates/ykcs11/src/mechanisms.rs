@@ -264,6 +264,16 @@ pub fn mechanism_table() -> Vec<MechanismEntry> {
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
         },
+        // Same rationale as the ML-DSA entry above; ML-KEM's own
+        // encapsulate/decapsulate mechanism (`CKM_ML_KEM`, PKCS#11 3.2's
+        // `C_EncapsulateKey`/`C_DecapsulateKey`) isn't implemented, so only
+        // the key-pair-gen entry is listed here.
+        MechanismEntry {
+            mechanism: CKM_ML_KEM_KEY_PAIR_GEN.into(),
+            min_key_size: 0,
+            max_key_size: 0,
+            flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
+        },
     ]
 }
 
