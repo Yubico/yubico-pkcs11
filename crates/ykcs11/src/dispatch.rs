@@ -37,11 +37,22 @@ macro_rules! traced {
 /// own `RUST_LOG` convention alongside this module's existing `YKCS11_DBG`
 /// one; reusing the same switch (and the same `DBG:` prefix style as
 /// `yk_dbg!`) is more consistent for this module's existing users.
+///
+/// `log::Level::Trace` is gated one tier higher (`YKCS11_DBG>=2`, via
+/// `debug::is_trace_verbose()`) than everything else (`YKCS11_DBG>=1`) --
+/// `yubikit`'s `log_traffic!` macro (raw APDU `SEND:`/`RECV:` hex dumps, see
+/// `platform/pcsc.rs`) logs at `Trace`, and that's far noisier than its
+/// regular `debug!`/`info!` messages, so it shouldn't turn on by default
+/// just because some debug output was requested.
 struct ForwardingLogger;
 
 impl log::Log for ForwardingLogger {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        debug::is_verbose()
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        if metadata.level() == log::Level::Trace {
+            debug::is_trace_verbose()
+        } else {
+            debug::is_verbose()
+        }
     }
 
     fn log(&self, record: &log::Record) {
@@ -64,10 +75,18 @@ pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
             .unwrap_or(0);
         debug::set_verbose(dbg_level);
         // Ignore the error: harmless if a logger is already installed (e.g.
-        // a second C_Initialize after C_Finalize).
-        if log::set_logger(&LOGGER).is_ok() {
-            log::set_max_level(log::LevelFilter::Debug);
-        }
+        // a second C_Initialize after C_Finalize). The max-level filter is
+        // set unconditionally, though (not just on the first successful
+        // `set_logger`), so a later C_Initialize with a different
+        // YKCS11_DBG value still takes effect -- `log::trace!` call sites
+        // are skipped entirely below whatever `set_max_level` says, before
+        // `ForwardingLogger::enabled`'s own per-record check ever runs.
+        let _ = log::set_logger(&LOGGER);
+        log::set_max_level(if debug::is_trace_verbose() {
+            log::LevelFilter::Trace
+        } else {
+            log::LevelFilter::Debug
+        });
         traced!("C_Initialize", G_ENGINE.initialize(pInitArgs))
     }
 }

@@ -29,7 +29,10 @@ use crate::template::{P256_CURVE_OID, P384_CURVE_OID, find_attr, is_public_expon
 use der::Decode;
 use pkcs11_common::backend::Slot;
 use pkcs11_sys::*;
-use yubikit::keys::{EcCurve, EcPrivateKey, Ed25519PrivateKey, PrivateKey, RsaKeySize, RsaPrivateKey, X25519PrivateKey};
+use yubikit::keys::{
+    EcCurve, EcPrivateKey, Ed25519PrivateKey, MlDsaParameterSet, MlDsaPrivateKey, PrivateKey,
+    RsaKeySize, RsaPrivateKey, X25519PrivateKey,
+};
 
 fn map_key_error(_: yubikit::keys::KeyError) -> CK_RV {
     CKR_ATTRIBUTE_VALUE_INVALID.into()
@@ -58,6 +61,14 @@ fn rsa_key_size_from_prime_len(len: usize) -> Option<RsaKeySize> {
 /// the C reference's template checker never reads either. EC/Ed25519/
 /// X25519 use the raw private scalar (`CKA_VALUE`), with EC's curve chosen
 /// via `CKA_EC_PARAMS` the same way `generate::resolve_key_type` does.
+/// ML-DSA has no C reference to match — it uses `CKA_SEED` (PKCS#11 3.2's
+/// dedicated "new post-quantum (general)" attribute, pkcs11t.h:675), *not*
+/// `CKA_VALUE`: the device's import APDU only ever accepts the 32-byte
+/// FIPS 204 seed, never the full expanded private key, so `CKA_VALUE` (if
+/// present at all, e.g. carrying the full key for the caller's own records)
+/// is simply never read here. The parameter set is chosen via
+/// `CKA_PARAMETER_SET`, the same way `generate::resolve_key_type` does for
+/// `CKM_ML_DSA_KEY_PAIR_GEN`.
 fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<PrivateKey, CK_RV> {
     let key_type = find_attr(template, CKA_KEY_TYPE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
     let key_type = CK_ULONG::from_ne_bytes(
@@ -117,10 +128,28 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             let key = X25519PrivateKey::new(secret.to_vec()).map_err(map_key_error)?;
             Ok(PrivateKey::X25519(key))
         }
-        // No ML-DSA/ML-KEM here — unlike `generate::generate_key_pair`
-        // (which now generates ML-DSA 44/65/87 and ML-KEM 512/768/1024
-        // on-device), importing externally generated ML-DSA/ML-KEM key
-        // material is still out of scope.
+        CKK_ML_DSA => {
+            let param_bytes = find_attr(template, CKA_PARAMETER_SET)
+                .ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let param_set = CK_ULONG::from_ne_bytes(
+                param_bytes
+                    .try_into()
+                    .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+            );
+            let parameter_set = match param_set as u32 {
+                CKP_ML_DSA_44 => MlDsaParameterSet::MlDsa44,
+                CKP_ML_DSA_65 => MlDsaParameterSet::MlDsa65,
+                CKP_ML_DSA_87 => MlDsaParameterSet::MlDsa87,
+                _ => return Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
+            };
+            let seed = find_attr(template, CKA_SEED).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let key = MlDsaPrivateKey::new(parameter_set, seed.to_vec()).map_err(map_key_error)?;
+            Ok(PrivateKey::MlDsa(key))
+        }
+        // No ML-KEM here — unlike ML-DSA above and
+        // `generate::generate_key_pair` (which generates ML-KEM 512/768/1024
+        // on-device), importing externally generated ML-KEM key material is
+        // still out of scope.
         _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
     }
 }
@@ -318,6 +347,59 @@ mod tests {
             attr(CKA_VALUE, &[0x01u8; 32]),
         ];
         assert!(matches!(resolve_private_key(&x_t), Ok(PrivateKey::X25519(_))));
+    }
+
+    #[test]
+    fn resolve_private_key_accepts_ml_dsa_templates_for_every_parameter_set() {
+        for (param_set, expected_param_set) in [
+            (CKP_ML_DSA_44, MlDsaParameterSet::MlDsa44),
+            (CKP_ML_DSA_65, MlDsaParameterSet::MlDsa65),
+            (CKP_ML_DSA_87, MlDsaParameterSet::MlDsa87),
+        ] {
+            let t = [
+                ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+                ulong_attr(CKA_PARAMETER_SET, param_set as CK_ULONG),
+                attr(CKA_SEED, &[0x01u8; 32]),
+            ];
+            match resolve_private_key(&t) {
+                Ok(PrivateKey::MlDsa(ref k)) => {
+                    assert_eq!(k.algorithm(), yubikit::keys::KeyAlgorithm::MlDsa(expected_param_set))
+                }
+                other => panic!("expected Ok(PrivateKey::MlDsa(_)), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_unrecognized_ml_dsa_parameter_set() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, 0xFFFF),
+            attr(CKA_SEED, &[0x01u8; 32]),
+        ];
+        assert_resolve_err(&t, CKR_ATTRIBUTE_VALUE_INVALID.into());
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_ml_dsa_template_missing_parameter_set() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            attr(CKA_SEED, &[0x01u8; 32]),
+        ];
+        assert_resolve_err(&t, CKR_TEMPLATE_INCOMPLETE.into());
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_ml_dsa_template_missing_seed() {
+        // CKA_VALUE alone isn't enough -- only CKA_SEED is read, since the
+        // device only ever accepts the 32-byte seed, never the full
+        // expanded private key CKA_VALUE might otherwise carry.
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, CKP_ML_DSA_44 as CK_ULONG),
+            attr(CKA_VALUE, &[0x01u8; 2560]),
+        ];
+        assert_resolve_err(&t, CKR_TEMPLATE_INCOMPLETE.into());
     }
 
     #[test]
