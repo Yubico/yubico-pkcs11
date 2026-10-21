@@ -7,7 +7,13 @@ description = "YubiKey PIV PKCS#11 module"
 
 [lib]
 name = "ykcs11"
-crate-type = ["cdylib", "staticlib"]
+# "rlib" is additive -- it doesn't change the cdylib/staticlib artifacts a
+# real PKCS#11 consumer loads (see README.md), it's only here so
+# crates/ykcs11/tests/*.rs integration tests can link against this crate's
+# own `pub use dispatch::*` C ABI exports as plain Rust function calls
+# (Cargo can't compile a test binary against a lib target that only emits
+# cdylib/staticlib -- those aren't Rust-linkable formats).
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 pkcs11-sys = { workspace = true }
@@ -25,3 +31,9 @@ p384 = { version = "0.13", features = ["ecdsa"] }
 # feature doesn't turn it on either.
 sha2 = { version = "0.10", features = ["oid"] }
 yubikit = { git = "https://github.com/Yubico/yubikey-manager.git", branch = "experiment/rust", default-features = false, features = ["pcsc"] }
+
+# Integration tests under tests/ don't automatically inherit the library's
+# own [dependencies] -- pkcs11-sys is needed there too, to build raw
+# CK_ATTRIBUTE/CK_* values for the real C_* calls those tests exercise.
+[dev-dependencies]
+pkcs11-sys = { workspace = true }
