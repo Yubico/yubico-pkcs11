@@ -274,6 +274,16 @@ pub fn mechanism_table() -> Vec<MechanismEntry> {
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
         },
+        // No C reference entry to match (see sign.rs's own doc comment) —
+        // same "no bit-length key size concept" rationale as the keygen
+        // entries above. Only "pure" CKM_ML_DSA is supported, not the
+        // CKM_HASH_ML_DSA_* prehash family.
+        MechanismEntry {
+            mechanism: CKM_ML_DSA.into(),
+            min_key_size: 0,
+            max_key_size: 0,
+            flags: CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+        },
     ]
 }
 

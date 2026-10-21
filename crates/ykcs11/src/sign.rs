@@ -4,10 +4,22 @@
 //! `C_SignInit`/`C_SignUpdate`/`C_SignFinal` backend logic for the YubiKey
 //! PIV module. Covers every mechanism `sign_mechanism_init` supports,
 //! including the `CKM_RSA_PKCS_PSS`/`CKM_SHAx_RSA_PKCS_PSS` family
-//! (mechanisms.c:150-179).
+//! (mechanisms.c:150-179) — plus one deliberate addition, `CKM_ML_DSA`
+//! (PKCS#11 3.2), which has no C reference in either `ykcs11.c` or
+//! `yubihsm_pkcs11.c`. Scope is "pure" ML-DSA (FIPS 204) only, with the
+//! default empty context and non-deterministic hedging: `CK_HASH_ML_DSA_*`
+//! (prehash) mechanisms aren't implemented, a non-empty `pContext` is
+//! rejected (`yubikit::piv::PivSession::sign` has no way to pass one to the
+//! device at all), and `CKH_DETERMINISTIC_REQUIRED` is rejected too, since
+//! the device always hedges internally with no way to request otherwise.
+//! Confirmed against `yubikit`'s own device tests
+//! (`crates/yubikit/tests/device_tests/piv.rs`'s `test_piv_mldsa44_verify`):
+//! the device's raw-message signature round-trips through the `ml-dsa`
+//! crate's default (empty-context) `Verifier` with no extra message framing
+//! needed on either side — see `verify.rs`'s own `verify_ml_dsa`.
 //!
-//! The actual RSA/EC/EdDSA private-key operation always happens on the
-//! device (`ActivePivSession::sign`, matching `ykpiv_sign_data`) — this
+//! The actual RSA/EC/EdDSA/ML-DSA private-key operation always happens on
+//! the device (`ActivePivSession::sign`, matching `ykpiv_sign_data`) — this
 //! module's own job is everything that happens around that call:
 //! - picking the right hash (or none at all, for the "raw"/pre-hashed
 //!   mechanisms — the caller supplies already-hashed or already-encoded
@@ -18,8 +30,8 @@
 //!   exponentiation in every RSA case, not any of the actual signature
 //!   padding/encoding itself;
 //! - converting the device's DER-encoded ECDSA signature back to the
-//!   fixed-width `r || s` format PKCS#11 expects (EdDSA signatures are
-//!   already fixed-width on the wire, so no equivalent step is needed
+//!   fixed-width `r || s` format PKCS#11 expects (EdDSA/ML-DSA signatures
+//!   are already fixed-width on the wire, so no equivalent step is needed
 //!   there).
 
 use crate::backend::{PivBackend, piv_error_to_rv};
@@ -29,7 +41,7 @@ use pkcs11_common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_pa
 use pkcs11_common::session::LoginState;
 use pkcs11_common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
-use yubikit::keys::{EcCurve, PublicKey, RsaKeySize};
+use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey, RsaKeySize};
 use yubikit::piv::{KeyType, Slot as PivSlot};
 
 /// Everything needed to finish a signing operation once `C_SignFinal` (or
@@ -107,6 +119,52 @@ enum SignAlgorithm {
     /// as-is (objects.c:666's DER-stripping `switch` has no case for
     /// `YKPIV_ALGO_ED25519`, unlike the EC algorithms).
     Eddsa,
+    /// `CKM_ML_DSA` — "pure" ML-DSA (FIPS 204) signs the whole accumulated
+    /// message directly too (no hash, no padding, default empty context),
+    /// same as `Eddsa` above; see this module's own doc comment for the
+    /// scope/rationale. No C reference.
+    MlDsa,
+}
+
+/// Validates `CK_SIGN_ADDITIONAL_CONTEXT` (PKCS#11 3.2) for `CKM_ML_DSA` —
+/// shared by `sign_init` and `verify::verify_init`, since both need the
+/// identical check. No parameter at all (`NULL`/zero-length `pParameter`,
+/// the overwhelmingly common case) is accepted as the default: empty
+/// context, non-deterministic hedging — matching the device's own behavior
+/// (see this module's doc comment). A non-empty `pContext` is rejected
+/// outright (nothing in this module's device call path can pass one
+/// through), and so is `CKH_DETERMINISTIC_REQUIRED` (the device always
+/// hedges internally).
+pub(crate) fn resolve_ml_dsa_context(parameter: &[u8]) -> Result<(), CK_RV> {
+    if parameter.is_empty() {
+        return Ok(());
+    }
+    if parameter.len() != std::mem::size_of::<CK_SIGN_ADDITIONAL_CONTEXT>() {
+        return Err(CKR_MECHANISM_PARAM_INVALID.into());
+    }
+    // SAFETY: length just checked above; read_unaligned for the same reason
+    // as `resolve_pss_params` (PKCS#11 callers aren't guaranteed to hand us
+    // an aligned pointer).
+    let ctx: CK_SIGN_ADDITIONAL_CONTEXT = unsafe {
+        std::ptr::read_unaligned(parameter.as_ptr() as *const CK_SIGN_ADDITIONAL_CONTEXT)
+    };
+    if ctx.ulContextLen != 0 || ctx.hedgeVariant == CKH_DETERMINISTIC_REQUIRED as CK_HEDGE_TYPE {
+        return Err(CKR_MECHANISM_PARAM_INVALID.into());
+    }
+    Ok(())
+}
+
+/// FIPS 204 Table 2's fixed signature length per parameter set.
+fn ml_dsa_signature_len(parameter_set: MlDsaParameterSet) -> Result<CK_ULONG, CK_RV> {
+    Ok(match parameter_set {
+        MlDsaParameterSet::MlDsa44 => 2420,
+        MlDsaParameterSet::MlDsa65 => 3309,
+        MlDsaParameterSet::MlDsa87 => 4627,
+        // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] -- every
+        // variant that exists today is covered above, this only guards
+        // future additions.
+        _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
+    })
 }
 
 fn rsa_key_type(size: RsaKeySize) -> Result<KeyType, CK_RV> {
@@ -239,6 +297,12 @@ pub fn sign_init(
         (MechanismKind::Eddsa, PublicKey::Ed25519(_)) => {
             (KeyType::Ed25519, SignAlgorithm::Eddsa, 64)
         }
+        (MechanismKind::MlDsa, PublicKey::MlDsa(k)) => {
+            resolve_ml_dsa_context(parameter)?;
+            let key_type = KeyType::try_from(&public_key.algorithm())
+                .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
+            (key_type, SignAlgorithm::MlDsa, ml_dsa_signature_len(k.parameter_set)?)
+        }
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     };
 
@@ -252,7 +316,8 @@ pub fn sign_init(
         | MechanismKind::RsaPkcs1Raw
         | MechanismKind::RsaPssRaw
         | MechanismKind::EcdsaRaw
-        | MechanismKind::Eddsa => Accumulator::Raw(Vec::new()),
+        | MechanismKind::Eddsa
+        | MechanismKind::MlDsa => Accumulator::Raw(Vec::new()),
     };
 
     let session = slot
@@ -399,7 +464,7 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
                 .map_err(piv_error_to_rv)?;
             strip_ecdsa_der(&der_sig, curve_byte_len)
         }
-        SignAlgorithm::Eddsa => piv
+        SignAlgorithm::Eddsa | SignAlgorithm::MlDsa => piv
             .sign(state.slot, state.key_type, &message)
             .map_err(piv_error_to_rv),
     }
