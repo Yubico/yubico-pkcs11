@@ -31,6 +31,7 @@ p384 = { version = "0.13", features = ["ecdsa"] }
 # feature doesn't turn it on either.
 sha2 = { version = "0.10", features = ["oid"] }
 yubikit = { git = "https://github.com/Yubico/yubikey-manager.git", branch = "experiment/rust", default-features = false, features = ["pcsc"] }
+ykman = { git = "https://github.com/Yubico/yubikey-manager.git", branch = "experiment/rust_ykcs11", default-features = false, features = ["piv"] }
 # ML-DSA (FIPS 204) signature verification for CKM_ML_DSA (see verify.rs) --
 # same version yubikit itself already pins as a dev-dependency for its own
 # ML-DSA device tests.

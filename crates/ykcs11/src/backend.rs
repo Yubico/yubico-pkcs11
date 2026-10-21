@@ -518,9 +518,43 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
         });
     }
 
-    // TODO Authenticate with PIN protected management key
+    // PIN (or UV) verified above, but the caller gave us no key material --
+    // matches token_login's fallthrough (token.c:348-362): look for a
+    // management key stored on-device, protected by the PIN that was just
+    // verified (`ykman::piv`'s "pivman" admin-data/protected-data objects,
+    // `0x5FFF00`/`Printed`; see that crate's Cargo.toml doc comment on its
+    // `piv` feature for why this is a dependency instead of a port).
+    authenticate_so_with_protected_key(piv)
+}
 
-    Err(CKR_USER_PIN_NOT_INITIALIZED.into())
+/// Reads the PIN-protected management key (if one is configured) and
+/// authenticates with it. Matches `ykpiv_util_get_config` returning
+/// `YKPIV_CONFIG_MGM_INVALID`/non-`YKPIV_CONFIG_MGM_PROTECTED`, and the C
+/// module's own `CKR_USER_PIN_NOT_INITIALIZED` fallback for that case
+/// (token.c:355-359), by requiring both the admin-data flag and an actual
+/// stored key to be present.
+fn authenticate_so_with_protected_key(piv: &mut ActivePivSession) -> Result<(), CK_RV> {
+    let admin_data = ykman::piv::get_pivman_data(piv);
+    if !ykman::piv::has_stored_key(&admin_data) {
+        return Err(CKR_USER_PIN_NOT_INITIALIZED.into());
+    }
+
+    let protected_data = ykman::piv::get_pivman_protected_data(piv);
+    let key_bytes = protected_data
+        .iter()
+        .find(|(tag, _)| *tag == ykman::piv::TAG_PIVMAN_KEY)
+        .map(|(_, value)| value.as_slice())
+        .ok_or(CK_RV::from(CKR_USER_PIN_NOT_INITIALIZED))?;
+
+    let key_type = piv.management_key_type();
+    let key = ManagementKey::new(key_type, key_bytes).map_err(|_| CK_RV::from(CKR_DEVICE_ERROR))?;
+    piv.authenticate(&key).map_err(|e| match e {
+        // Matches token.c:366-367: a rejected response from the device
+        // means the stored key itself is wrong (e.g. stale after an
+        // out-of-band management-key change that didn't update it).
+        PivError::InvalidData(_) => CK_RV::from(CKR_PIN_INCORRECT),
+        other => piv_error_to_rv(other),
+    })
 }
 
 pub static G_ENGINE: Engine<PivBackend> = Engine::new();
