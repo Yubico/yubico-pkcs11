@@ -504,6 +504,58 @@ pub trait Backend: Sized + 'static {
     fn init_token(_slot: &mut Slot<Self>, _pin: &[u8]) -> Result<(), CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
+
+    /// The ciphertext length `encapsulate_key` will produce for this public
+    /// key, without actually performing the (randomized) encapsulation --
+    /// `Engine::encapsulate_key`'s length-query call (`pCiphertext == NULL`)
+    /// needs this to answer PKCS#11's usual two-call buffer-size convention
+    /// without side effects or consuming fresh randomness on a call that's
+    /// only asking "how big a buffer do I need." For ML-KEM this is fully
+    /// determined by the public key's own parameter set. Default: not
+    /// supported.
+    fn encapsulate_key_len(
+        _slot: &mut Slot<Self>,
+        _h_public_key: CK_OBJECT_HANDLE,
+    ) -> Result<usize, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Encapsulate a fresh shared secret against `h_public_key`, returning
+    /// `(ciphertext, new secret-key object handle)`. Single atomic call,
+    /// same shape as `derive_key` plus a ciphertext output. `parameter` is
+    /// the mechanism's raw `pParameter` bytes (empty if the caller didn't
+    /// supply one — PKCS#11 3.2 defines no parameter struct for
+    /// `CKM_ML_KEM`). Only called once `Engine::encapsulate_key` has already
+    /// confirmed the caller's ciphertext buffer is large enough via
+    /// `encapsulate_key_len`. Default: not supported.
+    fn encapsulate_key(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _h_public_key: CK_OBJECT_HANDLE,
+        _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<(Vec<u8>, CK_OBJECT_HANDLE), CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
+
+    /// Decapsulate `ciphertext` with `h_private_key`, returning the new
+    /// secret-key object's handle. Single atomic call, same shape as
+    /// `derive_key` (its ECDH counterpart) -- no engine-tracked operation
+    /// state, no separate length-query step (unlike `encapsulate_key`,
+    /// decapsulate's only variable-length parameter, `ciphertext`, is an
+    /// input, not an output). Default: not supported.
+    fn decapsulate_key(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+        _mechanism: CK_MECHANISM_TYPE,
+        _parameter: &[u8],
+        _h_private_key: CK_OBJECT_HANDLE,
+        _ciphertext: &[u8],
+        _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
+        Err(CKR_FUNCTION_NOT_SUPPORTED.into())
+    }
 }
 
 /// Extracts a `CK_ATTRIBUTE` array into owned `(type, value bytes)` pairs —
@@ -649,6 +701,80 @@ impl<B: Backend> Engine<B> {
             }
             *pp_function_list = table as *const CK_FUNCTION_LIST as CK_FUNCTION_LIST_PTR;
             CKR_OK.into()
+        }
+    }
+
+    /// PKCS#11 3.0's `C_GetInterfaceList` — generic over whatever fixed set
+    /// of interfaces a module exposes (today, at most one: "PKCS 11" at
+    /// 3.2). Doesn't require `C_Initialize` to have run first, matching
+    /// `get_function_list` above (interface discovery is meant to work
+    /// before initialization too).
+    pub unsafe fn get_interface_list(
+        &self,
+        p_interfaces_list: CK_INTERFACE_PTR,
+        pul_count: CK_ULONG_PTR,
+        interfaces: &'static [CK_INTERFACE],
+    ) -> CK_RV {
+        unsafe {
+            if pul_count.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            let count = interfaces.len() as CK_ULONG;
+            if p_interfaces_list.is_null() {
+                *pul_count = count;
+                return CKR_OK.into();
+            }
+            if *pul_count < count {
+                *pul_count = count;
+                return CKR_BUFFER_TOO_SMALL.into();
+            }
+            for (i, iface) in interfaces.iter().enumerate() {
+                *p_interfaces_list.add(i) = *iface;
+            }
+            *pul_count = count;
+            CKR_OK.into()
+        }
+    }
+
+    /// PKCS#11 3.0's `C_GetInterface` — finds the first entry in
+    /// `interfaces` matching `p_interface_name` (if given; NUL-terminated,
+    /// compared as a C string) and `p_version` (if given). Every
+    /// `CK_FUNCTION_LIST*` variant starts with a `version: CK_VERSION` field
+    /// at the same offset (by construction -- see pkcs11.h's own
+    /// `CK_FUNCTION_LIST_3_2`/`_3_0`/legacy triple-`#include`), so the
+    /// version is read generically through the type-erased `pFunctionList`
+    /// pointer rather than tracked separately per interface entry.
+    pub unsafe fn get_interface(
+        &self,
+        p_interface_name: CK_UTF8CHAR_PTR,
+        p_version: CK_VERSION_PTR,
+        pp_interface: CK_INTERFACE_PTR_PTR,
+        interfaces: &'static [CK_INTERFACE],
+    ) -> CK_RV {
+        unsafe {
+            if pp_interface.is_null() {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+            for iface in interfaces {
+                if !p_interface_name.is_null() {
+                    let requested = std::ffi::CStr::from_ptr(p_interface_name as *const std::ffi::c_char);
+                    let this_name =
+                        std::ffi::CStr::from_ptr(iface.pInterfaceName as *const std::ffi::c_char);
+                    if requested != this_name {
+                        continue;
+                    }
+                }
+                if !p_version.is_null() {
+                    let actual: CK_VERSION = std::ptr::read(iface.pFunctionList as *const CK_VERSION);
+                    let requested = &*p_version;
+                    if actual.major != requested.major || actual.minor != requested.minor {
+                        continue;
+                    }
+                }
+                *pp_interface = iface as *const CK_INTERFACE as CK_INTERFACE_PTR;
+                return CKR_OK.into();
+            }
+            CKR_ARGUMENTS_BAD.into()
         }
     }
 
@@ -2728,6 +2854,159 @@ impl<B: Backend> Engine<B> {
             let template = extract_attribute_template(p_template, ul_attribute_count);
 
             match B::derive_key(&mut slot_guard, h_session, mechanism, parameter, h_base_key, &template) {
+                Ok(handle) => {
+                    *ph_key = handle;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// PKCS#11 3.2's `C_EncapsulateKey`. `p_ciphertext == NULL` is the usual
+    /// two-call buffer-size query (`B::encapsulate_key_len`, side-effect-free);
+    /// only once the caller's buffer is confirmed large enough does this
+    /// call into `B::encapsulate_key`, which actually performs the
+    /// (randomized) encapsulation and creates the new secret-key object --
+    /// deliberately not run twice just to answer a length query.
+    pub unsafe fn encapsulate_key(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_public_key: CK_OBJECT_HANDLE,
+        p_template: CK_ATTRIBUTE_PTR,
+        ul_attribute_count: CK_ULONG,
+        p_ciphertext: CK_BYTE_PTR,
+        pul_ciphertext_len: CK_ULONG_PTR,
+        ph_key: CK_OBJECT_HANDLE_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if p_mechanism.is_null()
+                || pul_ciphertext_len.is_null()
+                || ph_key.is_null()
+                || (ul_attribute_count > 0 && p_template.is_null())
+            {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            if p_ciphertext.is_null() {
+                return match B::encapsulate_key_len(&mut slot_guard, h_public_key) {
+                    Ok(len) => {
+                        *pul_ciphertext_len = len as CK_ULONG;
+                        CKR_OK.into()
+                    }
+                    Err(rv) => rv,
+                };
+            }
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            let template = extract_attribute_template(p_template, ul_attribute_count);
+
+            match B::encapsulate_key(&mut slot_guard, h_session, mechanism, parameter, h_public_key, &template) {
+                Ok((ciphertext, handle)) => {
+                    if (*pul_ciphertext_len as usize) < ciphertext.len() {
+                        *pul_ciphertext_len = ciphertext.len() as CK_ULONG;
+                        return CKR_BUFFER_TOO_SMALL.into();
+                    }
+                    std::ptr::copy_nonoverlapping(ciphertext.as_ptr(), p_ciphertext, ciphertext.len());
+                    *pul_ciphertext_len = ciphertext.len() as CK_ULONG;
+                    *ph_key = handle;
+                    CKR_OK.into()
+                }
+                Err(rv) => rv,
+            }
+        }
+    }
+
+    /// PKCS#11 3.2's `C_DecapsulateKey`. Unlike `encapsulate_key`, the only
+    /// variable-length parameter (`ciphertext`) is an input here, so there's
+    /// no two-call buffer convention to handle -- single pass, same shape as
+    /// `derive_key`.
+    pub unsafe fn decapsulate_key(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        p_mechanism: CK_MECHANISM_PTR,
+        h_private_key: CK_OBJECT_HANDLE,
+        p_template: CK_ATTRIBUTE_PTR,
+        ul_attribute_count: CK_ULONG,
+        p_ciphertext: CK_BYTE_PTR,
+        ul_ciphertext_len: CK_ULONG,
+        ph_key: CK_OBJECT_HANDLE_PTR,
+    ) -> CK_RV {
+        unsafe {
+            let mut guard = self.state.lock();
+            let state = match guard.as_mut() {
+                Some(s) => s,
+                None => return CKR_CRYPTOKI_NOT_INITIALIZED.into(),
+            };
+            let slot_id = match state.session_to_slot.get(&h_session) {
+                Some(id) => *id,
+                None => return CKR_SESSION_HANDLE_INVALID.into(),
+            };
+            let slot = state.slots[slot_id as usize].clone();
+            let mut slot_guard = slot.lock();
+            if !slot_guard.sessions.contains_key(&h_session) {
+                return CKR_SESSION_HANDLE_INVALID.into();
+            }
+            if p_mechanism.is_null()
+                || ph_key.is_null()
+                || (ul_attribute_count > 0 && p_template.is_null())
+                || (ul_ciphertext_len > 0 && p_ciphertext.is_null())
+            {
+                return CKR_ARGUMENTS_BAD.into();
+            }
+
+            let mechanism = (*p_mechanism).mechanism;
+            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
+                || (*p_mechanism).ulParameterLen == 0
+            {
+                &[]
+            } else {
+                std::slice::from_raw_parts(
+                    (*p_mechanism).pParameter as *const u8,
+                    (*p_mechanism).ulParameterLen as usize,
+                )
+            };
+            let ciphertext: &[u8] = if ul_ciphertext_len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(p_ciphertext, ul_ciphertext_len as usize)
+            };
+            let template = extract_attribute_template(p_template, ul_attribute_count);
+
+            match B::decapsulate_key(
+                &mut slot_guard,
+                h_session,
+                mechanism,
+                parameter,
+                h_private_key,
+                ciphertext,
+                &template,
+            ) {
                 Ok(handle) => {
                     *ph_key = handle;
                     CKR_OK.into()

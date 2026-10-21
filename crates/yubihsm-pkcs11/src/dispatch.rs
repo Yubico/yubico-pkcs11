@@ -724,4 +724,13 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     // Backend::init_token's default impl since YubiHsmBackend doesn't
     // override it.
     c_init_token: Some(C_InitToken),
+    // PKCS#11 3.0 interface discovery and 3.2 ML-KEM encapsulation aren't
+    // implemented for yubihsm-pkcs11 -- it only ever exposes the legacy 2.0
+    // function table via C_GetFunctionList, so these are never read by
+    // build_function_list (only build_function_list_3_2, which this module
+    // doesn't call).
+    c_get_interface_list: None,
+    c_get_interface: None,
+    c_encapsulate_key: None,
+    c_decapsulate_key: None,
 });

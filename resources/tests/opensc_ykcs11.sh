@@ -76,7 +76,9 @@ for c in ${EC_CURVES[@]}; do
   echo "            $c"
   echo "**********************************"
 
-  for ((s=1;s<=$SLOTS;s++)); do
+  for ((slot=1;slot<=$SLOTS;slot++)); do
+
+    s=$(echo "obase=16; $slot" | bc)
 
     echo "===== Generate key in slot $s"
     test "pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --keypairgen --id $s --key-type EC:$c" "Generate keypair"
@@ -133,7 +135,10 @@ if [ $newkey -eq 0 ]; then
   echo "            ED25519"
   echo "**********************************"
 
-  for ((s=1;s<=$SLOTS;s++)); do
+  for ((slot=1;slot<=$SLOTS;slot++)); do
+
+    s=$(echo "obase=16; $slot" | bc)
+
     echo "===== Generate key in slot $s"
     test "pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --keypairgen --id $s --key-type EC:edwards25519" "Generate keypair"
 
@@ -165,7 +170,10 @@ for k in ${RSA_KEYSIZES[@]}; do
   echo "            RSA$k"
   echo "**********************************"
 
-  for ((s=1;s<=$SLOTS;s++)); do
+  for ((slot=1;slot<=$SLOTS;slot++)); do
+
+    s=$(echo "obase=16; $slot" | bc)
+
     echo "===== Generate key in slot $s"
     test "pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --keypairgen --id $s --key-type rsa:$k" "Generate keypair"
 

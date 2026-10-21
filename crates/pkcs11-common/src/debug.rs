@@ -14,6 +14,20 @@ pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed) > 0
 }
 
+/// The raw verbosity tier (`YKCS11_DBG`'s value) — `0` is silent, `1` is the
+/// usual `yk_dbg!`/debug-log tier, `2+` additionally enables trace-level
+/// output (e.g. `yubikit`'s raw APDU traffic logging).
+pub fn verbose_level() -> u8 {
+    VERBOSE.load(Ordering::Relaxed)
+}
+
+/// Whether trace-tier output (`YKCS11_DBG>=2`) should be shown — distinct
+/// from `is_verbose()`'s `YKCS11_DBG>=1` threshold since trace output (raw
+/// APDU hex dumps) is far noisier than the regular debug messages.
+pub fn is_trace_verbose() -> bool {
+    verbose_level() >= 2
+}
+
 /// Timestamp for yubihsm-style debug output.
 pub fn timestamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};

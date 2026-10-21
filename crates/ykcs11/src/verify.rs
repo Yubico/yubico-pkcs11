@@ -10,21 +10,26 @@
 //! check (`CKO_PUBLIC_KEY` only — certificates aren't accepted,
 //! ykcs11.c:3189) and complete absence of any login_state check anywhere in
 //! `C_VerifyInit`/`C_Verify`/`C_VerifyUpdate`/`C_VerifyFinal`
-//! (ykcs11.c:3160-3389).
+//! (ykcs11.c:3160-3389). Also covers `CKM_ML_DSA`, same scope/rationale as
+//! `sign.rs`'s own doc comment (no C reference, pure ML-DSA only, default
+//! empty context).
 //!
-//! All of the actual cryptographic verification math lives in
-//! `pkcs11_common::verify`, parameterized over raw public-key bytes rather
-//! than `yubikit::keys::PublicKey` — this module's own job is purely PIV
-//! object lookup, mechanism classification, and session bookkeeping.
+//! All of the actual cryptographic verification math for the mechanisms
+//! shared with the C references lives in `pkcs11_common::verify`,
+//! parameterized over raw public-key bytes rather than
+//! `yubikit::keys::PublicKey`; `verify_ml_dsa` below stays local to this
+//! module instead, since (unlike every other mechanism here) it has no C
+//! reference to mirror and needs the `ml-dsa` crate, which `pkcs11-common`
+//! has no reason to depend on otherwise.
 
 use crate::backend::PivBackend;
-use crate::sign::Accumulator;
+use crate::sign::{Accumulator, resolve_ml_dsa_context};
 use pkcs11_common::backend::Slot;
 use pkcs11_common::digest::DigestOp;
 use pkcs11_common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
 use pkcs11_common::verify::{verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509};
 use pkcs11_sys::*;
-use yubikit::keys::{EcCurve, PublicKey};
+use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey};
 
 /// Everything needed to finish a verify operation once `C_VerifyFinal` (or
 /// `C_Verify`'s equivalent single-shot update+final) is called — stashed in
@@ -62,6 +67,10 @@ enum VerifyAlgorithm {
     Eddsa {
         key: Vec<u8>,
     },
+    MlDsa {
+        key: Vec<u8>,
+        parameter_set: MlDsaParameterSet,
+    },
 }
 
 fn curve_byte_len(curve: EcCurve) -> Result<usize, CK_RV> {
@@ -80,7 +89,7 @@ pub fn verify_init(
     parameter: &[u8],
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<(), CK_RV> {
-    let Some(public_key) = crate::objects::find_verify_key(&slot.data.objects, key_handle) else {
+    let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle) else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
@@ -146,6 +155,13 @@ pub fn verify_init(
             }
         }
         (MechanismKind::Eddsa, PublicKey::Ed25519(k)) => VerifyAlgorithm::Eddsa { key: k.key.clone() },
+        (MechanismKind::MlDsa, PublicKey::MlDsa(k)) => {
+            resolve_ml_dsa_context(parameter)?;
+            VerifyAlgorithm::MlDsa {
+                key: k.key.clone(),
+                parameter_set: k.parameter_set,
+            }
+        }
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     };
 
@@ -159,7 +175,8 @@ pub fn verify_init(
         | MechanismKind::RsaPkcs1Raw
         | MechanismKind::RsaPssRaw
         | MechanismKind::EcdsaRaw
-        | MechanismKind::Eddsa => Accumulator::Raw(Vec::new()),
+        | MechanismKind::Eddsa
+        | MechanismKind::MlDsa => Accumulator::Raw(Vec::new()),
     };
 
     let session = slot
@@ -239,5 +256,65 @@ pub fn verify_final(
             verify_ecdsa(curve_byte_len, &point, &message, signature)
         }
         VerifyAlgorithm::Eddsa { key } => verify_eddsa(&key, &message, signature),
+        VerifyAlgorithm::MlDsa { key, parameter_set } => {
+            verify_ml_dsa(parameter_set, &key, &message, signature)
+        }
+    }
+}
+
+/// `CKM_ML_DSA` (FIPS 204, "pure" mode, default empty context) verify — no
+/// C reference (see this module's own doc comment for why this stays local
+/// rather than living in `pkcs11_common::verify` alongside everything
+/// else). Mirrors the exact usage already proven against real hardware in
+/// `yubikit`'s own device tests
+/// (`crates/yubikit/tests/device_tests/piv.rs`'s `test_piv_mldsa44_verify`):
+/// the device's raw-message signature round-trips through the `ml-dsa`
+/// crate's default (empty-context) `Verifier` impl with no extra message
+/// framing needed on either side. Three near-identical arms rather than one
+/// generic helper, since `MlDsa44`/`MlDsa65`/`MlDsa87` are distinct marker
+/// types in the `ml-dsa` crate with no common byte-array-length bound to
+/// abstract over.
+fn verify_ml_dsa(
+    parameter_set: MlDsaParameterSet,
+    key: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), CK_RV> {
+    // `common::KeyInit` must be in scope for `VerifyingKey::new` to resolve
+    // (confirmed against yubikit's own proven usage in
+    // `test_piv_mldsa44_verify`, which imports the identical set).
+    use ml_dsa::common::KeyInit;
+    use ml_dsa::signature::Verifier;
+    use ml_dsa::{MlDsa44, MlDsa65, MlDsa87, Signature, VerifyingKey};
+
+    match parameter_set {
+        MlDsaParameterSet::MlDsa44 => {
+            let key: &[u8; 1312] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let vk = VerifyingKey::<MlDsa44>::new(key.into());
+            let sig = Signature::<MlDsa44>::try_from(signature)
+                .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
+            vk.verify(message, &sig)
+                .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
+        }
+        MlDsaParameterSet::MlDsa65 => {
+            let key: &[u8; 1952] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let vk = VerifyingKey::<MlDsa65>::new(key.into());
+            let sig = Signature::<MlDsa65>::try_from(signature)
+                .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
+            vk.verify(message, &sig)
+                .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
+        }
+        MlDsaParameterSet::MlDsa87 => {
+            let key: &[u8; 2592] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let vk = VerifyingKey::<MlDsa87>::new(key.into());
+            let sig = Signature::<MlDsa87>::try_from(signature)
+                .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
+            vk.verify(message, &sig)
+                .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
+        }
+        // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] -- every
+        // variant that exists today is covered above, this only guards
+        // future additions.
+        _ => Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     }
 }

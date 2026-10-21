@@ -8,7 +8,14 @@
 //! and `sign_mechanism_init` in the C reference accept the identical
 //! mechanism set (confirmed byte-for-byte against both ykcs11.c and
 //! yubihsm_pkcs11.c) — only the key-class/login checks around them differ,
-//! and those stay in each backend's own orchestration code.
+//! and those stay in each backend's own orchestration code. One deliberate
+//! exception: `CKM_ML_DSA` (PKCS#11 3.2) has no C reference in either
+//! module (`ykcs11::sign`/`ykcs11::verify`'s own doc comments explain the
+//! scope) — it's classified here anyway since `yubihsm-pkcs11` doesn't use
+//! this module at all today, so there's nothing for the extra variant to
+//! conflict with, and it lets `CKM_ML_DSA` fit the same
+//! `(MechanismKind, PublicKey)` matching `ykcs11::sign`/`verify` already use
+//! for everything else.
 
 use pkcs11_sys::*;
 
@@ -25,6 +32,8 @@ pub enum MechanismKind {
     EcdsaRaw,
     EcdsaHashed(CK_MECHANISM_TYPE),
     Eddsa,
+    /// `CKM_ML_DSA` — no C reference, see this module's own doc comment.
+    MlDsa,
 }
 
 /// Matches `sign_mechanism_init`'s outer mechanism `switch`
@@ -32,7 +41,9 @@ pub enum MechanismKind {
 /// own outer switch (mechanisms.c:333-375): `CKM_RSA_X_509`/`CKM_RSA_PKCS`/
 /// `CKM_RSA_PKCS_PSS`/`CKM_ECDSA`/`CKM_EDDSA` need no hash; the
 /// `CKM_SHAx_RSA_PKCS`/`CKM_SHAx_RSA_PKCS_PSS`/`CKM_ECDSA_SHAx` mechanisms
-/// pick a hash via `EVP_MD_by_mechanism` (mechanisms.c:48-65).
+/// pick a hash via `EVP_MD_by_mechanism` (mechanisms.c:48-65). `CKM_ML_DSA`
+/// is the one addition neither C reference has, folded in anyway (see this
+/// module's own doc comment).
 pub fn classify_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<MechanismKind> {
     Some(match mechanism as u32 {
         CKM_RSA_X_509 => MechanismKind::RsaX509,
@@ -52,6 +63,7 @@ pub fn classify_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<MechanismKind>
         CKM_ECDSA_SHA384 => MechanismKind::EcdsaHashed(CKM_SHA384 as CK_MECHANISM_TYPE),
         CKM_ECDSA_SHA512 => MechanismKind::EcdsaHashed(CKM_SHA512 as CK_MECHANISM_TYPE),
         CKM_EDDSA => MechanismKind::Eddsa,
+        CKM_ML_DSA => MechanismKind::MlDsa,
         _ => return None,
     })
 }

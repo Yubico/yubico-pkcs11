@@ -435,6 +435,41 @@ impl Backend for PivBackend {
     fn init_token(slot: &mut Slot<Self>, pin: &[u8]) -> Result<(), CK_RV> {
         crate::init_token::init_token(slot, pin)
     }
+
+    fn encapsulate_key_len(slot: &mut Slot<Self>, h_public_key: CK_OBJECT_HANDLE) -> Result<usize, CK_RV> {
+        crate::encapsulate::encapsulate_key_len(slot, h_public_key)
+    }
+
+    fn encapsulate_key(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        h_public_key: CK_OBJECT_HANDLE,
+        template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<(Vec<u8>, CK_OBJECT_HANDLE), CK_RV> {
+        crate::encapsulate::encapsulate_key(slot, h_session, mechanism, parameter, h_public_key, template)
+    }
+
+    fn decapsulate_key(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+        mechanism: CK_MECHANISM_TYPE,
+        parameter: &[u8],
+        h_private_key: CK_OBJECT_HANDLE,
+        ciphertext: &[u8],
+        template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
+        crate::encapsulate::decapsulate_key(
+            slot,
+            h_session,
+            mechanism,
+            parameter,
+            h_private_key,
+            ciphertext,
+            template,
+        )
+    }
 }
 
 /// Sentinels matching `token_login` (token.c:302-303): a request for

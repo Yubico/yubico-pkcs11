@@ -5,8 +5,8 @@
 //! object.c/objects.c model across all 25 PIV slots: the 4 standard
 //! containers (9a/9c/9d/9e), the 20 retired key-management slots (82-95),
 //! and the dynamically-generated attestation certificate (f9). RSA, EC
-//! (NIST/Brainpool), Ed25519, and X25519 keys are modeled; post-quantum
-//! (ML-DSA/ML-KEM) PIV keys are a known gap to close later. Also modeled:
+//! (NIST/Brainpool), Ed25519, X25519, ML-DSA (44/65/87), and ML-KEM
+//! (512/768/1024) keys are modeled. Also modeled:
 //! the 7 non-per-slot generic data objects the C reference itself discovers
 //! (CCC, CHUID, Security Object, Discovery Object, Key History Object, SM
 //! Signer, Pairing Code Reference Data — `token_objects[]`, token.c:107-118)
@@ -29,7 +29,7 @@ use der::{Decode, Encode};
 use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 use x509_cert::Certificate;
-use yubikit::keys::PublicKey;
+use yubikit::keys::{MlDsaParameterSet, MlKemParameterSet, PublicKey};
 use yubikit::piv::{ObjectId, PinPolicy, PivError, Slot, TouchPolicy};
 use yubikit::smartcard::{SmartCardError, Sw};
 
@@ -947,6 +947,8 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
                             | PublicKey::Ec(_)
                             | PublicKey::Ed25519(_)
                             | PublicKey::X25519(_)
+                            | PublicKey::MlDsa(_)
+                            | PublicKey::MlKem(_)
                     ) {
                         ec_params_der = tbs
                             .subject_public_key_info
@@ -1181,20 +1183,23 @@ pub fn find_private_key(
     Some((obj.slot, obj.public_key.as_ref()?))
 }
 
-/// The public key backing a `CKO_PUBLIC_KEY` object handle, for
-/// `C_VerifyInit` — `None` for any handle that isn't a public-key object
-/// (certificates are not accepted, matching `C_VerifyInit`'s own
+/// The public key backing a `CKO_PUBLIC_KEY` object handle, plus its
+/// originating PIV slot -- `None` for any handle that isn't a public-key
+/// object (certificates are not accepted, matching `C_VerifyInit`'s own
 /// `hKey < PIV_PUBK_OBJ_PIV_AUTH || hKey > PIV_PUBK_OBJ_ATTESTATION` range
-/// check, ykcs11.c:3189). No `Slot`/device access needed — verification
-/// never touches the token.
-pub fn find_verify_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<&PublicKey> {
+/// check, ykcs11.c:3189). Used by `C_VerifyInit`/`C_EncryptInit` (which only
+/// need the key, never the device) and `C_EncapsulateKey` (which also needs
+/// the slot, to know which PIV slot the resulting secret-key object belongs
+/// to) -- the same shared lookup `find_private_key` already is for
+/// `C_SignInit`/`C_DeriveKey`/`C_DecapsulateKey`.
+pub fn find_public_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
     let obj = objects
         .iter()
         .find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
     if obj.class != ObjectClass::PublicKey {
         return None;
     }
-    obj.public_key.as_ref()
+    Some((obj.slot, obj.public_key.as_ref()?))
 }
 
 pub fn get_attribute(
@@ -1314,9 +1319,47 @@ fn key_type_attr(key: &PublicKey) -> Option<Vec<u8>> {
         // Matches do_get_key_type (openssl_utils.c:372-373).
         PublicKey::Ed25519(_) => CKK_EC_EDWARDS,
         PublicKey::X25519(_) => CKK_EC_MONTGOMERY,
+        PublicKey::MlDsa(_) => CKK_ML_DSA,
+        PublicKey::MlKem(_) => CKK_ML_KEM,
         _ => return None,
     };
     Some(cka_ulong(kt))
+}
+
+/// `CKA_PARAMETER_SET` (PKCS#11 3.2) — the ML-DSA/ML-KEM analogue of
+/// `CKA_EC_PARAMS`, identifying which of the 44/65/87 (ML-DSA) or
+/// 512/768/1024 (ML-KEM) variants this key is. No C reference to match.
+fn parameter_set_attr(key: &PublicKey) -> Option<Vec<u8>> {
+    match key {
+        PublicKey::MlDsa(k) => Some(cka_ulong(match k.parameter_set {
+            MlDsaParameterSet::MlDsa44 => CKP_ML_DSA_44,
+            MlDsaParameterSet::MlDsa65 => CKP_ML_DSA_65,
+            MlDsaParameterSet::MlDsa87 => CKP_ML_DSA_87,
+            // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] — every
+            // variant that exists today is covered above, this only guards
+            // future additions.
+            _ => return None,
+        })),
+        PublicKey::MlKem(k) => Some(cka_ulong(match k.parameter_set {
+            MlKemParameterSet::MlKem512 => CKP_ML_KEM_512,
+            MlKemParameterSet::MlKem768 => CKP_ML_KEM_768,
+            MlKemParameterSet::MlKem1024 => CKP_ML_KEM_1024,
+            // Same non_exhaustive guard as the MlDsaParameterSet arm above.
+            _ => return None,
+        })),
+        _ => None,
+    }
+}
+
+/// `CKA_VALUE` for an ML-DSA or ML-KEM public key object — the raw public
+/// key bytes (PKCS#11 3.2's analogue of `CKA_EC_POINT`/`CKA_MODULUS` for
+/// these algorithm families, which have neither).
+fn raw_key_value_attr(key: &PublicKey) -> Option<Vec<u8>> {
+    match key {
+        PublicKey::MlDsa(k) => Some(k.key.clone()),
+        PublicKey::MlKem(k) => Some(k.key.clone()),
+        _ => None,
+    }
 }
 
 /// `CKA_EC_PARAMS` for Ed25519/X25519 keys isn't a real OID — yubico-piv-tool
@@ -1545,6 +1588,15 @@ fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option
                 PublicKey::Ec(_) | PublicKey::X25519(_)
             )))
         }
+        // PKCS#11 3.2 — a KEM public key's analogue of CKA_WRAP; no C
+        // reference to match. `C_EncapsulateKey` itself isn't implemented
+        // (see generate.rs's own doc comment), but the attribute still
+        // correctly describes which keys are algorithmically capable of it,
+        // same as CKA_DERIVE above.
+        CKA_ENCAPSULATE => {
+            yk_dbg!("ENCAPSULATE");
+            Some(cka_bool(matches!(public_key, PublicKey::MlKem(_))))
+        }
         CKA_EC_POINT => {
             yk_dbg!("EC_POINT");
             ec_point_bytes(public_key)
@@ -1573,6 +1625,14 @@ fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option
                 PublicKey::Rsa(k) => Some(k.e.clone()),
                 _ => None,
             }
+        }
+        CKA_PARAMETER_SET => {
+            yk_dbg!("PARAMETER_SET");
+            parameter_set_attr(public_key)
+        }
+        CKA_VALUE => {
+            yk_dbg!("VALUE");
+            raw_key_value_attr(public_key)
         }
         CKA_MODIFIABLE => {
             yk_dbg!("MODIFIABLE");
@@ -1686,6 +1746,15 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
             yk_dbg!("DERIVE");
             Some(cka_bool(false))
         }
+        // PKCS#11 3.2 — a KEM private key's analogue of CKA_UNWRAP; same
+        // "attribute describes capability, not whether the PKCS#11 op is
+        // wired up" rationale as the public-key CKA_ENCAPSULATE arm.
+        CKA_DECAPSULATE => {
+            yk_dbg!("DECAPSULATE");
+            Some(cka_bool(
+                obj.slot != Slot::Attestation && matches!(public_key, PublicKey::MlKem(_)),
+            ))
+        }
         CKA_MODULUS => {
             yk_dbg!("MODULUS");
             match public_key {
@@ -1714,6 +1783,10 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
                 PublicKey::Rsa(k) => Some(k.e.clone()),
                 _ => None,
             }
+        }
+        CKA_PARAMETER_SET => {
+            yk_dbg!("PARAMETER_SET");
+            parameter_set_attr(public_key)
         }
         CKA_ALWAYS_AUTHENTICATE => {
             yk_dbg!("ALWAYS AUTHENTICATE");

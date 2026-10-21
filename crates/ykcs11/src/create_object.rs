@@ -28,11 +28,41 @@ use crate::objects::refresh_slot_objects;
 use crate::template::{P256_CURVE_OID, P384_CURVE_OID, find_attr, is_public_exponent_65537, require_so_login};
 use der::Decode;
 use pkcs11_common::backend::Slot;
+use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
-use yubikit::keys::{EcCurve, EcPrivateKey, Ed25519PrivateKey, PrivateKey, RsaKeySize, RsaPrivateKey, X25519PrivateKey};
+use yubikit::keys::{
+    EcCurve, EcPrivateKey, Ed25519PrivateKey, MlDsaParameterSet, MlDsaPrivateKey, MlKemParameterSet,
+    MlKemPrivateKey, PrivateKey, RsaKeySize, RsaPrivateKey, X25519PrivateKey,
+};
 
 fn map_key_error(_: yubikit::keys::KeyError) -> CK_RV {
     CKR_ATTRIBUTE_VALUE_INVALID.into()
+}
+
+/// `CKA_SEED` if present, else `CKA_VALUE` -- see `resolve_private_key`'s own
+/// doc comment for the ML-DSA/ML-KEM arms: a caller that only supplies the
+/// full expanded key (no `CKA_SEED`) still gets its bytes sent to the
+/// device, which is the actual authority on what it'll accept, rather than
+/// this module rejecting the template client-side.
+fn resolve_pqc_key_bytes<'a>(
+    template: &'a [(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+    key_type_label: &str,
+) -> Result<&'a [u8], CK_RV> {
+    if let Some(seed) = find_attr(template, CKA_SEED) {
+        return Ok(seed);
+    }
+    if let Some(value) = find_attr(template, CKA_VALUE) {
+        yk_dbg!(
+            "resolve_private_key: {} template has no CKA_SEED, falling back to CKA_VALUE (the device will reject this if it isn't the seed)",
+            key_type_label
+        );
+        return Ok(value);
+    }
+    yk_dbg!(
+        "resolve_private_key: {} template missing both CKA_SEED and CKA_VALUE",
+        key_type_label
+    );
+    Err(CKR_TEMPLATE_INCOMPLETE.into())
 }
 
 /// `p`'s byte length (the RSA CRT prime, half the modulus) → `RsaKeySize` —
@@ -58,8 +88,30 @@ fn rsa_key_size_from_prime_len(len: usize) -> Option<RsaKeySize> {
 /// the C reference's template checker never reads either. EC/Ed25519/
 /// X25519 use the raw private scalar (`CKA_VALUE`), with EC's curve chosen
 /// via `CKA_EC_PARAMS` the same way `generate::resolve_key_type` does.
+/// ML-DSA/ML-KEM have no C reference to match — both prefer `CKA_SEED`
+/// (PKCS#11 3.2's dedicated "new post-quantum (general)" attribute,
+/// pkcs11t.h:675) over `CKA_VALUE`: the device's import APDU only ever
+/// accepts the raw FIPS 204/203 seed (32 bytes for ML-DSA, 64 for ML-KEM),
+/// never the full expanded private key. But unlike every other key type
+/// here, an incomplete/wrong-format key isn't rejected client-side -- if a
+/// caller only supplies `CKA_VALUE` (e.g. a `pkcs11-tool` build that doesn't
+/// yet know to extract the seed specifically for these algorithms), those
+/// bytes are sent to the device anyway, which is the actual authority on
+/// what it'll accept; it'll reject a non-seed payload itself
+/// (`CKR_DEVICE_ERROR`, ISO 7816 SW 6A80) rather than this module silently
+/// failing the call before ever reaching the token. The parameter set is
+/// chosen via `CKA_PARAMETER_SET`, the same way `generate::resolve_key_type`
+/// does for `CKM_ML_DSA_KEY_PAIR_GEN`/`CKM_ML_KEM_KEY_PAIR_GEN`.
 fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<PrivateKey, CK_RV> {
-    let key_type = find_attr(template, CKA_KEY_TYPE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+    // `create_object`'s own entry already logs this template's attribute
+    // types (not the values -- some, like CKA_SEED, are secret); the
+    // per-field logs below just pinpoint *which* expected attribute a
+    // caller (e.g. pkcs11-tool) silently omitted, which otherwise just
+    // surfaces as an opaque CKR_TEMPLATE_INCOMPLETE either way.
+    let key_type = find_attr(template, CKA_KEY_TYPE).ok_or_else(|| {
+        yk_dbg!("resolve_private_key: missing CKA_KEY_TYPE");
+        CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
+    })?;
     let key_type = CK_ULONG::from_ne_bytes(
         key_type
             .try_into()
@@ -117,8 +169,46 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             let key = X25519PrivateKey::new(secret.to_vec()).map_err(map_key_error)?;
             Ok(PrivateKey::X25519(key))
         }
-        // No ML-DSA/ML-KEM here either, same disclosed scope limit as
-        // `generate::generate_key_pair`.
+        CKK_ML_DSA => {
+            let param_bytes = find_attr(template, CKA_PARAMETER_SET).ok_or_else(|| {
+                yk_dbg!("resolve_private_key: CKK_ML_DSA template missing CKA_PARAMETER_SET");
+                CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
+            })?;
+            let param_set = CK_ULONG::from_ne_bytes(
+                param_bytes
+                    .try_into()
+                    .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+            );
+            let parameter_set = match param_set as u32 {
+                CKP_ML_DSA_44 => MlDsaParameterSet::MlDsa44,
+                CKP_ML_DSA_65 => MlDsaParameterSet::MlDsa65,
+                CKP_ML_DSA_87 => MlDsaParameterSet::MlDsa87,
+                _ => return Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
+            };
+            let seed = resolve_pqc_key_bytes(template, "CKK_ML_DSA")?;
+            let key = MlDsaPrivateKey::new(parameter_set, seed.to_vec()).map_err(map_key_error)?;
+            Ok(PrivateKey::MlDsa(key))
+        }
+        CKK_ML_KEM => {
+            let param_bytes = find_attr(template, CKA_PARAMETER_SET).ok_or_else(|| {
+                yk_dbg!("resolve_private_key: CKK_ML_KEM template missing CKA_PARAMETER_SET");
+                CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
+            })?;
+            let param_set = CK_ULONG::from_ne_bytes(
+                param_bytes
+                    .try_into()
+                    .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+            );
+            let parameter_set = match param_set as u32 {
+                CKP_ML_KEM_512 => MlKemParameterSet::MlKem512,
+                CKP_ML_KEM_768 => MlKemParameterSet::MlKem768,
+                CKP_ML_KEM_1024 => MlKemParameterSet::MlKem1024,
+                _ => return Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
+            };
+            let seed = resolve_pqc_key_bytes(template, "CKK_ML_KEM")?;
+            let key = MlKemPrivateKey::new(parameter_set, seed.to_vec()).map_err(map_key_error)?;
+            Ok(PrivateKey::MlKem(key))
+        }
         _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
     }
 }
@@ -130,7 +220,19 @@ pub fn create_object(
 ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
     require_so_login(slot.login_state)?;
 
-    let class = find_attr(template, CKA_CLASS).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+    yk_dbg!(
+        "create_object: template attribute types = [{}]",
+        template
+            .iter()
+            .map(|(t, v)| format!("{:#06x}({}B)", t, v.len()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let class = find_attr(template, CKA_CLASS).ok_or_else(|| {
+        yk_dbg!("create_object: missing CKA_CLASS");
+        CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
+    })?;
     let class = CK_ULONG::from_ne_bytes(
         class
             .try_into()
@@ -139,7 +241,10 @@ pub fn create_object(
 
     let id = find_attr(template, CKA_ID)
         .and_then(|b| b.first().copied())
-        .ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+        .ok_or_else(|| {
+            yk_dbg!("create_object: missing or empty CKA_ID");
+            CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
+        })?;
     let piv_slot =
         crate::objects::slot_from_cka_id(id).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
 
@@ -316,6 +421,149 @@ mod tests {
             attr(CKA_VALUE, &[0x01u8; 32]),
         ];
         assert!(matches!(resolve_private_key(&x_t), Ok(PrivateKey::X25519(_))));
+    }
+
+    #[test]
+    fn resolve_pqc_key_bytes_prefers_seed_over_value() {
+        let t = [attr(CKA_SEED, &[0xAAu8; 4]), attr(CKA_VALUE, &[0xBBu8; 8])];
+        assert_eq!(resolve_pqc_key_bytes(&t, "test").unwrap(), &[0xAAu8; 4][..]);
+    }
+
+    #[test]
+    fn resolve_pqc_key_bytes_falls_back_to_value_when_seed_is_absent() {
+        let t = [attr(CKA_VALUE, &[0xBBu8; 8])];
+        assert_eq!(resolve_pqc_key_bytes(&t, "test").unwrap(), &[0xBBu8; 8][..]);
+    }
+
+    #[test]
+    fn resolve_pqc_key_bytes_rejects_missing_both_seed_and_value() {
+        let t: [(CK_ATTRIBUTE_TYPE, Vec<u8>); 0] = [];
+        assert_eq!(
+            resolve_pqc_key_bytes(&t, "test"),
+            Err(CKR_TEMPLATE_INCOMPLETE.into())
+        );
+    }
+
+    #[test]
+    fn resolve_private_key_accepts_ml_dsa_templates_for_every_parameter_set() {
+        for (param_set, expected_param_set) in [
+            (CKP_ML_DSA_44, MlDsaParameterSet::MlDsa44),
+            (CKP_ML_DSA_65, MlDsaParameterSet::MlDsa65),
+            (CKP_ML_DSA_87, MlDsaParameterSet::MlDsa87),
+        ] {
+            let t = [
+                ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+                ulong_attr(CKA_PARAMETER_SET, param_set as CK_ULONG),
+                attr(CKA_SEED, &[0x01u8; 32]),
+            ];
+            match resolve_private_key(&t) {
+                Ok(PrivateKey::MlDsa(ref k)) => {
+                    assert_eq!(k.algorithm(), yubikit::keys::KeyAlgorithm::MlDsa(expected_param_set))
+                }
+                other => panic!("expected Ok(PrivateKey::MlDsa(_)), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_unrecognized_ml_dsa_parameter_set() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, 0xFFFF),
+            attr(CKA_SEED, &[0x01u8; 32]),
+        ];
+        assert_resolve_err(&t, CKR_ATTRIBUTE_VALUE_INVALID.into());
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_ml_dsa_template_missing_parameter_set() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            attr(CKA_SEED, &[0x01u8; 32]),
+        ];
+        assert_resolve_err(&t, CKR_TEMPLATE_INCOMPLETE.into());
+    }
+
+    #[test]
+    fn resolve_private_key_falls_back_to_value_for_ml_dsa_when_seed_is_absent() {
+        // The device is the actual authority on whether these bytes are
+        // acceptable (it'll reject a non-seed payload itself) -- this
+        // module doesn't pre-emptively fail the template just because
+        // CKA_SEED specifically wasn't the attribute supplied.
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, CKP_ML_DSA_44 as CK_ULONG),
+            attr(CKA_VALUE, &[0x01u8; 2560]),
+        ];
+        assert!(matches!(resolve_private_key(&t), Ok(PrivateKey::MlDsa(_))));
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_ml_dsa_template_missing_both_seed_and_value() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_DSA as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, CKP_ML_DSA_44 as CK_ULONG),
+        ];
+        assert_resolve_err(&t, CKR_TEMPLATE_INCOMPLETE.into());
+    }
+
+    #[test]
+    fn resolve_private_key_accepts_ml_kem_templates_for_every_parameter_set() {
+        for (param_set, expected_param_set) in [
+            (CKP_ML_KEM_512, MlKemParameterSet::MlKem512),
+            (CKP_ML_KEM_768, MlKemParameterSet::MlKem768),
+            (CKP_ML_KEM_1024, MlKemParameterSet::MlKem1024),
+        ] {
+            let t = [
+                ulong_attr(CKA_KEY_TYPE, CKK_ML_KEM as CK_ULONG),
+                ulong_attr(CKA_PARAMETER_SET, param_set as CK_ULONG),
+                attr(CKA_SEED, &[0x01u8; 64]),
+            ];
+            match resolve_private_key(&t) {
+                Ok(PrivateKey::MlKem(ref k)) => {
+                    assert_eq!(k.algorithm(), yubikit::keys::KeyAlgorithm::MlKem(expected_param_set))
+                }
+                other => panic!("expected Ok(PrivateKey::MlKem(_)), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_unrecognized_ml_kem_parameter_set() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_KEM as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, 0xFFFF),
+            attr(CKA_SEED, &[0x01u8; 64]),
+        ];
+        assert_resolve_err(&t, CKR_ATTRIBUTE_VALUE_INVALID.into());
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_ml_kem_template_missing_parameter_set() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_KEM as CK_ULONG),
+            attr(CKA_SEED, &[0x01u8; 64]),
+        ];
+        assert_resolve_err(&t, CKR_TEMPLATE_INCOMPLETE.into());
+    }
+
+    #[test]
+    fn resolve_private_key_falls_back_to_value_for_ml_kem_when_seed_is_absent() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_KEM as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, CKP_ML_KEM_512 as CK_ULONG),
+            attr(CKA_VALUE, &[0x01u8; 1632]),
+        ];
+        assert!(matches!(resolve_private_key(&t), Ok(PrivateKey::MlKem(_))));
+    }
+
+    #[test]
+    fn resolve_private_key_rejects_an_ml_kem_template_missing_both_seed_and_value() {
+        let t = [
+            ulong_attr(CKA_KEY_TYPE, CKK_ML_KEM as CK_ULONG),
+            ulong_attr(CKA_PARAMETER_SET, CKP_ML_KEM_512 as CK_ULONG),
+        ];
+        assert_resolve_err(&t, CKR_TEMPLATE_INCOMPLETE.into());
     }
 
     #[test]
