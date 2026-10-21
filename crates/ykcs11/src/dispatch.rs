@@ -8,7 +8,7 @@
 
 use crate::backend::G_ENGINE;
 use pkcs11_common::debug;
-use pkcs11_common::function_list::{RealFunctions, build_function_list};
+use pkcs11_common::function_list::{RealFunctions, build_function_list, build_function_list_3_2};
 use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 
@@ -107,6 +107,40 @@ pub unsafe extern "C" fn C_GetFunctionList(ppFunctionList: *mut CK_FUNCTION_LIST
         traced!(
             "C_GetFunctionList",
             G_ENGINE.get_function_list(ppFunctionList, &G_FUNCTION_LIST)
+        )
+    }
+}
+
+/// PKCS#11 3.0 interface discovery -- the only way a real caller can reach
+/// `C_EncapsulateKey`/`C_DecapsulateKey` at all, since `C_GetFunctionList`
+/// above is contractually fixed at the 2.0 function set (see
+/// `pkcs11_sys::function_list::CK_FUNCTION_LIST_3_2`'s own doc comment).
+/// This module exposes exactly one interface, "PKCS 11" at version 3.2 (the
+/// full superset), via `G_INTERFACES`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GetInterfaceList(
+    pInterfacesList: CK_INTERFACE_PTR,
+    pulCount: CK_ULONG_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GetInterfaceList",
+            G_ENGINE.get_interface_list(pInterfacesList, pulCount, &G_INTERFACES.0)
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_GetInterface(
+    pInterfaceName: CK_UTF8CHAR_PTR,
+    pVersion: CK_VERSION_PTR,
+    ppInterface: CK_INTERFACE_PTR_PTR,
+    flags: CK_FLAGS,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GetInterface",
+            G_ENGINE.get_interface(pInterfaceName, pVersion, ppInterface, &G_INTERFACES.0)
         )
     }
 }
@@ -614,6 +648,62 @@ pub unsafe extern "C" fn C_DeriveKey(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_EncapsulateKey(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hPublicKey: CK_OBJECT_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulAttributeCount: CK_ULONG,
+    pCiphertext: CK_BYTE_PTR,
+    pulCiphertextLen: CK_ULONG_PTR,
+    phKey: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_EncapsulateKey",
+            G_ENGINE.encapsulate_key(
+                hSession,
+                pMechanism,
+                hPublicKey,
+                pTemplate,
+                ulAttributeCount,
+                pCiphertext,
+                pulCiphertextLen,
+                phKey,
+            )
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn C_DecapsulateKey(
+    hSession: CK_SESSION_HANDLE,
+    pMechanism: CK_MECHANISM_PTR,
+    hPrivateKey: CK_OBJECT_HANDLE,
+    pTemplate: CK_ATTRIBUTE_PTR,
+    ulAttributeCount: CK_ULONG,
+    pCiphertext: CK_BYTE_PTR,
+    ulCiphertextLen: CK_ULONG,
+    phKey: CK_OBJECT_HANDLE_PTR,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DecapsulateKey",
+            G_ENGINE.decapsulate_key(
+                hSession,
+                pMechanism,
+                hPrivateKey,
+                pTemplate,
+                ulAttributeCount,
+                pCiphertext,
+                ulCiphertextLen,
+                phKey,
+            )
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_DestroyObject(hSession: CK_SESSION_HANDLE, hObject: CK_OBJECT_HANDLE) -> CK_RV {
     unsafe { traced!("C_DestroyObject", G_ENGINE.destroy_object(hSession, hObject)) }
 }
@@ -676,7 +766,11 @@ pub unsafe extern "C" fn C_GenerateKeyPair(
 // Function List
 // ============================================================
 
-static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
+// `const`, not `static` -- referenced twice below (by `build_function_list`
+// for the legacy 2.0-shaped table, and `build_function_list_3_2` for the
+// full 3.2 one); a `const` is re-materialized at each use site, so this
+// doesn't need a `Copy`/`Clone` derive on `RealFunctions` to be used twice.
+const REAL: RealFunctions = RealFunctions {
     version: CK_VERSION { major: 3, minor: 0 },
     c_initialize: Some(C_Initialize),
     c_finalize: Some(C_Finalize),
@@ -726,4 +820,47 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_destroy_object: Some(C_DestroyObject),
     c_set_pin: Some(C_SetPIN),
     c_init_token: Some(C_InitToken),
-});
+    c_get_interface_list: Some(C_GetInterfaceList),
+    c_get_interface: Some(C_GetInterface),
+    c_encapsulate_key: Some(C_EncapsulateKey),
+    c_decapsulate_key: Some(C_DecapsulateKey),
+};
+
+static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(REAL);
+static G_FUNCTION_LIST_3_2: CK_FUNCTION_LIST_3_2 = build_function_list_3_2(REAL);
+
+const PKCS11_INTERFACE_NAME: &[u8] = b"PKCS 11\0";
+
+/// The interfaces `C_GetInterfaceList`/`C_GetInterface` report -- just the
+/// one, "PKCS 11" at the full 3.2 function set. `pFunctionList` here is
+/// exactly the pattern `CK_INTERFACE` is designed around: an opaque
+/// `CK_VOID_PTR` a caller casts back to the right `CK_FUNCTION_LIST*` shape
+/// based on the `version` embedded at its start (see `Engine::get_interface`
+/// in pkcs11-common, which reads that same field generically).
+///
+/// Known, deliberate gap: there's no separate `CK_FUNCTION_LIST_3_0`/entry
+/// at version `{3, 0}` -- since 3.2 is a strict superset of 3.0, any 3.0
+/// call a caller might want to make already works against this one 3.2
+/// table. The one caller this doesn't serve is one that calls
+/// `C_GetInterface("PKCS 11", &{3, 0}, ...)` asking for *exactly* 3.0 (not
+/// "give me whatever you've got," which `pVersion == NULL` already
+/// satisfies) -- `Engine::get_interface`'s exact-version match rejects that
+/// with `CKR_ARGUMENTS_BAD` today. Add a second `CK_FUNCTION_LIST_3_0`
+/// struct/interface entry if that specific case ever needs to work.
+///
+/// Wrapped in `InterfaceTable` because `CK_INTERFACE` holds raw data
+/// pointers (`pInterfaceName`/`pFunctionList`), which aren't `Sync` by
+/// default -- unlike `CK_FUNCTION_LIST`'s fields, which are *function*
+/// pointers (`Option<unsafe extern "C" fn(...)>`), auto-`Sync` regardless.
+/// `static` requires `Sync`, so this needs an explicit (sound) opt-in: both
+/// pointers here point at other `'static` data (`PKCS11_INTERFACE_NAME`,
+/// `G_FUNCTION_LIST_3_2`) that's immutable for the life of the process, so
+/// sharing read-only access to it across threads is safe.
+struct InterfaceTable([CK_INTERFACE; 1]);
+unsafe impl Sync for InterfaceTable {}
+
+static G_INTERFACES: InterfaceTable = InterfaceTable([CK_INTERFACE {
+    pInterfaceName: PKCS11_INTERFACE_NAME.as_ptr() as CK_UTF8CHAR_PTR,
+    pFunctionList: &G_FUNCTION_LIST_3_2 as *const CK_FUNCTION_LIST_3_2 as CK_VOID_PTR,
+    flags: 0,
+}]);

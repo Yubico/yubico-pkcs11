@@ -58,7 +58,7 @@ pub fn encrypt_init(
     parameter: &[u8],
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<CK_ULONG, CK_RV> {
-    let Some(public_key) = crate::objects::find_verify_key(&slot.data.objects, key_handle) else {
+    let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle) else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 

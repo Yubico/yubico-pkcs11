@@ -1183,20 +1183,23 @@ pub fn find_private_key(
     Some((obj.slot, obj.public_key.as_ref()?))
 }
 
-/// The public key backing a `CKO_PUBLIC_KEY` object handle, for
-/// `C_VerifyInit` — `None` for any handle that isn't a public-key object
-/// (certificates are not accepted, matching `C_VerifyInit`'s own
+/// The public key backing a `CKO_PUBLIC_KEY` object handle, plus its
+/// originating PIV slot -- `None` for any handle that isn't a public-key
+/// object (certificates are not accepted, matching `C_VerifyInit`'s own
 /// `hKey < PIV_PUBK_OBJ_PIV_AUTH || hKey > PIV_PUBK_OBJ_ATTESTATION` range
-/// check, ykcs11.c:3189). No `Slot`/device access needed — verification
-/// never touches the token.
-pub fn find_verify_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<&PublicKey> {
+/// check, ykcs11.c:3189). Used by `C_VerifyInit`/`C_EncryptInit` (which only
+/// need the key, never the device) and `C_EncapsulateKey` (which also needs
+/// the slot, to know which PIV slot the resulting secret-key object belongs
+/// to) -- the same shared lookup `find_private_key` already is for
+/// `C_SignInit`/`C_DeriveKey`/`C_DecapsulateKey`.
+pub fn find_public_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
     let obj = objects
         .iter()
         .find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
     if obj.class != ObjectClass::PublicKey {
         return None;
     }
-    obj.public_key.as_ref()
+    Some((obj.slot, obj.public_key.as_ref()?))
 }
 
 pub fn get_attribute(

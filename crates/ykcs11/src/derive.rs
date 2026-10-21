@@ -85,8 +85,11 @@ fn resolve_ecdh1_derive_params(
 /// fixed expectation (the derived object is always a session
 /// `CKO_SECRET_KEY`/`CKK_GENERIC_SECRET`, always extractable) -- anything
 /// else in the template is silently ignored, matching the C reference's
-/// `default: break;` catch-all.
-fn validate_derive_template(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<(), CK_RV> {
+/// `default: break;` catch-all. `pub(crate)` since `encapsulate.rs` reuses
+/// this verbatim for `C_EncapsulateKey`/`C_DecapsulateKey` -- no C reference
+/// for those (PKCS#11 3.2), but they produce the exact same kind of object
+/// `C_DeriveKey` does, so the same template expectations apply.
+pub(crate) fn validate_derive_template(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<(), CK_RV> {
     if let Some(token) = find_attr(template, CKA_TOKEN).and_then(|b| b.first().copied()) {
         if token != 0 {
             return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());

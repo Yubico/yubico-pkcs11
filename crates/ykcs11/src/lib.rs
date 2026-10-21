@@ -13,6 +13,7 @@ mod decrypt;
 mod derive;
 mod destroy_object;
 mod discovery;
+mod encapsulate;
 mod init_token;
 mod encrypt;
 mod generate;

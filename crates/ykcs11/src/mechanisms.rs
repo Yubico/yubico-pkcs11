@@ -264,15 +264,23 @@ pub fn mechanism_table() -> Vec<MechanismEntry> {
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
         },
-        // Same rationale as the ML-DSA entry above; ML-KEM's own
-        // encapsulate/decapsulate mechanism (`CKM_ML_KEM`, PKCS#11 3.2's
-        // `C_EncapsulateKey`/`C_DecapsulateKey`) isn't implemented, so only
-        // the key-pair-gen entry is listed here.
+        // Same rationale as the ML-DSA entry above.
         MechanismEntry {
             mechanism: CKM_ML_KEM_KEY_PAIR_GEN.into(),
             min_key_size: 0,
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
+        },
+        // `CKM_ML_KEM` itself -- `C_EncapsulateKey`/`C_DecapsulateKey`
+        // (PKCS#11 3.2, see encapsulate.rs's own doc comment). No C
+        // reference; `CKF_ENCAPSULATE`/`CKF_DECAPSULATE` (not
+        // `CKF_GENERATE_KEY_PAIR`) are this mechanism's actual capability
+        // flags per the spec.
+        MechanismEntry {
+            mechanism: CKM_ML_KEM.into(),
+            min_key_size: 0,
+            max_key_size: 0,
+            flags: CKF_HW as CK_FLAGS | CKF_ENCAPSULATE as CK_FLAGS | CKF_DECAPSULATE as CK_FLAGS,
         },
         // No C reference entry to match (see sign.rs's own doc comment) —
         // same "no bit-length key size concept" rationale as the keygen
