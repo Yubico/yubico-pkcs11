@@ -665,6 +665,25 @@ impl<B: Backend> Engine<B> {
     }
 
     pub unsafe fn get_info(&self, p_info: CK_INFO_PTR) -> CK_RV {
+        let cryptoki_version = B::library_info().cryptoki_version;
+        unsafe { self.get_info_with_cryptoki_version(p_info, cryptoki_version) }
+    }
+
+    /// Same as [`Engine::get_info`], but reports `cryptoki_version` instead
+    /// of whatever [`Backend::library_info`] specifies. A module that
+    /// exposes more than one PKCS#11 interface version (e.g. `ykcs11`'s
+    /// legacy `CK_FUNCTION_LIST` alongside its newer `CK_FUNCTION_LIST_3_2`,
+    /// reachable via `C_GetInterface`) needs `C_GetInfo` to report a
+    /// different `cryptokiVersion` depending on which function-list table
+    /// it was reached through, which a single `Backend::library_info()`
+    /// return value can't express -- the caller picks the right version by
+    /// wiring this into a distinct `C_GetInfo`-shaped fn per table (see
+    /// `ykcs11::dispatch`'s `get_info_3_2`).
+    pub unsafe fn get_info_with_cryptoki_version(
+        &self,
+        p_info: CK_INFO_PTR,
+        cryptoki_version: (u8, u8),
+    ) -> CK_RV {
         unsafe {
             let guard = self.state.lock();
             if guard.is_none() {
@@ -676,8 +695,8 @@ impl<B: Backend> Engine<B> {
 
             let lib = B::library_info();
             let info = &mut *p_info;
-            info.cryptokiVersion.major = lib.cryptoki_version.0;
-            info.cryptokiVersion.minor = lib.cryptoki_version.1;
+            info.cryptokiVersion.major = cryptoki_version.0;
+            info.cryptokiVersion.minor = cryptoki_version.1;
             str_pad(&mut info.manufacturerID, lib.manufacturer_id);
             info.flags = 0;
             str_pad(&mut info.libraryDescription, lib.library_description);
