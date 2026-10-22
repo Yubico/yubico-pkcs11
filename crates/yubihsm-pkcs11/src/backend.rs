@@ -50,7 +50,14 @@ impl Backend for YubiHsmBackend {
             manufacturer_id: MANUFACTURER_ID,
             library_description: LIBRARY_DESCRIPTION,
             library_version: (VERSION_MAJOR, VERSION_MINOR),
-            cryptoki_version: (3, 0),
+            // This module only ever exposes the legacy `CK_FUNCTION_LIST`
+            // via `C_GetFunctionList` -- no `C_GetInterface`/3.2 table (see
+            // dispatch.rs) -- so there's only one version to report here,
+            // unlike ykcs11's split between legacy and 3.2 paths.
+            cryptoki_version: (
+                CRYPTOKI_LEGACY_VERSION_MAJOR as u8,
+                CRYPTOKI_LEGACY_VERSION_MINOR as u8,
+            ),
         }
     }
 

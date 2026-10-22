@@ -619,11 +619,18 @@ pub unsafe extern "C" fn C_DecryptFinal(
 }
 
 // ============================================================
-// Function List (PKCS#11 3.0 compatible, using CK_FUNCTION_LIST)
+// Function List (legacy CK_FUNCTION_LIST, unchanged since Cryptoki 2.40 --
+// no C_GetInterface/3.2 table; see this module's own
+// `c_get_interface_list: None` comment further down for why)
 // ============================================================
 
 static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
-    version: CK_VERSION { major: 3, minor: 0 },
+    // The legacy `CK_FUNCTION_LIST` shape hasn't changed since Cryptoki
+    // 2.40 -- matches `ykcs11.c`'s own `function_list.version`.
+    version: CK_VERSION {
+        major: CRYPTOKI_LEGACY_VERSION_MAJOR as u8,
+        minor: CRYPTOKI_LEGACY_VERSION_MINOR as u8,
+    },
     c_initialize: Some(C_Initialize),
     c_finalize: Some(C_Finalize),
     c_get_info: Some(C_GetInfo),

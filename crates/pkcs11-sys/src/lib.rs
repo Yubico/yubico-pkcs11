@@ -1,4 +1,4 @@
-//! Raw PKCS#11 type bindings generated from OASIS 3.1 C headers.
+//! Raw PKCS#11 type bindings generated from OASIS 3.2 C headers.
 //!
 //! This crate provides the `CK_*` types, constants, and struct definitions
 //! exactly as they appear in the C specification.

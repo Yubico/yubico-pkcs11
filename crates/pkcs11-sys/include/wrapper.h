@@ -4,6 +4,16 @@
 #define NULL_PTR 0
 #endif
 
+/* Yubico's own extension to the OASIS headers (see pkcs11y.h) -- the
+ * Cryptoki version every "legacy" (pre-3.0) CK_FUNCTION_LIST still
+ * conforms to. Duplicated here rather than #include-ing pkcs11y.h
+ * wholesale, which would redefine CK_PTR/CK_BOOL/etc. below (with a
+ * different CK_BOOL body: `bool` vs. `_Bool`) and risk a preprocessor
+ * conflict -- same reason this file re-declares those macros by hand
+ * instead of pulling them in from pkcs11y.h too. */
+#define CRYPTOKI_LEGACY_VERSION_MAJOR 2
+#define CRYPTOKI_LEGACY_VERSION_MINOR 40
+
 #define CK_PTR *
 #define CK_BOOL _Bool
 #define CK_HANDLE void *

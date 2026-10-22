@@ -44,7 +44,14 @@ impl Backend for PivBackend {
             manufacturer_id: YKCS11_MANUFACTURER,
             library_description: YKCS11_LIBDESC,
             library_version: (YKCS11_VERSION_MAJOR, YKCS11_VERSION_MINOR),
-            cryptoki_version: (3, 0),
+            // The version `C_GetInfo` reports when reached via the legacy
+            // `C_GetFunctionList` path -- the separate 3.2 interface
+            // (`C_GetInterface`) reports its own, newer version instead;
+            // see `dispatch.rs`'s `get_info_3_2` and its own doc comment.
+            cryptoki_version: (
+                CRYPTOKI_LEGACY_VERSION_MAJOR as u8,
+                CRYPTOKI_LEGACY_VERSION_MINOR as u8,
+            ),
         }
     }
 

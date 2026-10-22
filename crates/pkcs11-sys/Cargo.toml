@@ -2,7 +2,7 @@
 name = "pkcs11-sys"
 version = "0.1.0"
 edition = "2024"
-description = "Raw PKCS#11 FFI bindings generated from OASIS 3.1 headers"
+description = "Raw PKCS#11 FFI bindings generated from OASIS 3.2 headers"
 license = "Apache-2.0"
 build = "build.rs"
 

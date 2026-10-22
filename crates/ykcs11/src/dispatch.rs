@@ -101,6 +101,28 @@ pub unsafe extern "C" fn C_GetInfo(pInfo: CK_INFO_PTR) -> CK_RV {
     unsafe { traced!("C_GetInfo", G_ENGINE.get_info(pInfo)) }
 }
 
+/// Backs `G_FUNCTION_LIST_3_2.C_GetInfo` specifically, reporting
+/// `CRYPTOKI_VERSION_MAJOR`/`_MINOR` (3.2, from `pkcs11-sys`'s own vendored
+/// OASIS header) instead of the legacy `CRYPTOKI_LEGACY_VERSION_MAJOR`/
+/// `_MINOR` (2.40) the plain `C_GetInfo` above reports via
+/// `PivBackend::library_info()` -- a caller that reached this module
+/// through `C_GetInterface`'s 3.2 interface is talking to the
+/// `CK_FUNCTION_LIST_3_2`-shaped table specifically, so `C_GetInfo` should
+/// describe *that* table's version, not the legacy one's. Not a
+/// `#[no_mangle]` export: nothing looks this up by symbol name, it's only
+/// ever reached through `G_FUNCTION_LIST_3_2.C_GetInfo`'s function pointer.
+unsafe extern "C" fn get_info_3_2(pInfo: CK_INFO_PTR) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_GetInfo",
+            G_ENGINE.get_info_with_cryptoki_version(
+                pInfo,
+                (CRYPTOKI_VERSION_MAJOR as u8, CRYPTOKI_VERSION_MINOR as u8),
+            )
+        )
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetFunctionList(ppFunctionList: *mut CK_FUNCTION_LIST_PTR) -> CK_RV {
     unsafe {
@@ -771,7 +793,14 @@ pub unsafe extern "C" fn C_GenerateKeyPair(
 // full 3.2 one); a `const` is re-materialized at each use site, so this
 // doesn't need a `Copy`/`Clone` derive on `RealFunctions` to be used twice.
 const REAL: RealFunctions = RealFunctions {
-    version: CK_VERSION { major: 3, minor: 0 },
+    // The legacy `CK_FUNCTION_LIST` shape hasn't changed since Cryptoki
+    // 2.40 -- matches `ykcs11.c`'s own `function_list.version` (not
+    // `CRYPTOKI_VERSION_MAJOR`/`_MINOR`, which is 3.2 and only describes
+    // the separate, newer `CK_FUNCTION_LIST_3_2` built below).
+    version: CK_VERSION {
+        major: CRYPTOKI_LEGACY_VERSION_MAJOR as u8,
+        minor: CRYPTOKI_LEGACY_VERSION_MINOR as u8,
+    },
     c_initialize: Some(C_Initialize),
     c_finalize: Some(C_Finalize),
     c_get_info: Some(C_GetInfo),
@@ -827,7 +856,17 @@ const REAL: RealFunctions = RealFunctions {
 };
 
 static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(REAL);
-static G_FUNCTION_LIST_3_2: CK_FUNCTION_LIST_3_2 = build_function_list_3_2(REAL);
+// `build_function_list_3_2` always hardcodes its own `.version` field to
+// {3, 2} regardless of `RealFunctions.version` -- but `C_GetInfo` doesn't
+// get that same treatment (it's just a function pointer, copied verbatim
+// from whichever `RealFunctions` value is passed in), so this needs its
+// own `c_get_info` override to report {3, 2} too. See `get_info_3_2`'s own
+// doc comment.
+const REAL_3_2: RealFunctions = RealFunctions {
+    c_get_info: Some(get_info_3_2),
+    ..REAL
+};
+static G_FUNCTION_LIST_3_2: CK_FUNCTION_LIST_3_2 = build_function_list_3_2(REAL_3_2);
 
 const PKCS11_INTERFACE_NAME: &[u8] = b"PKCS 11\0";
 
