@@ -1,0 +1,272 @@
+name: "YKCS11 Release builds"
+
+on: [push]
+
+jobs:
+
+  source:
+    name: Build source release
+    runs-on: ubuntu-latest
+    env:
+      VERSION: 3.0.0
+    steps:
+      - name: checkout
+        uses: actions/checkout@v5
+      - name: Create tar.gz
+        run: |
+          set -x
+          ./resources/ykcs11/release/make_src_release.sh $VERSION
+          mkdir $GITHUB_WORKSPACE/artifact
+          mv $GITHUB_WORKSPACE/../ykcs11-$VERSION.tar.gz $GITHUB_WORKSPACE/artifact/
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ykcs11-src
+          path: artifact
+
+  licenses:
+    name: Collect third-party licenses
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Install cargo-about
+        run: cargo install cargo-about --version '~0.6'
+
+      - name: Generate license bundle
+        run: |
+          cat > about.toml << 'EOF'
+          accepted = [
+            "Apache-2.0",
+            "MIT",
+            "BSD-2-Clause",
+            "BSD-3-Clause",
+            "MPL-2.0",
+            "ISC",
+            "Unicode-3.0",
+            "Zlib",
+          ]
+          EOF
+
+          cat > about.hbs << 'TEMPLATE'
+          Third Party Licenses
+          ====================
+
+          {{#each licenses}}
+          ================================================================================
+          {{name}}
+          ================================================================================
+          Used by:
+          {{#each used_by}}
+            - {{crate.name}} v{{crate.version}}
+          {{/each}}
+
+          {{text}}
+
+          {{/each}}
+          TEMPLATE
+
+          cargo about generate about.hbs > THIRDPARTY.txt
+
+      - name: Upload license bundle
+        uses: actions/upload-artifact@v5
+        with:
+          name: licenses
+          path: THIRDPARTY.txt
+
+  Windows:
+    needs: licenses
+    name: Windows
+    runs-on: windows-latest
+    env:
+      VERSION: 3.0.0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download license bundle
+        uses: actions/download-artifact@v5
+        with:
+          name: licenses
+          path: .
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install OpenSC
+        env:
+          ARCH: ${{ matrix.arch }}
+
+        run: |
+          Set-PSDebug -Trace 1
+
+          Invoke-WebRequest -Uri  https://github.com/OpenSC/OpenSC/releases/download/0.25.1/OpenSC-0.25.1_win64.msi -OutFile OpenSC.msi -UseBasicParsing
+
+          Start-Sleep -Seconds 120
+          $log = "$env:GITHUB_WORKSPACE\install_opensc.log"
+          Start-Process "msiexec" "/i `"$env:GITHUB_WORKSPACE\OpenSC.msi`" /qn /l*! `"$log`"" -Wait -NoNewWindow -PassThru
+
+      - name: Build ykcs11
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSDebug -Trace 1
+
+          mkdir -p $env:GITHUB_WORKSPACE/artifact/ykcs11
+          
+          rustup target add x86_64-pc-windows-msvc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          cargo update
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          cargo build --release -p ykcs11
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          install target/release/ykcs11.dll $env:GITHUB_WORKSPACE/artifact/ykcs11/
+
+      - name: Test binaries
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSDebug -Trace 1
+          
+          $env:PATH += ";C:\Program Files\OpenSC Project\OpenSC\tools"
+          
+          cd artifact/ykcs11
+          $output = & pkcs11-tool.exe --module ykcs11.dll --show-info 2>&1 | Out-String
+          Write-Host $output
+  
+          if ($output.Contains("Yubico (www.yubico.com)")) {
+            Write-Host "PASS: found expected manufacturer string"
+            exit 0
+          } else {
+            Write-Host "FAIL: expected manufacturer string not found"
+            exit 1
+          }
+
+      - name: Pack licenses
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-PSDebug -Trace 1
+
+          mkdir -p $env:GITHUB_WORKSPACE/artifact/ykcs11/licenses
+          cp $env:GITHUB_WORKSPACE/crates/ykcs11/LICENSE $env:GITHUB_WORKSPACE/artifact/ykcs11/licenses/ykcs11.txt
+          cp $env:GITHUB_WORKSPACE/THIRDPARTY.txt $env:GITHUB_WORKSPACE/artifact/ykcs11/licenses/THIRDPARTY.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ykcs11-${{ env.VERSION }}-win64
+          path: artifact
+
+  MacOS-AMD:
+    name: MacOS AMD
+    runs-on: macos-latest-large
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build ykcs11
+        run: |
+          set -e -o pipefail
+          set -x
+          
+          cargo build --release -p ykcs11
+          strip -u -r target/release/libykcs11.dylib
+          
+          mkdir -p $GITHUB_WORKSPACE/artifact/amd/          
+          install target/release/libykcs11.dylib $GITHUB_WORKSPACE/artifact/amd/
+
+          cd $GITHUB_WORKSPACE/artifact/amd
+
+          otool -L libykcs11.dylib
+          #otool -l libykcs11.dylib | grep LC_RPATH -A 3
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ykcs11-macos-amd
+          path: artifact
+
+  MacOS-universal:
+    name: MacOS-universal
+    needs: [licenses, MacOS-AMD]
+    runs-on: macos-latest-xlarge
+    env:
+      VERSION: 3.0.0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download license bundle
+        uses: actions/download-artifact@v5
+        with:
+          name: licenses
+          path: .
+
+      - name: Download AMD artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ykcs11-macos-amd
+          path: .
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build ykcs11
+        run: |
+          set -e -o pipefail
+          set -x
+          
+          cargo build --release -p ykcs11
+          strip -u -r target/release/libykcs11.dylib
+          
+          mkdir -p $GITHUB_WORKSPACE/arm/
+          install target/release/libykcs11.dylib $GITHUB_WORKSPACE/arm/
+
+          cd $GITHUB_WORKSPACE/arm
+          
+          otool -L libykcs11.dylib
+          #otool -l libykcs11.dylib | grep LC_RPATH -A 3
+
+      - name: Create universal binaries
+        run: |
+          set -e -o pipefail
+          set -x
+
+          mkdir -p $GITHUB_WORKSPACE/artifact/usr/local/lib
+
+          lipo -create -output $GITHUB_WORKSPACE/artifact/usr/local/lib/libykcs11.dylib $GITHUB_WORKSPACE/arm/libykcs11.dylib $GITHUB_WORKSPACE/amd/libykcs11.dylib
+          #cp $GITHUB_WORKSPACE/arm/libykcs11.dylib $GITHUB_WORKSPACE/artifact/usr/local/bin/libykcs11_arm.dylib
+          #cp $GITHUB_WORKSPACE/amd/libykcs11.dylib $GITHUB_WORKSPACE/artifact/usr/local/bin/libykcs11_amd.dylib
+
+      - name: Test binaries
+        run: |
+          brew install opensc
+          pkcs11-tool --module $GITHUB_WORKSPACE/artifact/usr/local/lib/libykcs11.dylib --show-info | grep "PKCS#11 PIV Library"
+
+      - name: Bundle licenses
+        run: |
+          set -e -o pipefail
+          set -x
+          
+          LICENSE=$GITHUB_WORKSPACE/artifact/usr/local/share/ykcs11/licenses
+          mkdir -p $LICENSE
+          cp crates/ykcs11/LICENSE $LICENSE/ykcs11.txt
+          cp THIRDPARTY.txt $LICENSE/
+
+      #- name: Pack installer scripts
+        #run: |
+          #set -e -o pipefail
+          #set -x
+
+          #cp resources/release/macos/* $GITHUB_WORKSPACE/artifact/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ykcs11-${{ env.VERSION }}-macos-universal
+          path: artifact
