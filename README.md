@@ -16,29 +16,25 @@ crates/
 
 ```bash
 # Build everything (both modules + common library)
-cargo build --release
+cargo build
 
 # Build only the YubiKey PIV module
-cargo build --release -p ykcs11
+cargo build -p ykcs11
 
 # Build only the YubiHSM module
-cargo build --release -p yubihsm-pkcs11
+cargo build -p yubihsm-pkcs11
 
-# Build only the shared library (no .so/.dll output, just the rlib)
-cargo build --release -p pkcs11-common
 ```
 
 This produces:
-- `target/release/libyubihsm_pkcs11.so` (+ `.a`) — YubiHSM module
-- `target/release/libykcs11.so` (+ `.a`) — YubiKey PIV module
+- `target/debug/libyubihsm_pkcs11.{so/dylib/dll}` (+ `.a`) — YubiHSM module
+- `target/debug/libykcs11.{so/dylib/dll}` (+ `.a`) — YubiKey PIV module
 
 On Windows: `.dll` + `.lib`; on macOS: `.dylib` + `.a`.
 
 ## Versioning
 
 Each module has its own version in its `Cargo.toml`:
-- `yubihsm-pkcs11` → version `0.1.0` (PKCS#11 3.1)
-- `ykcs11` → version `0.1.0` (PKCS#11 3.0)
 
 ## Dependencies
 
@@ -55,23 +51,25 @@ however it was located at build time:
 # pkg-config). See yubihsmrs/libyubihsm-sys/build.rs for the alternative:
 # a system-wide install discoverable via pkg-config, with no env vars needed.
 export YUBIHSM_LIB_DIR=/path/to/yubihsm-shell/build/lib
-cargo build --release -p yubihsm-pkcs11
+cargo build -p yubihsm-pkcs11
 
-# Run time: the dynamic loader doesn't read YUBIHSM_LIB_DIR — point it at
+# Run time: the dynamic loader doesn't read YUBIHSM_LIB_DIR so it needs to be pointed to
 # the same directory explicitly, or install libyubihsm system-wide and run
 # ldconfig instead.
-LD_LIBRARY_PATH=/path/to/yubihsm-shell/build/lib pkcs11-tool --module target/release/libyubihsm_pkcs11.so -L
+export LD_LIBRARY_PATH=/path/to/yubihsm-shell/build/lib
 ```
 
 ## Usage
 
+For example with ´pkcs11-tool´:
+
 ```bash
 # YubiHSM
 export YUBIHSM_PKCS11_CONF=/path/to/yubihsm_pkcs11.conf
-pkcs11-tool --module target/release/libyubihsm_pkcs11.so -L
+pkcs11-tool --module path/to/libyubihsm_pkcs11.so -L
 
 # YubiKey PIV
-pkcs11-tool --module target/release/libykcs11.so -L
+pkcs11-tool --module path/to/libykcs11.so -L
 ```
 
 ## License
