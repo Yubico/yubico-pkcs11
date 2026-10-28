@@ -1,37 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_InitToken` backend logic for the YubiKey PIV module. Matches
-//! ykcs11.c's own `C_InitToken` (ykcs11.c:744-860) closely:
-//!
-//! `pPin` is always the hex-encoded PIV management key -- *not* a new key
-//! to set, but the CURRENT one, used to authenticate before wiping the
-//! device. `pLabel` is unused (PIV has no settable token label; the C
-//! reference never references it either). The sequence:
-//!
-//! 1. Authenticate with the management key in `pPin` (proves the caller
-//!    knows the current key before allowing a full wipe).
-//! 2. Block the PIN and PUK, then reset the PIV application to factory
-//!    defaults (`ActivePivSession::reset`, the Rust equivalent of
-//!    `ykpiv_util_reset` -- wipes every key/cert on the device and resets
-//!    the management key to the factory default; this bundles the C
-//!    reference's manual "verify until blocked"/"unblock_pin until
-//!    blocked" loops and the reset call itself into one method).
-//! 3. Re-authenticate with the now-restored factory-default management key.
-//! 4. Set the management key right back to what `pPin` supplied, preserving
-//!    the algorithm and touch policy the OLD key had (ykcs11.c:849's "same
-//!    algorithm and touch policy the old one had") -- captured *before* the
-//!    reset wipes that information, since yubikit's `set_management_key`
-//!    has no "AUTO" sentinel like `ykpiv_set_mgmkey3(..., AUTO, AUTO)` to
-//!    recover it afterwards.
-//! 5. Repopulate the slot's object cache from scratch, since every
-//!    certificate/key the device had is now gone.
-//!
-//! No session-handle parameter: `C_InitToken` is a slot-level call in the
-//! PKCS#11 spec, requiring zero open sessions on that slot (enforced
-//! generically by `Engine::init_token`, matching ykcs11.c:773-779's
-//! `CKR_SESSION_EXISTS` check -- not `Backend`-specific, since it's pure
-//! session bookkeeping the engine already owns).
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::discovery::ActivePivSession;

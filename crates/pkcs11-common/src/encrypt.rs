@@ -1,22 +1,33 @@
-// Copyright 2026 Yubico AB
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! RSA encryption — pure host-side math over raw public-key bytes, the
-//! mirror image of `decrypt.rs`'s EME-decode functions (EME-PKCS1-v1_5-
-//! ENCODE/EME-OAEP-ENCODE, RFC 8017 §7.2.1/§7.1.1) followed by the same raw
-//! RSA public-key operation `verify.rs` uses. Like `verify.rs` (and unlike
-//! `sign.rs`/`decrypt.rs`), this covers the *entire* operation — no device
-//! round-trip is involved anywhere, since encryption only ever needs public
-//! key material (confirmed against the C reference: `C_EncryptInit`/
-//! `do_rsa_encrypt` is pure OpenSSL `EVP_PKEY_encrypt` math, no
-//! `ykpiv_decipher_data`/device call at all — architecturally the same as
-//! `C_Verify`, not `C_Decrypt`, even though the mechanism set mirrors
-//! Decrypt's).
-//!
-//! Randomness (PKCS#1 v1.5's non-zero `PS` padding, OAEP's seed) is drawn by
-//! the caller and passed in as a plain argument, same reasoning as
-//! `sign.rs`'s `emsa_pss_encode` taking `salt` as a parameter: keeps this
-//! module pure and independently testable, and backend-agnostic about where
-//! randomness comes from.
 
 use crate::digest::DigestOp;
 use crate::sign::{mgf1, zero_pad};

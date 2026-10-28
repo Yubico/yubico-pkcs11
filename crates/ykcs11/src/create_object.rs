@@ -1,27 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_CreateObject` backend logic for the YubiKey PIV module. Scope matches
-//! ykcs11.c's own `C_CreateObject` (ykcs11.c:1417-1676) exactly: only
-//! `CKO_CERTIFICATE` (import a DER certificate) and `CKO_PRIVATE_KEY`
-//! (import an externally-supplied private key onto the device) are
-//! supported — `CKO_DATA`/`CKO_PUBLIC_KEY`/`CKO_SECRET_KEY` have no case in
-//! the C reference either, and aren't supported here.
-//!
-//! Same SO (PIV management key) login requirement as `C_GenerateKeyPair`
-//! (ykcs11.c:1499-1504/1604-1609) — importing objects is a card-management
-//! operation. Device-side: certificate import reuses the exact same
-//! `piv.put_certificate()` call `generate::generate_key_pair` already uses
-//! for its placeholder cert; private-key import uses
-//! `yubikit::piv::PivSession::put_key`, the Rust equivalent of
-//! `ykpiv_import_private_key`. Both paths refresh the slot's cached objects
-//! via `objects::refresh_slot_objects` afterward, same as generate.
-//!
-//! One behavioral difference from the C reference worth flagging: ykcs11.c
-//! never cross-checks an imported certificate's public key against any
-//! private key material already in that slot (`store_cert`'s
-//! `force_pubkey = CK_TRUE` just unconditionally overwrites the cached
-//! public key) — this port does the same, trusting the caller.
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;

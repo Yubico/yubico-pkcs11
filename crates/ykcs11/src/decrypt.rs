@@ -1,26 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_DecryptInit`/`C_DecryptUpdate`/`C_DecryptFinal` backend logic for the
-//! YubiKey PIV module. RSA only — `decrypt_mechanism_init` hard-rejects
-//! non-RSA keys (mechanisms.c:686-689); EC keys have no `C_Decrypt`
-//! mechanism at all in PKCS#11 (ECDH key agreement goes through
-//! `C_DeriveKey`/`CKM_ECDH1_DERIVE` instead, a separate and so-far
-//! unimplemented feature).
-//!
-//! Structurally the mirror image of `sign.rs`: the device
-//! (`ActivePivSession::decrypt`, matching `ykpiv_decipher_data`) performs
-//! only the raw RSA private-key operation; this module's job is unwrapping
-//! whatever padding scheme the mechanism specifies (`CKM_RSA_X_509`'s "no
-//! padding" passthrough, `CKM_RSA_PKCS`'s EME-PKCS1-v1_5-DECODE, or
-//! `CKM_RSA_PKCS_OAEP`'s EME-OAEP-DECODE — RFC 8017 §7.2.2/§7.1.2) around
-//! that call.
-//!
-//! `C_DecryptUpdate` never produces incremental output for these mechanisms
-//! — a bare RSA private-key operation has nothing to stream, unlike a block
-//! cipher. The caller's ciphertext is simply buffered (same pattern as
-//! `sign.rs`'s `Accumulator::Raw`) and the real work happens once, in
-//! `decrypt_final`.
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use pkcs11_common::backend::Slot;

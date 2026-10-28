@@ -1,34 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_SetPIN` backend logic for the YubiKey PIV module. Matches ykcs11.c's
-//! own `C_SetPIN`/`token_change_pin` (ykcs11.c:870-918, token.c:241-283)
-//! closely, including its overloaded semantics: PKCS#11 has no native
-//! concept of a PIV PUK or of changing the management key, so the C
-//! reference packs PIN change / PUK change / PIN-unblock-via-PUK /
-//! management-key rotation into this single call, keyed off the *session's
-//! current login state* (not an explicit parameter) plus a `"puk:"`/`"pin:"`
-//! string-prefix convention on the old/new PIN bytes:
-//!
-//! - Logged in as **SO**: `pOldPin` is ignored; `pNewPin` is the new
-//!   management key, hex-encoded (same convention `C_Login`'s SO branch
-//!   already uses, see `authenticate_so`). Rotates the management key,
-//!   keeping the same algorithm and touch policy the current one has.
-//! - Logged in as **USER** (or not logged in at all -- this is also how
-//!   PIN-change-without-prior-login and PIN-unblock work):
-//!   - `pOldPin` starting with `"puk:"`:
-//!     - `pNewPin` starting with `"pin:"` -> unblock the PIN using the PUK
-//!       (both prefixes stripped).
-//!     - otherwise -> change the PUK itself (an optional `"puk:"` prefix on
-//!       `pNewPin` is stripped if present).
-//!   - otherwise -> plain PIN change.
-//!
-//! Requires a R/W session on the *calling* session specifically
-//! (ykcs11.c:895-899) -- unlike the SO-login RW-session check in
-//! `backend.rs`'s `login`, which requires every open session on the slot to
-//! be R/W, this only checks the one session making the call. Otherwise
-//! there's no login-state gate at all: `token_change_pin` runs regardless
-//! of whether the caller is logged in, same as this port.
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use pkcs11_common::backend::Slot;

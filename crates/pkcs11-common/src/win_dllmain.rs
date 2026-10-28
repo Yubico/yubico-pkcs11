@@ -1,21 +1,33 @@
-// Copyright 2026 Yubico AB
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! Windows-only: opts this module out of per-thread load notifications.
-//!
-//! A PKCS#11 module is always loaded via `LoadLibrary` by a foreign host
-//! process (pkcs11-tool, a JVM via SunPKCS11/j2pkcs11.dll, etc.), never
-//! statically linked at process startup. Windows sends `DLL_THREAD_ATTACH`
-//! to *every loaded DLL* whenever *any* thread starts in the process — not
-//! just threads that DLL created. The Rust runtime reacts to that
-//! notification for its own per-thread bookkeeping, which assumes the
-//! thread starting is one Rust knows about; for a thread the host process
-//! spawned itself (e.g. a JVM GC/JIT thread, or whatever background thread),
-//! that assumption doesn't hold and can corrupt
-//! thread-local state (see rust-lang/rust#156277 for the same class of
-//! issue). `DisableThreadLibraryCalls`, called as early as possible (our
-//! own `DllMain`, at `DLL_PROCESS_ATTACH`), tells the loader to stop
-//! sending this module thread-attach/detach notifications entirely,
-//! sidestepping the problem instead of trying to survive it.
 
 use std::ffi::c_void;
 

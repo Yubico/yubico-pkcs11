@@ -1,40 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_GenerateKeyPair` backend logic for the YubiKey PIV module. Scope
-//! matches ykcs11.c's own `generation_mechanisms[]` (mechanisms.c:41-47)
-//! plus two deliberate additions: `CKM_RSA_PKCS_KEY_PAIR_GEN`,
-//! `CKM_EC_KEY_PAIR_GEN`, `CKM_EC_EDWARDS_KEY_PAIR_GEN`,
-//! `CKM_EC_MONTGOMERY_KEY_PAIR_GEN` — RSA 1024/2048/3072/4096, EC
-//! P-256/P-384, Ed25519, X25519 — `CKM_ML_DSA_KEY_PAIR_GEN` covering all
-//! three ML-DSA parameter sets, and `CKM_ML_KEM_KEY_PAIR_GEN` covering all
-//! three ML-KEM parameter sets (`CKA_PARAMETER_SET` = `CKP_ML_DSA_44`/`_65`/
-//! `_87` or `CKP_ML_KEM_512`/`_768`/`_1024`, selecting the corresponding
-//! `yubikit::piv::KeyType` variant). Only key *generation* is in scope here —
-//! PKCS#11 3.2's `C_EncapsulateKey`/`C_DecapsulateKey` (ML-KEM) and
-//! `C_Sign`/`C_Verify` support for `CKM_ML_DSA` aren't implemented, same
-//! disclosed gap as `objects.rs`'s own doc comment.
-//!
-//! Unlike `C_Sign*`/`C_Verify*`/`C_Encrypt*`/`C_Decrypt*`, this is a single
-//! atomic call with no `Init`/`Update`/`Final` split and no per-session
-//! operation state — PKCS#11 doesn't define `C_GenerateKeyPair` as
-//! conflicting with an in-progress sign/verify/encrypt/decrypt operation
-//! the way ykcs11.c's single shared `op_info` union incidentally does
-//! (ykcs11.c:3523-3527, `session->op_info.type != YKCS11_NOOP` →
-//! `CKR_OPERATION_ACTIVE`); this port deliberately doesn't replicate that
-//! union-sharing artifact, consistent with already treating
-//! sign/verify/encrypt/decrypt as independent concurrent operation types.
-//!
-//! Device-side, this does three things in sequence: generates the key pair
-//! itself (`yubikit::piv::PivSession::generate_key`, the Rust equivalent of
-//! the raw `INS_GENERATE_ASYMMETRIC` APDU `token_generate_key` builds by
-//! hand in the C reference, token.c:378-505); builds and writes a
-//! disposable self-signed placeholder X.509 certificate for the slot (the
-//! device only ever returns raw key material, never a certificate — the C
-//! reference manufactures one itself purely so the slot isn't cert-less,
-//! `do_create_empty_cert`, openssl_utils.c:190-242); and refreshes the
-//! slot's cached objects in place (`objects::refresh_slot_objects`) rather
-//! than re-running discovery for all 25 slots.
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;

@@ -1,27 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! PKCS#11 object model for PIV certificates/keys, matching ykcs11.c's
-//! object.c/objects.c model across all 25 PIV slots: the 4 standard
-//! containers (9a/9c/9d/9e), the 20 retired key-management slots (82-95),
-//! and the dynamically-generated attestation certificate (f9). RSA, EC
-//! (NIST/Brainpool), Ed25519, X25519, ML-DSA (44/65/87), and ML-KEM
-//! (512/768/1024) keys are modeled. Also modeled:
-//! the 7 non-per-slot generic data objects the C reference itself discovers
-//! (CCC, CHUID, Security Object, Discovery Object, Key History Object, SM
-//! Signer, Pairing Code Reference Data — `token_objects[]`, token.c:107-118)
-//! — the other 6 (fingerprints, facial images, printed information, iris
-//! images, BITGT) aren't modeled since the C reference doesn't discover
-//! them either (commented out of `token_objects[]`, needing biometric/extra
-//! auth handling this module doesn't implement).
-//!
-//! Each container can independently hold a certificate and/or a key (the two
-//! aren't guaranteed to be in sync — a cert can be imported with no matching
-//! key, a key can exist with no cert ever loaded, or a regenerated key can
-//! leave a stale, non-matching cert behind), so discovery treats "does this
-//! slot have a cert" and "does this slot have a key" as separate questions
-//! and reconciles them explicitly rather than assuming one implies the
-//! other.
 
 use crate::discovery::ActivePivSession;
 use der::asn1::ObjectIdentifier;

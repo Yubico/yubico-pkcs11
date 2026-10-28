@@ -1,21 +1,33 @@
-// Copyright 2026 Yubico AB
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! RSA/ECDSA/EdDSA signature verification — pure host-side math over raw
-//! public-key bytes (RSA modulus/exponent, EC SEC1 point, Ed25519 raw key),
-//! not any backend's own key-material type. A verify operation never needs
-//! the device at all (only the public key, which every backend already
-//! exposes for `CKA_MODULUS`/`CKA_EC_POINT`/etc attributes), so unlike
-//! `sign.rs` this covers the *entire* operation, not just the host-side half
-//! of it — matching both C references, which likewise do verification
-//! entirely with a general-purpose crypto library (OpenSSL) rather than
-//! asking the device, even when (as for yubihsm_pkcs11.c's RSA/EC/EdDSA
-//! case) the public key itself has to be fetched from the device first.
-//!
-//! Deliberately generic over which backend calls it — see `ykcs11::verify`
-//! for the orchestration layer (object lookup, mechanism classification,
-//! session state) that's specific to PIV today; a future yubihsm-pkcs11
-//! verify implementation should be able to reuse every function here
-//! unchanged, just supplying its own raw key bytes.
 
 use crate::digest::DigestOp;
 use crate::sign::{digest_info_prefix, mgf1, pkcs1_v15_pad, zero_pad};

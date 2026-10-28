@@ -1,51 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_DestroyObject` backend logic for the YubiKey PIV module. Scope
-//! matches ykcs11.c's own `C_DestroyObject` (ykcs11.c:1693-1776) for the
-//! object classes that matter in practice:
-//!
-//! - `CKO_SECRET_KEY` (the ECDH-derived `PIV_SECRET_OBJ` singleton from
-//!   `C_DeriveKey`): pure host-side cleanup, no SO login, no device call --
-//!   `get_sub_id` resolves it to sub_id 0, which skips the C reference's
-//!   `if(id) {...}` device-deletion/SO-login branch entirely
-//!   (ykcs11.c:1725-1742).
-//! - `CKO_CERTIFICATE`/`CKO_PUBLIC_KEY`/the per-slot self-attestation
-//!   certificate: requires SO (management key) login, then calls the
-//!   device to clear that slot's certificate storage
-//!   (`ActivePivSession::delete_certificate`, the Rust equivalent of
-//!   `token_delete_cert`/`ykpiv_save_object(id, NULL, 0)`), then refreshes
-//!   the slot's cached objects the same way `generate_key_pair`/
-//!   `create_object` already do.
-//! - `CKO_PRIVATE_KEY`: always rejected with `CKR_OBJECT_HANDLE_INVALID`.
-//!   This matches the C reference exactly, if a little surprisingly:
-//!   `get_sub_id` only resolves a real per-slot id for DATA/CERT/PUBK-range
-//!   object ids (ykcs11.c's `piv_obj_id_t` enum ordering) -- private key
-//!   ids fall outside that range and default to 0, which the C reference's
-//!   own early guard (`id == 0 && hObject != PIV_SECRET_OBJ` ->
-//!   `CKR_OBJECT_HANDLE_INVALID`, ykcs11.c:1716-1721) always rejects.
-//!   Private keys simply can't be destroyed through this API in either
-//!   implementation.
-//!
-//! One deliberate scope limitation beyond the C reference: `CKO_DATA`
-//! objects (the fixed CCC/CHUID/Discovery/KeyHistory/etc. PIV metadata
-//! objects) aren't destroyable here, even though ykcs11.c's
-//! `token_delete_cert` is actually generic enough to support it (it's just
-//! `ykpiv_save_object(tag, NULL, 0)` under a misleading name). These
-//! objects aren't creatable through `C_CreateObject` either (see
-//! `create_object.rs`), are essentially never targeted by real PKCS#11
-//! clients, and wiping standard PIV card metadata through this path is a
-//! real footgun if ever triggered by mistake -- so this port rejects it
-//! with `CKR_ACTION_PROHIBITED` rather than reimplementing a rarely-used,
-//! risk-asymmetric corner of the C reference.
-//!
-//! This port also deliberately does *not* replicate a side effect of the C
-//! reference's own `get_sub_id` aliasing: destroying `PIV_SECRET_OBJ`
-//! (sub_id 0) in ykcs11.c also wipes out any private-key object entries
-//! from the in-memory list, since those happen to alias the same sub_id 0
-//! default -- an accidental artifact of its flat array indexing, not
-//! meaningful protocol behavior (same reasoning already documented for
-//! `C_GetObjectSize`).
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{ObjectClass, refresh_slot_objects};

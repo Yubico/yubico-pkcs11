@@ -1,28 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_EncapsulateKey`/`C_DecapsulateKey` (PKCS#11 3.2) backend logic for
-//! ML-KEM key agreement. No C reference in either `ykcs11.c` or
-//! `yubihsm_pkcs11.c` -- ML-KEM doesn't exist there (same disclosed scope
-//! limit as `generate.rs`'s own doc comment). Scope is `CKM_ML_KEM` only,
-//! with no mechanism parameter (PKCS#11 3.2 defines none for it -- an empty
-//! `pParameter` is required, anything else is rejected).
-//!
-//! Encapsulate is pure host-side math against the public key (the `ml-kem`
-//! crate) -- unlike decapsulate, it never touches the device. Decapsulate
-//! uses `yubikit::piv::PivSession::calculate_secret`, the exact same device
-//! primitive `derive.rs`'s ECDH `C_DeriveKey` uses for its own shared-secret
-//! computation (it already dispatches on the key's algorithm internally, so
-//! no new yubikit API is needed here).
-//!
-//! Both produce a new secret-key object the same way `C_DeriveKey` does:
-//! stored via `objects::store_secret_key`'s singleton `PIV_SECRET_OBJ` --
-//! there is only ever one derived/encapsulated/decapsulated secret live at
-//! once, matching ykcs11.c's own single fixed sub-id for `C_DeriveKey`,
-//! reused here since there's no reason for KEM results to get a separate
-//! object. Template validation (`CKA_TOKEN`/`CKA_CLASS`/`CKA_KEY_TYPE`/
-//! `CKA_EXTRACTABLE`) reuses `derive::validate_derive_template` verbatim,
-//! for the same reason.
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::derive::validate_derive_template;
