@@ -14,51 +14,21 @@
  * limitations under the License.
  */
 
-//! Hardware-gated integration tests for the YubiKey PIV PKCS#11 module —
-//! the Rust equivalent of yubico-piv-tool's `ykcs11/tests/ykcs11_tests.c`
-//! (that harness has no single `token_init()` either; `reset.sh` blocks the
-//! PIN/PUK and calls the CLI's `-areset` before the test binary runs). This
-//! module plays the same role for `ykcs11`, calling the real C ABI
-//! (`pub use dispatch::*` at the crate root) exactly as `pkcs11-tool` or any
-//! other PKCS#11 consumer would — no internal shortcuts.
-//!
-//! Covers importing ML-DSA and ML-KEM private keys (`C_CreateObject`) and
-//! ML-KEM encapsulate/decapsulate (`C_EncapsulateKey`/`C_DecapsulateKey`,
-//! reached via `C_GetInterfaceList`/`C_GetInterface` -- see
-//! `dispatch.rs`'s own doc comment on `G_INTERFACES` for why those aren't
-//! reachable through `C_GetFunctionList`); more will be added later
-//! (generation, signing, etc.).
-//!
-//! # Running
-//!
-//! These tests require a real YubiKey plugged in and are destructive (they
-//! wipe the PIV application). They do **nothing** — no PC/SC access at all —
-//! unless explicitly opted into:
-//!
-//! ```sh
-//! YKCS11_HW_TESTS=1 cargo test -p ykcs11 --test hardware_tests
-//! ```
-//!
-//! # !!! WARNING !!!
-//!
-//! Running with `YKCS11_HW_TESTS=1` resets the PIV application on every
-//! YubiKey `C_GetSlotList` reports as present (via `C_InitToken`, the real
-//! "wipe and reinitialize" PKCS#11 call) — every PIV key and certificate on
-//! it is permanently destroyed. Only ever run this against a dedicated
-//! test/development YubiKey, never one holding keys you care about.
-//!
-//! Only one hardware test exists right now, so there's no cross-test
-//! parallelism concern yet — but `cargo test` runs tests in a binary
-//! concurrently by default, and two tests racing to reset/open a session on
-//! the same physical device will not behave sanely. Whoever adds the next
-//! hardware test here should either serialize access through a shared
-//! `Mutex`/`OnceLock`, or document running this binary with
-//! `--test-threads=1`.
+//! Shared connection/session/object plumbing for every hardware test module
+//! under `tests/hardware_tests/` -- factored out here so each test file only
+//! contains the logic specific to what it's actually testing. See `crate`'s
+//! own module doc comment (`tests/hardware_tests.rs`) for the overall
+//! running/safety story.
 
 use pkcs11_sys::*;
 use std::ptr;
+use std::sync::Mutex;
 
-const RUN_ENV_VAR: &str = "YKCS11_HW_TESTS";
+/// Held for the duration of every `#[test]` fn across every module in this
+/// test binary -- see `crate`'s own module doc comment for why.
+pub(crate) static HARDWARE_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) const RUN_ENV_VAR: &str = "YKCS11_HW_TESTS";
 
 /// Hex-encoded factory-default PIV management key (yubikit's
 /// `DEFAULT_MANAGEMENT_KEY`: the classic 24-byte `01 02 03 04 05 06 07 08`
@@ -66,7 +36,7 @@ const RUN_ENV_VAR: &str = "YKCS11_HW_TESTS";
 /// both take the management key as this literal hex ASCII string — the
 /// same value every `pkcs11-tool --so-pin 010203...` invocation in this
 /// project's manual testing has used.
-const DEFAULT_MGMT_KEY_HEX: &[u8] = b"010203040506070801020304050607080102030405060708";
+pub(crate) const DEFAULT_MGMT_KEY_HEX: &[u8] = b"010203040506070801020304050607080102030405060708";
 
 /// Factory-default PIV user PIN -- what `token_init`'s underlying
 /// `ActivePivSession::reset()` leaves the PIN at after a reset. Private-key
@@ -78,21 +48,66 @@ const DEFAULT_MGMT_KEY_HEX: &[u8] = b"010203040506070801020304050607080102030405
 /// a `CKU_USER` login first, the device responds SW=0x6982 (security status
 /// not satisfied), which this module's `piv_error_to_rv` surfaces as
 /// `CKR_DEVICE_ERROR`.
-const DEFAULT_USER_PIN: &[u8] = b"123456";
+pub(crate) const DEFAULT_USER_PIN: &[u8] = b"123456";
 
-fn hardware_tests_enabled() -> bool {
+pub(crate) fn hardware_tests_enabled() -> bool {
     std::env::var(RUN_ENV_VAR).as_deref() == Ok("1")
 }
 
-fn assert_ok(rv: CK_RV, what: &str) {
+pub(crate) fn assert_ok(rv: CK_RV, what: &str) {
     assert_eq!(rv, CKR_OK as CK_RV, "{what} failed: rv={rv:#x}");
 }
 
-fn ulong_bytes(v: u32) -> Vec<u8> {
+/// Asserts `field` (a fixed-size `CK_CHAR` array, e.g. `CK_TOKEN_INFO.label`)
+/// starts with `expected` -- the Rust equivalent of ykcs11_tests.c's
+/// `strncmp(info.field, EXPECTED, strlen(EXPECTED))` prefix checks.
+pub(crate) fn assert_prefix(field: &[CK_CHAR], expected: &[u8], what: &str) {
+    assert!(
+        field.len() >= expected.len(),
+        "{what}: field shorter than expected prefix"
+    );
+    assert_eq!(
+        &field[..expected.len()],
+        expected,
+        "{what}: expected prefix {:?}, got {:?}",
+        String::from_utf8_lossy(expected),
+        String::from_utf8_lossy(&field[..expected.len()])
+    );
+}
+
+/// Reads `CK_TOKEN_INFO` for `slot_id`. Tests that need to gate behavior on
+/// device capability (e.g. firmware version) call this directly rather than
+/// relying on a flag set by another test via shared state -- each test is
+/// independent and queries the device fresh, unlike `ykcs11_tests.c`'s
+/// `main()`-level globals (`is_neo`, `ed25519_supported`) set by
+/// `test_token_info()` and read by later tests in the same run.
+pub(crate) fn token_info(slot_id: CK_SLOT_ID) -> CK_TOKEN_INFO {
+    let mut info: CK_TOKEN_INFO = unsafe { std::mem::zeroed() };
+    let rv = unsafe { ykcs11::C_GetTokenInfo(slot_id, &mut info) };
+    assert_ok(rv, "C_GetTokenInfo");
+    info
+}
+
+/// Whether `info`'s firmware version is at least `major.minor` -- e.g.
+/// ML-DSA/ML-KEM require firmware >= 6.0. `CK_TOKEN_INFO.firmwareVersion`
+/// (`CK_VERSION`) has only major/minor fields, no patch component, so this
+/// is the finest granularity the public PKCS#11 API exposes; every feature
+/// gate these tests need only ever cares about the major version anyway.
+/// Different firmware ranges gate different things (PIV slot count,
+/// available mechanisms, key types, touch/PIN policies, ...) -- there's no
+/// single boolean (like `ykcs11_tests.c`'s `is_neo`) that captures all of
+/// that, so each affected test should call this with whatever threshold
+/// its own feature actually needs, rather than reasoning from a device
+/// "model"/"generation" label.
+pub(crate) fn firmware_at_least(info: &CK_TOKEN_INFO, major: u8, minor: u8) -> bool {
+    (info.firmwareVersion.major, info.firmwareVersion.minor) >= (major, minor)
+}
+
+pub(crate) fn ulong_bytes(v: u32) -> Vec<u8> {
     (v as CK_ULONG).to_ne_bytes().to_vec()
 }
 
-fn attr(ty: u32, value: &[u8]) -> CK_ATTRIBUTE {
+pub(crate) fn attr(ty: u32, value: &[u8]) -> CK_ATTRIBUTE {
     CK_ATTRIBUTE {
         type_: ty as CK_ATTRIBUTE_TYPE,
         pValue: value.as_ptr() as CK_VOID_PTR,
@@ -104,7 +119,7 @@ fn attr(ty: u32, value: &[u8]) -> CK_ATTRIBUTE {
 /// (`pub use dispatch::*`), called in-process rather than through `dlopen` —
 /// this crate's `crate-type` includes `"rlib"` specifically so integration
 /// tests can do this; see Cargo.toml's own comment on that line.
-fn first_token_present_slot() -> CK_SLOT_ID {
+pub(crate) fn first_token_present_slot() -> CK_SLOT_ID {
     let mut count: CK_ULONG = 0;
     let rv = unsafe { ykcs11::C_GetSlotList(CK_TRUE as CK_BBOOL, ptr::null_mut(), &mut count) };
     assert_ok(rv, "C_GetSlotList (count)");
@@ -126,7 +141,7 @@ fn first_token_present_slot() -> CK_SLOT_ID {
 /// PIN/PUK, resets, then restores the management key it was given, which
 /// here is the factory default, leaving the device in a known, fully-wiped
 /// state every run starts from).
-fn token_init(slot_id: CK_SLOT_ID) {
+pub(crate) fn token_init(slot_id: CK_SLOT_ID) {
     eprintln!(
         "\n\
          ********************************************************************\n\
@@ -147,7 +162,7 @@ fn token_init(slot_id: CK_SLOT_ID) {
     assert_ok(rv, "C_InitToken");
 }
 
-fn open_so_session(slot_id: CK_SLOT_ID) -> CK_SESSION_HANDLE {
+pub(crate) fn open_so_session(slot_id: CK_SLOT_ID) -> CK_SESSION_HANDLE {
     let mut h_session: CK_SESSION_HANDLE = 0;
     let rv = unsafe {
         ykcs11::C_OpenSession(
@@ -178,7 +193,7 @@ fn open_so_session(slot_id: CK_SLOT_ID) -> CK_SESSION_HANDLE {
 /// factory-default PIN -- the login state is mutually exclusive between the
 /// two roles on a given slot (`PivBackend::login`), so this can't just be
 /// layered on top of the existing SO session.
-fn switch_to_user_login(h_session: CK_SESSION_HANDLE) {
+pub(crate) fn switch_to_user_login(h_session: CK_SESSION_HANDLE) {
     let rv = unsafe { ykcs11::C_Logout(h_session) };
     assert_ok(rv, "C_Logout(CKU_SO)");
 
@@ -193,7 +208,7 @@ fn switch_to_user_login(h_session: CK_SESSION_HANDLE) {
     assert_ok(rv, "C_Login(CKU_USER)");
 }
 
-fn close_session(h_session: CK_SESSION_HANDLE) {
+pub(crate) fn close_session(h_session: CK_SESSION_HANDLE) {
     let rv = unsafe { ykcs11::C_Logout(h_session) };
     assert_ok(rv, "C_Logout");
     let rv = unsafe { ykcs11::C_CloseSession(h_session) };
@@ -205,10 +220,10 @@ fn close_session(h_session: CK_SESSION_HANDLE) {
 /// `attr(...)`'s `pValue` (`backend.rs`'s `copy_nonoverlapping` into the
 /// caller's own allocation), so the returned `Vec` already reflects the
 /// answer -- no separate read-back step needed. Callers must already know
-/// the exact expected length (every attribute used in this file does: fixed
-/// by the PKCS#11 `CK_ULONG` width, or by FIPS 203/204's own fixed sizes
-/// per parameter set).
-fn get_attribute(
+/// the exact expected length (every attribute used by these tests does:
+/// fixed by the PKCS#11 `CK_ULONG` width, or by FIPS 203/204's own fixed
+/// sizes per parameter set).
+pub(crate) fn get_attribute(
     h_session: CK_SESSION_HANDLE,
     h_object: CK_OBJECT_HANDLE,
     attr_type: u32,
@@ -235,7 +250,7 @@ fn get_attribute(
 /// populates alongside the private key it was actually asked for, at the
 /// same `CKA_ID` but a different (and otherwise unpredictable from the
 /// caller's side) handle.
-fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &str) -> CK_OBJECT_HANDLE {
+pub(crate) fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &str) -> CK_OBJECT_HANDLE {
     let class_bytes = ulong_bytes(class);
     let id_bytes = [id];
     let mut template = [attr(CKA_CLASS, &class_bytes), attr(CKA_ID, &id_bytes)];
@@ -258,11 +273,11 @@ fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &s
     handles[0]
 }
 
-/// A `CK_MECHANISM` with no parameter -- every mechanism this file uses
+/// A `CK_MECHANISM` with no parameter -- every mechanism these tests use
 /// (`CKM_ML_KEM`) takes none. Named `no_param_mechanism` rather than
 /// `mechanism` so call sites can freely use `mechanism` as a local variable
 /// name for the result without shadowing this function.
-fn no_param_mechanism(ty: u32) -> CK_MECHANISM {
+pub(crate) fn no_param_mechanism(ty: u32) -> CK_MECHANISM {
     CK_MECHANISM {
         mechanism: ty as CK_MECHANISM_TYPE,
         pParameter: ptr::null_mut(),
@@ -273,12 +288,12 @@ fn no_param_mechanism(ty: u32) -> CK_MECHANISM {
 /// Calls `C_GetInterface("PKCS 11", NULL, ...)` and returns the full 3.2
 /// function table it points at. `C_EncapsulateKey`/`C_DecapsulateKey` are
 /// only reachable this way -- they aren't part of the legacy
-/// `CK_FUNCTION_LIST` `C_GetFunctionList` returns (see this file's module
+/// `CK_FUNCTION_LIST` `C_GetFunctionList` returns (see `crate`'s own module
 /// doc comment, and `dispatch.rs`'s own doc comment on `G_INTERFACES`) --
 /// so this exercises the actual interface-discovery mechanism those two
 /// functions need, rather than calling `ykcs11::C_EncapsulateKey` directly
-/// the way every other function in this file reaches `ykcs11`'s C ABI.
-fn get_3_2_function_list() -> &'static CK_FUNCTION_LIST_3_2 {
+/// the way every other function here reaches `ykcs11`'s C ABI.
+pub(crate) fn get_3_2_function_list() -> &'static CK_FUNCTION_LIST_3_2 {
     const INTERFACE_NAME: &[u8] = b"PKCS 11\0";
     let mut p_interface: CK_INTERFACE_PTR = ptr::null_mut();
     let rv = unsafe {
@@ -301,7 +316,7 @@ fn get_3_2_function_list() -> &'static CK_FUNCTION_LIST_3_2 {
 /// the expected `CKA_KEY_TYPE` back afterward (not just that the call
 /// returned `CKR_OK`, but that the import actually stuck on the device),
 /// and returns the new private-key object's handle.
-fn import_and_verify(
+pub(crate) fn import_and_verify(
     h_session: CK_SESSION_HANDLE,
     id: u8,
     key_type: u32,
@@ -341,128 +356,4 @@ fn import_and_verify(
     );
 
     h_object
-}
-
-#[test]
-fn hardware_ml_dsa_and_ml_kem_keys() {
-    if !hardware_tests_enabled() {
-        eprintln!(
-            "skipping hardware_ml_dsa_and_ml_kem_keys: set {RUN_ENV_VAR}=1 to run \
-             (destructive -- see this file's module doc comment)"
-        );
-        return;
-    }
-
-    let rv = unsafe { ykcs11::C_Initialize(ptr::null_mut()) };
-    assert_ok(rv, "C_Initialize");
-
-    let slot_id = first_token_present_slot();
-    token_init(slot_id);
-
-    let h_session = open_so_session(slot_id);
-
-    // Hardcoded, arbitrary seed material -- FIPS 204/203 don't require
-    // anything special of the seed itself, any correctly-sized byte string
-    // is a valid key seed, so there's no need to generate real randomness
-    // for an import test.
-    import_and_verify(
-        h_session,
-        1, // Authentication (9a)
-        CKK_ML_DSA,
-        CKP_ML_DSA_44,
-        &[0x42u8; 32],
-        "ML-DSA-44",
-    );
-    let h_ml_kem_priv = import_and_verify(
-        h_session,
-        3, // Key Management (9d) -- the traditional slot for key-agreement keys
-        CKK_ML_KEM,
-        CKP_ML_KEM_512,
-        &[0x24u8; 64],
-        "ML-KEM-512",
-    );
-
-    // Decapsulate is a private-key crypto op (AUTHENTICATE APDU), gated on
-    // CKU_USER PIN verification -- distinct from the CKU_SO management-key
-    // authentication used above for the imports. See `DEFAULT_USER_PIN`'s
-    // own doc comment.
-    switch_to_user_login(h_session);
-
-    encapsulate_and_decapsulate_round_trip(h_session, h_ml_kem_priv);
-
-    close_session(h_session);
-
-    let rv = unsafe { ykcs11::C_Finalize(ptr::null_mut()) };
-    assert_ok(rv, "C_Finalize");
-}
-
-/// Encapsulates a fresh shared secret against the ML-KEM-512 public key
-/// `import_and_verify` also populated (same `CKA_ID` as `h_private_key`,
-/// discovered via `C_FindObjects`), decapsulates the resulting ciphertext
-/// with `h_private_key`, and confirms both sides land on the identical
-/// shared secret -- the actual correctness property that matters, not just
-/// "both calls returned CKR_OK".
-fn encapsulate_and_decapsulate_round_trip(h_session: CK_SESSION_HANDLE, h_private_key: CK_OBJECT_HANDLE) {
-    let h_public_key = find_object_handle(h_session, CKO_PUBLIC_KEY, 3, "ML-KEM-512 public key");
-
-    let function_list = get_3_2_function_list();
-    let c_encapsulate_key = function_list
-        .C_EncapsulateKey
-        .expect("C_EncapsulateKey not wired into the 3.2 interface");
-    let c_decapsulate_key = function_list
-        .C_DecapsulateKey
-        .expect("C_DecapsulateKey not wired into the 3.2 interface");
-
-    // FIPS 203's fixed ML-KEM-512 ciphertext/shared-secret lengths -- known
-    // in advance, so (like the rest of this file) there's no need for the
-    // two-call buffer-size dance C_EncapsulateKey otherwise supports.
-    let mut encap_mechanism = no_param_mechanism(CKM_ML_KEM);
-    let mut ciphertext = vec![0u8; 768];
-    let mut ciphertext_len = ciphertext.len() as CK_ULONG;
-    let mut h_encap_secret: CK_OBJECT_HANDLE = 0;
-    let rv = unsafe {
-        c_encapsulate_key(
-            h_session,
-            &mut encap_mechanism,
-            h_public_key,
-            ptr::null_mut(),
-            0,
-            ciphertext.as_mut_ptr(),
-            &mut ciphertext_len,
-            &mut h_encap_secret,
-        )
-    };
-    assert_ok(rv, "C_EncapsulateKey");
-    assert_eq!(
-        ciphertext_len as usize,
-        ciphertext.len(),
-        "unexpected ML-KEM-512 ciphertext length"
-    );
-    assert_ne!(h_encap_secret, 0, "C_EncapsulateKey returned a null handle");
-
-    let encapsulated_secret = get_attribute(h_session, h_encap_secret, CKA_VALUE, 32, "encapsulated secret");
-
-    let mut decap_mechanism = no_param_mechanism(CKM_ML_KEM);
-    let mut h_decap_secret: CK_OBJECT_HANDLE = 0;
-    let rv = unsafe {
-        c_decapsulate_key(
-            h_session,
-            &mut decap_mechanism,
-            h_private_key,
-            ptr::null_mut(),
-            0,
-            ciphertext.as_mut_ptr(),
-            ciphertext_len,
-            &mut h_decap_secret,
-        )
-    };
-    assert_ok(rv, "C_DecapsulateKey");
-    assert_ne!(h_decap_secret, 0, "C_DecapsulateKey returned a null handle");
-
-    let decapsulated_secret = get_attribute(h_session, h_decap_secret, CKA_VALUE, 32, "decapsulated secret");
-
-    assert_eq!(
-        encapsulated_secret, decapsulated_secret,
-        "host-encapsulated and device-decapsulated shared secrets don't match"
-    );
 }

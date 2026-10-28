@@ -824,6 +824,11 @@ impl<B: Backend> Engine<B> {
             str_pad(&mut info.manufacturerID, &tinfo.manufacturer_id);
             str_pad(&mut info.model, &tinfo.model);
             str_pad(&mut info.serialNumber, &tinfo.serial_number);
+            // No backend here tracks a real-time clock, so this is always
+            // "unknown" -- PKCS#11 convention for that is all spaces (same
+            // as every other unset/unsupported string field above), not the
+            // zero bytes `mem::zeroed()` would otherwise leave it at.
+            str_pad(&mut info.utcTime, "");
 
             info.flags = CKF_RNG as CK_FLAGS
                 | CKF_LOGIN_REQUIRED as CK_FLAGS
