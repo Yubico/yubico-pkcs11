@@ -159,6 +159,34 @@ pub fn sign_init(
         return Err(CKR_USER_NOT_LOGGED_IN.into());
     }
 
+    // CKM_YUBICO_ML_DSA_EXTERNAL_MU is a Yubico vendor mechanism
+    if mechanism as u32 == crate::mechanisms::CKM_YUBICO_ML_DSA_EXTERNAL_MU {
+        let PublicKey::MlDsa(k) = public_key else {
+            return Err(CKR_KEY_TYPE_INCONSISTENT.into());
+        };
+        // No standard or vendor-defined parameter exists for this
+        // mechanism. The context (if any) is already folded into `mu`
+        // by the caller
+        if !parameter.is_empty() {
+            return Err(CKR_MECHANISM_PARAM_INVALID.into());
+        }
+        let key_type = KeyType::try_from(&public_key.algorithm())
+            .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
+        let out_len = ml_dsa_signature_len(k.parameter_set)?;
+
+        let session = slot
+            .sessions
+            .get_mut(&h_session)
+            .ok_or(CK_RV::from(CKR_SESSION_HANDLE_INVALID))?;
+        session.data.sign = Some(SignState {
+            slot: piv_slot,
+            key_type,
+            algo: SignAlgorithm::MlDsaExternalMu,
+            acc: Accumulator::Raw(Vec::new()),
+        });
+        return Ok(out_len);
+    }
+
     let Some(mech_kind) = classify_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
