@@ -1,21 +1,33 @@
-// Copyright 2026 Yubico AB
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! Mechanism classification shared by `C_Sign*`/`C_Verify*` — purely about
-//! what a mechanism *means* (which hash, if any; which PSS params), not
-//! which backend/key it's used with or what device call it drives. Lives
-//! here (rather than duplicated between `ykcs11::sign` and a future
-//! `ykcs11::verify`/`yubihsm-pkcs11` equivalent) since `verify_mechanism_init`
-//! and `sign_mechanism_init` in the C reference accept the identical
-//! mechanism set (confirmed byte-for-byte against both ykcs11.c and
-//! yubihsm_pkcs11.c) — only the key-class/login checks around them differ,
-//! and those stay in each backend's own orchestration code. One deliberate
-//! exception: `CKM_ML_DSA` (PKCS#11 3.2) has no C reference in either
-//! module (`ykcs11::sign`/`ykcs11::verify`'s own doc comments explain the
-//! scope) — it's classified here anyway since `yubihsm-pkcs11` doesn't use
-//! this module at all today, so there's nothing for the extra variant to
-//! conflict with, and it lets `CKM_ML_DSA` fit the same
-//! `(MechanismKind, PublicKey)` matching `ykcs11::sign`/`verify` already use
-//! for everything else.
 
 use pkcs11_sys::*;
 

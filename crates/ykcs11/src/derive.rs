@@ -1,24 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_DeriveKey` backend logic for the YubiKey PIV module -- `CKM_ECDH1_DERIVE`
-//! only, matching ykcs11.c's own `C_DeriveKey` (ykcs11.c:3706-3798) exactly:
-//! an EC (P-256/P-384) or X25519 private key agrees on a shared secret with
-//! a caller-supplied peer public point, entirely on-device
-//! (`ActivePivSession::calculate_secret`, the Rust equivalent of
-//! `ykpiv_decipher_data`'s ECDH path -- the same `AUTHENTICATE` APDU used
-//! for signing/decryption, just with a different response tag). The result
-//! becomes the single, fixed `PIV_SECRET_OBJ` object
-//! (`CKO_SECRET_KEY`/`CKK_GENERIC_SECRET`), overwriting whatever was
-//! derived there last time -- ykcs11.c never supports more than one live
-//! derived secret at once (`store_data(session->slot, 0, buf, len)` always
-//! uses the same fixed sub-id, ykcs11.c:3790).
-//!
-//! Unlike `C_SignInit`/`C_DecryptInit`, ykcs11.c's own `C_DeriveKey` has no
-//! host-side login-state check at all (ykcs11.c:3706-3798) -- it relies
-//! entirely on the device rejecting the `AUTHENTICATE` APDU if the PIN
-//! hasn't been verified. This port matches that (no proactive login check
-//! here, unlike `sign_init`/`decrypt_init`).
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{find_private_key, store_secret_key};

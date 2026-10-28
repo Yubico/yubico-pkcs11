@@ -1,38 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_SignInit`/`C_SignUpdate`/`C_SignFinal` backend logic for the YubiKey
-//! PIV module. Covers every mechanism `sign_mechanism_init` supports,
-//! including the `CKM_RSA_PKCS_PSS`/`CKM_SHAx_RSA_PKCS_PSS` family
-//! (mechanisms.c:150-179) — plus one deliberate addition, `CKM_ML_DSA`
-//! (PKCS#11 3.2), which has no C reference in either `ykcs11.c` or
-//! `yubihsm_pkcs11.c`. Scope is "pure" ML-DSA (FIPS 204) only, with the
-//! default empty context and non-deterministic hedging: `CK_HASH_ML_DSA_*`
-//! (prehash) mechanisms aren't implemented, a non-empty `pContext` is
-//! rejected (`yubikit::piv::PivSession::sign` has no way to pass one to the
-//! device at all), and `CKH_DETERMINISTIC_REQUIRED` is rejected too, since
-//! the device always hedges internally with no way to request otherwise.
-//! Confirmed against `yubikit`'s own device tests
-//! (`crates/yubikit/tests/device_tests/piv.rs`'s `test_piv_mldsa44_verify`):
-//! the device's raw-message signature round-trips through the `ml-dsa`
-//! crate's default (empty-context) `Verifier` with no extra message framing
-//! needed on either side — see `verify.rs`'s own `verify_ml_dsa`.
-//!
-//! The actual RSA/EC/EdDSA/ML-DSA private-key operation always happens on
-//! the device (`ActivePivSession::sign`, matching `ykpiv_sign_data`) — this
-//! module's own job is everything that happens around that call:
-//! - picking the right hash (or none at all, for the "raw"/pre-hashed
-//!   mechanisms — the caller supplies already-hashed or already-encoded
-//!   data directly);
-//! - PKCS#1 v1.5 padding the result for RSA, left-zero-padding it for
-//!   `CKM_RSA_X_509`, or RSASSA-PSS-encoding it (MGF1 mask, random salt,
-//!   RFC 8017 §9.1.1) for the PSS family — the device does a raw modular
-//!   exponentiation in every RSA case, not any of the actual signature
-//!   padding/encoding itself;
-//! - converting the device's DER-encoded ECDSA signature back to the
-//!   fixed-width `r || s` format PKCS#11 expects (EdDSA/ML-DSA signatures
-//!   are already fixed-width on the wire, so no equivalent step is needed
-//!   there).
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use pkcs11_common::backend::Slot;

@@ -1,26 +1,33 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright (c) 2026 Yubico AB
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
 
-//! `C_VerifyInit`/`C_VerifyUpdate`/`C_VerifyFinal` backend logic for the
-//! YubiKey PIV module. Covers the same mechanism set `sign.rs` does — the
-//! two mechanism switches are identical in the C reference (mechanisms.c:
-//! 97-181 vs 333-375) — but needs neither the device nor a login check:
-//! verification only ever needs the object's already-known public key
-//! material, matched here against `C_VerifyInit`'s own key-handle range
-//! check (`CKO_PUBLIC_KEY` only — certificates aren't accepted,
-//! ykcs11.c:3189) and complete absence of any login_state check anywhere in
-//! `C_VerifyInit`/`C_Verify`/`C_VerifyUpdate`/`C_VerifyFinal`
-//! (ykcs11.c:3160-3389). Also covers `CKM_ML_DSA`, same scope/rationale as
-//! `sign.rs`'s own doc comment (no C reference, pure ML-DSA only, default
-//! empty context).
-//!
-//! All of the actual cryptographic verification math for the mechanisms
-//! shared with the C references lives in `pkcs11_common::verify`,
-//! parameterized over raw public-key bytes rather than
-//! `yubikit::keys::PublicKey`; `verify_ml_dsa` below stays local to this
-//! module instead, since (unlike every other mechanism here) it has no C
-//! reference to mirror and needs the `ml-dsa` crate, which `pkcs11-common`
-//! has no reason to depend on otherwise.
 
 use crate::backend::PivBackend;
 use crate::sign::{Accumulator, resolve_ml_dsa_context};
