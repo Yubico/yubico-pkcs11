@@ -44,7 +44,7 @@ pkcs11-tool --module path/to/libyubihsm_pkcs11.so --show-info
 
 ## License
 
-In general the project is covered by the following BSD license.  The
+In general the project is covered by the Apache 2.0 license.  The
 header files `crates/ykcs11-sys/include/pkcs11*.h` have additional copyright and licensing
 information, please see them for more information.
 
