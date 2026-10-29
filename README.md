@@ -1,5 +1,7 @@
 # yubico-pkcs11
 
+This is a work in progress and is currently not supported as an official Yubico software.
+
 A unified Rust workspace implementing PKCS#11 modules for both **YubiHSM 2** and **YubiKey PIV**.
 
 ## Structure
@@ -61,7 +63,7 @@ export LD_LIBRARY_PATH=/path/to/yubihsm-shell/build/lib
 
 ## Usage
 
-For example with ´pkcs11-tool´:
+For example with `pkcs11-tool`:
 
 ```bash
 # YubiHSM
@@ -74,5 +76,6 @@ pkcs11-tool --module path/to/libykcs11.so -L
 
 ## License
 
-- `pkcs11-common` and `yubihsm-pkcs11`: Apache-2.0
-- `ykcs11`: BSD-2-Clause
+- `yubihsm-pkcs11`: Apache-2.0
+- `ykcs11` and `pkcs11-common`: BSD
+- The header files `crates/ykcs11-sys/include/pkcs11*.h` have additional copyright and licensing information, please see them for more information.
