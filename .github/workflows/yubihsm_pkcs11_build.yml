@@ -17,7 +17,9 @@ jobs:
     env:
       LIBYUBIHSM_VERSION: 2.8.0
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install native build dependencies
         run: |
@@ -25,13 +27,14 @@ jobs:
           sudo apt-get install -y libpcsclite-dev libclang-dev libudev-dev \
             libcurl4-openssl-dev libssl-dev cmake libusb-1.0.0-dev libedit-dev gengetopt
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
+          toolchain: stable
           components: clippy,rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build native YubiHSM library
         run: |
