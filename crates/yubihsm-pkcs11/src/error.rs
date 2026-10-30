@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use pkcs11_sys::*;
 
 // /// Map a Result to CK_RV: Ok → CKR_OK, Err → the error code.

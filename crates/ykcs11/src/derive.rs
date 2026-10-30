@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{find_private_key, store_secret_key};
 use crate::template::find_attr;
@@ -60,12 +59,17 @@ fn resolve_ecdh1_derive_params(
     // SAFETY: `pPublicData`/`ulPublicDataLen` are a caller-supplied
     // pointer+length pair, out-of-line from `parameter` itself.
     Ok(unsafe {
-        std::slice::from_raw_parts(params.pPublicData as *const u8, params.ulPublicDataLen as usize)
-            .to_vec()
+        std::slice::from_raw_parts(
+            params.pPublicData as *const u8,
+            params.ulPublicDataLen as usize,
+        )
+        .to_vec()
     })
 }
 
-pub(crate) fn validate_derive_template(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<(), CK_RV> {
+pub(crate) fn validate_derive_template(
+    template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+) -> Result<(), CK_RV> {
     if let Some(token) = find_attr(template, CKA_TOKEN).and_then(|b| b.first().copied()) {
         if token != 0 {
             return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
@@ -136,7 +140,9 @@ pub fn derive_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yubikit::keys::{EcCurve, EcPublicKey, Ed25519PublicKey, RsaKeySize, RsaPublicKey, X25519PublicKey};
+    use yubikit::keys::{
+        EcCurve, EcPublicKey, Ed25519PublicKey, RsaKeySize, RsaPublicKey, X25519PublicKey,
+    };
 
     fn attr(ty: u32, value: &[u8]) -> (CK_ATTRIBUTE_TYPE, Vec<u8>) {
         (ty as CK_ATTRIBUTE_TYPE, value.to_vec())
@@ -150,10 +156,16 @@ mod tests {
 
     #[test]
     fn ecdh_key_type_accepts_p256_and_p384_and_x25519() {
-        let p256 = PublicKey::Ec(EcPublicKey { curve: EcCurve::P256, point: vec![0x04; 65] });
+        let p256 = PublicKey::Ec(EcPublicKey {
+            curve: EcCurve::P256,
+            point: vec![0x04; 65],
+        });
         assert_eq!(ecdh_key_type(&p256), Ok((KeyType::EccP256, 65)));
 
-        let p384 = PublicKey::Ec(EcPublicKey { curve: EcCurve::P384, point: vec![0x04; 97] });
+        let p384 = PublicKey::Ec(EcPublicKey {
+            curve: EcCurve::P384,
+            point: vec![0x04; 97],
+        });
         assert_eq!(ecdh_key_type(&p384), Ok((KeyType::EccP384, 97)));
 
         let x25519 = PublicKey::X25519(X25519PublicKey { key: vec![0u8; 32] });
@@ -162,11 +174,18 @@ mod tests {
 
     #[test]
     fn ecdh_key_type_rejects_rsa_and_ed25519() {
-        let rsa = PublicKey::Rsa(RsaPublicKey { key_size: RsaKeySize::Rsa2048, n: vec![], e: vec![] });
+        let rsa = PublicKey::Rsa(RsaPublicKey {
+            key_size: RsaKeySize::Rsa2048,
+            n: vec![],
+            e: vec![],
+        });
         assert_eq!(ecdh_key_type(&rsa), Err(CKR_KEY_TYPE_INCONSISTENT.into()));
 
         let ed25519 = PublicKey::Ed25519(Ed25519PublicKey { key: vec![0u8; 32] });
-        assert_eq!(ecdh_key_type(&ed25519), Err(CKR_KEY_TYPE_INCONSISTENT.into()));
+        assert_eq!(
+            ecdh_key_type(&ed25519),
+            Err(CKR_KEY_TYPE_INCONSISTENT.into())
+        );
     }
 
     fn params_bytes(params: CK_ECDH1_DERIVE_PARAMS) -> Vec<u8> {
@@ -287,24 +306,36 @@ mod tests {
     #[test]
     fn validate_derive_template_rejects_a_token_object_request() {
         let t = [bool_attr(CKA_TOKEN, true)];
-        assert_eq!(validate_derive_template(&t), Err(CKR_ATTRIBUTE_VALUE_INVALID.into()));
+        assert_eq!(
+            validate_derive_template(&t),
+            Err(CKR_ATTRIBUTE_VALUE_INVALID.into())
+        );
     }
 
     #[test]
     fn validate_derive_template_rejects_a_non_secret_key_class() {
         let t = [ulong_attr(CKA_CLASS, CKO_DATA as CK_ULONG)];
-        assert_eq!(validate_derive_template(&t), Err(CKR_ATTRIBUTE_VALUE_INVALID.into()));
+        assert_eq!(
+            validate_derive_template(&t),
+            Err(CKR_ATTRIBUTE_VALUE_INVALID.into())
+        );
     }
 
     #[test]
     fn validate_derive_template_rejects_a_non_generic_secret_key_type() {
         let t = [ulong_attr(CKA_KEY_TYPE, CKK_AES as CK_ULONG)];
-        assert_eq!(validate_derive_template(&t), Err(CKR_ATTRIBUTE_VALUE_INVALID.into()));
+        assert_eq!(
+            validate_derive_template(&t),
+            Err(CKR_ATTRIBUTE_VALUE_INVALID.into())
+        );
     }
 
     #[test]
     fn validate_derive_template_rejects_a_non_extractable_request() {
         let t = [bool_attr(CKA_EXTRACTABLE, false)];
-        assert_eq!(validate_derive_template(&t), Err(CKR_ATTRIBUTE_VALUE_INVALID.into()));
+        assert_eq!(
+            validate_derive_template(&t),
+            Err(CKR_ATTRIBUTE_VALUE_INVALID.into())
+        );
     }
 }

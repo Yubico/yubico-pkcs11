@@ -114,8 +114,7 @@ fn first_token_present_slot() -> CK_SLOT_ID {
     );
 
     let mut slots = vec![0 as CK_SLOT_ID; count as usize];
-    let rv =
-        unsafe { ykcs11::C_GetSlotList(CK_TRUE as CK_BBOOL, slots.as_mut_ptr(), &mut count) };
+    let rv = unsafe { ykcs11::C_GetSlotList(CK_TRUE as CK_BBOOL, slots.as_mut_ptr(), &mut count) };
     assert_ok(rv, "C_GetSlotList (fill)");
     slots[0]
 }
@@ -235,7 +234,12 @@ fn get_attribute(
 /// populates alongside the private key it was actually asked for, at the
 /// same `CKA_ID` but a different (and otherwise unpredictable from the
 /// caller's side) handle.
-fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &str) -> CK_OBJECT_HANDLE {
+fn find_object_handle(
+    h_session: CK_SESSION_HANDLE,
+    class: u32,
+    id: u8,
+    what: &str,
+) -> CK_OBJECT_HANDLE {
     let class_bytes = ulong_bytes(class);
     let id_bytes = [id];
     let mut template = [attr(CKA_CLASS, &class_bytes), attr(CKA_ID, &id_bytes)];
@@ -247,10 +251,18 @@ fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &s
     let mut handles = [0 as CK_OBJECT_HANDLE; 1];
     let mut count: CK_ULONG = 0;
     let rv = unsafe {
-        ykcs11::C_FindObjects(h_session, handles.as_mut_ptr(), handles.len() as CK_ULONG, &mut count)
+        ykcs11::C_FindObjects(
+            h_session,
+            handles.as_mut_ptr(),
+            handles.len() as CK_ULONG,
+            &mut count,
+        )
     };
     assert_ok(rv, &format!("C_FindObjects ({what})"));
-    assert_eq!(count, 1, "{what}: expected exactly one matching object, found {count}");
+    assert_eq!(
+        count, 1,
+        "{what}: expected exactly one matching object, found {count}"
+    );
 
     let rv = unsafe { ykcs11::C_FindObjectsFinal(h_session) };
     assert_ok(rv, &format!("C_FindObjectsFinal ({what})"));
@@ -290,10 +302,16 @@ fn get_3_2_function_list() -> &'static CK_FUNCTION_LIST_3_2 {
         )
     };
     assert_ok(rv, "C_GetInterface");
-    assert!(!p_interface.is_null(), "C_GetInterface returned a null interface");
+    assert!(
+        !p_interface.is_null(),
+        "C_GetInterface returned a null interface"
+    );
 
     let function_list = unsafe { (*p_interface).pFunctionList as *const CK_FUNCTION_LIST_3_2 };
-    assert!(!function_list.is_null(), "C_GetInterface returned a null function list");
+    assert!(
+        !function_list.is_null(),
+        "C_GetInterface returned a null function list"
+    );
     unsafe { &*function_list }
 }
 
@@ -334,7 +352,13 @@ fn import_and_verify(
     assert_ok(rv, &format!("C_CreateObject ({what})"));
     assert_ne!(h_object, 0, "{what}: C_CreateObject returned a null handle");
 
-    let got_key_type = get_attribute(h_session, h_object, CKA_KEY_TYPE, key_type_bytes.len(), what);
+    let got_key_type = get_attribute(
+        h_session,
+        h_object,
+        CKA_KEY_TYPE,
+        key_type_bytes.len(),
+        what,
+    );
     assert_eq!(
         got_key_type, key_type_bytes,
         "{what}: CKA_KEY_TYPE readback mismatch after import"
@@ -402,7 +426,10 @@ fn hardware_ml_dsa_and_ml_kem_keys() {
 /// with `h_private_key`, and confirms both sides land on the identical
 /// shared secret -- the actual correctness property that matters, not just
 /// "both calls returned CKR_OK".
-fn encapsulate_and_decapsulate_round_trip(h_session: CK_SESSION_HANDLE, h_private_key: CK_OBJECT_HANDLE) {
+fn encapsulate_and_decapsulate_round_trip(
+    h_session: CK_SESSION_HANDLE,
+    h_private_key: CK_OBJECT_HANDLE,
+) {
     let h_public_key = find_object_handle(h_session, CKO_PUBLIC_KEY, 3, "ML-KEM-512 public key");
 
     let function_list = get_3_2_function_list();
@@ -440,7 +467,13 @@ fn encapsulate_and_decapsulate_round_trip(h_session: CK_SESSION_HANDLE, h_privat
     );
     assert_ne!(h_encap_secret, 0, "C_EncapsulateKey returned a null handle");
 
-    let encapsulated_secret = get_attribute(h_session, h_encap_secret, CKA_VALUE, 32, "encapsulated secret");
+    let encapsulated_secret = get_attribute(
+        h_session,
+        h_encap_secret,
+        CKA_VALUE,
+        32,
+        "encapsulated secret",
+    );
 
     let mut decap_mechanism = no_param_mechanism(CKM_ML_KEM);
     let mut h_decap_secret: CK_OBJECT_HANDLE = 0;
@@ -459,7 +492,13 @@ fn encapsulate_and_decapsulate_round_trip(h_session: CK_SESSION_HANDLE, h_privat
     assert_ok(rv, "C_DecapsulateKey");
     assert_ne!(h_decap_secret, 0, "C_DecapsulateKey returned a null handle");
 
-    let decapsulated_secret = get_attribute(h_session, h_decap_secret, CKA_VALUE, 32, "decapsulated secret");
+    let decapsulated_secret = get_attribute(
+        h_session,
+        h_decap_secret,
+        CKA_VALUE,
+        32,
+        "decapsulated secret",
+    );
 
     assert_eq!(
         encapsulated_secret, decapsulated_secret,

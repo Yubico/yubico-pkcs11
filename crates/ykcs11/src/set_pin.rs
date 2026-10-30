@@ -46,7 +46,10 @@ fn classify_user_pin_request<'a>(old_pin: &'a [u8], new_pin: &'a [u8]) -> UserPi
                 new: new_pin.strip_prefix(PUK_PREFIX).unwrap_or(new_pin),
             },
         },
-        None => UserPinRequest::ChangePin { old: old_pin, new: new_pin },
+        None => UserPinRequest::ChangePin {
+            old: old_pin,
+            new: new_pin,
+        },
     }
 }
 
@@ -81,7 +84,9 @@ pub fn set_pin(
             .get_management_key_metadata()
             .map(|m| matches!(m.touch_policy, TouchPolicy::Always | TouchPolicy::Cached))
             .unwrap_or(false);
-        return piv.set_management_key(&new_key, require_touch).map_err(piv_error_to_rv);
+        return piv
+            .set_management_key(&new_key, require_touch)
+            .map_err(piv_error_to_rv);
     }
 
     match classify_user_pin_request(old_pin, new_pin) {

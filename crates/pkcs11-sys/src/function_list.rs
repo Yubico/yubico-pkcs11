@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use super::*;
 
 pub type CK_C_Initialize = Option<unsafe extern "C" fn(CK_VOID_PTR) -> CK_RV>;
@@ -347,13 +346,7 @@ pub type CK_C_EncryptMessage = Option<
     ) -> CK_RV,
 >;
 pub type CK_C_EncryptMessageBegin = Option<
-    unsafe extern "C" fn(
-        CK_SESSION_HANDLE,
-        CK_VOID_PTR,
-        CK_ULONG,
-        CK_BYTE_PTR,
-        CK_ULONG,
-    ) -> CK_RV,
+    unsafe extern "C" fn(CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG) -> CK_RV,
 >;
 pub type CK_C_EncryptMessageNext = Option<
     unsafe extern "C" fn(
@@ -384,13 +377,7 @@ pub type CK_C_DecryptMessage = Option<
     ) -> CK_RV,
 >;
 pub type CK_C_DecryptMessageBegin = Option<
-    unsafe extern "C" fn(
-        CK_SESSION_HANDLE,
-        CK_VOID_PTR,
-        CK_ULONG,
-        CK_BYTE_PTR,
-        CK_ULONG,
-    ) -> CK_RV,
+    unsafe extern "C" fn(CK_SESSION_HANDLE, CK_VOID_PTR, CK_ULONG, CK_BYTE_PTR, CK_ULONG) -> CK_RV,
 >;
 pub type CK_C_DecryptMessageNext = Option<
     unsafe extern "C" fn(
@@ -510,9 +497,8 @@ pub type CK_C_GetSessionValidationFlags = Option<
         CK_FLAGS_PTR,
     ) -> CK_RV,
 >;
-pub type CK_C_AsyncComplete = Option<
-    unsafe extern "C" fn(CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ASYNC_DATA_PTR) -> CK_RV,
->;
+pub type CK_C_AsyncComplete =
+    Option<unsafe extern "C" fn(CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ASYNC_DATA_PTR) -> CK_RV>;
 pub type CK_C_AsyncGetID =
     Option<unsafe extern "C" fn(CK_SESSION_HANDLE, CK_UTF8CHAR_PTR, CK_ULONG_PTR) -> CK_RV>;
 pub type CK_C_AsyncJoin = Option<

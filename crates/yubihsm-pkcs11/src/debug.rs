@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Debug output matching the C module's format:
 //   [P11 - INF HH:MM:SS.UUUUUU] file.rs:line (func): message
 
@@ -44,8 +43,14 @@ pub const ANSI_BLUE: &str = "";
 pub const ANSI_RESET: &str = "";
 
 pub fn dbg_init(dbg: bool, dinout: bool, _libdbg: bool, _debug_file: Option<&str>) {
-    DBG_ENABLED.store(dbg || std::env::var("YUBIHSM_PKCS11_DBG").is_ok(), Ordering::SeqCst);
-    DINOUT_ENABLED.store(dinout || std::env::var("YUBIHSM_PKCS11_DINOUT").is_ok(), Ordering::SeqCst);
+    DBG_ENABLED.store(
+        dbg || std::env::var("YUBIHSM_PKCS11_DBG").is_ok(),
+        Ordering::SeqCst,
+    );
+    DINOUT_ENABLED.store(
+        dinout || std::env::var("YUBIHSM_PKCS11_DINOUT").is_ok(),
+        Ordering::SeqCst,
+    );
     // TODO: redirect output to debug_file if specified
     // TODO: wire _libdbg / YUBIHSM_LIB_DBG into yubihsmrs's verbosity setting
 }
@@ -120,10 +125,15 @@ macro_rules! dbg_warn {
 macro_rules! din {
     ($name:literal) => {
         if $crate::debug::is_dinout() {
-            eprintln!("[{}P11 - INF{} {}] {}:{} ({}): In",
-                $crate::debug::ANSI_BLUE, $crate::debug::ANSI_RESET,
+            eprintln!(
+                "[{}P11 - INF{} {}] {}:{} ({}): In",
+                $crate::debug::ANSI_BLUE,
+                $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $name);
+                file!(),
+                line!(),
+                $name
+            );
         }
     };
 }
@@ -132,10 +142,15 @@ macro_rules! din {
 macro_rules! dout {
     ($name:literal) => {
         if $crate::debug::is_dinout() {
-            eprintln!("[{}P11 - INF{} {}] {}:{} ({}): Out",
-                $crate::debug::ANSI_BLUE, $crate::debug::ANSI_RESET,
+            eprintln!(
+                "[{}P11 - INF{} {}] {}:{} ({}): Out",
+                $crate::debug::ANSI_BLUE,
+                $crate::debug::ANSI_RESET,
                 $crate::debug::_timestamp(),
-                file!(), line!(), $name);
+                file!(),
+                line!(),
+                $name
+            );
         }
     };
 }

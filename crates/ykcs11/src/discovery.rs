@@ -25,7 +25,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use yubikit::piv::PivSession;
 use yubikit::platform::device::LocalYubiKeyDevice;
-use yubikit::platform::pcsc::{list_readers_with_state, PcscSmartCardConnection};
+use yubikit::platform::pcsc::{PcscSmartCardConnection, list_readers_with_state};
 
 /// A connected PIV application session, held per-slot for as long as the
 /// token stays present. Equivalent to `ykpiv_state` in the C module.

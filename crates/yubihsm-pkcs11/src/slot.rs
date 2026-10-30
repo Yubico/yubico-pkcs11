@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! Backend-specific per-slot data: one slot per configured connector.
 
 use crate::config::ConnectorConfig;

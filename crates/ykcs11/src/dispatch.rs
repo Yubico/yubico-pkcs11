@@ -45,7 +45,12 @@ impl log::Log for ForwardingLogger {
 
     fn log(&self, record: &log::Record) {
         if self.enabled(record.metadata()) {
-            eprintln!("DBG: [{}] {}: {}", record.level(), record.target(), record.args());
+            eprintln!(
+                "DBG: [{}] {}: {}",
+                record.level(),
+                record.target(),
+                record.args()
+            );
         }
     }
 
@@ -434,7 +439,12 @@ pub unsafe extern "C" fn C_VerifyInit(
     pMechanism: CK_MECHANISM_PTR,
     hKey: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    unsafe { traced!("C_VerifyInit", G_ENGINE.verify_init(hSession, pMechanism, hKey)) }
+    unsafe {
+        traced!(
+            "C_VerifyInit",
+            G_ENGINE.verify_init(hSession, pMechanism, hKey)
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -487,7 +497,12 @@ pub unsafe extern "C" fn C_EncryptInit(
     pMechanism: CK_MECHANISM_PTR,
     hKey: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    unsafe { traced!("C_EncryptInit", G_ENGINE.encrypt_init(hSession, pMechanism, hKey)) }
+    unsafe {
+        traced!(
+            "C_EncryptInit",
+            G_ENGINE.encrypt_init(hSession, pMechanism, hKey)
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -501,7 +516,13 @@ pub unsafe extern "C" fn C_Encrypt(
     unsafe {
         traced!(
             "C_Encrypt",
-            G_ENGINE.encrypt(hSession, pData, ulDataLen, pEncryptedData, pulEncryptedDataLen)
+            G_ENGINE.encrypt(
+                hSession,
+                pData,
+                ulDataLen,
+                pEncryptedData,
+                pulEncryptedDataLen
+            )
         )
     }
 }
@@ -517,7 +538,13 @@ pub unsafe extern "C" fn C_EncryptUpdate(
     unsafe {
         traced!(
             "C_EncryptUpdate",
-            G_ENGINE.encrypt_update(hSession, pPart, ulPartLen, pEncryptedPart, pulEncryptedPartLen)
+            G_ENGINE.encrypt_update(
+                hSession,
+                pPart,
+                ulPartLen,
+                pEncryptedPart,
+                pulEncryptedPartLen
+            )
         )
     }
 }
@@ -542,7 +569,12 @@ pub unsafe extern "C" fn C_DecryptInit(
     pMechanism: CK_MECHANISM_PTR,
     hKey: CK_OBJECT_HANDLE,
 ) -> CK_RV {
-    unsafe { traced!("C_DecryptInit", G_ENGINE.decrypt_init(hSession, pMechanism, hKey)) }
+    unsafe {
+        traced!(
+            "C_DecryptInit",
+            G_ENGINE.decrypt_init(hSession, pMechanism, hKey)
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -556,7 +588,13 @@ pub unsafe extern "C" fn C_Decrypt(
     unsafe {
         traced!(
             "C_Decrypt",
-            G_ENGINE.decrypt(hSession, pEncryptedData, ulEncryptedDataLen, pData, pulDataLen)
+            G_ENGINE.decrypt(
+                hSession,
+                pEncryptedData,
+                ulEncryptedDataLen,
+                pData,
+                pulDataLen
+            )
         )
     }
 }
@@ -572,7 +610,13 @@ pub unsafe extern "C" fn C_DecryptUpdate(
     unsafe {
         traced!(
             "C_DecryptUpdate",
-            G_ENGINE.decrypt_update(hSession, pEncryptedPart, ulEncryptedPartLen, pPart, pulPartLen)
+            G_ENGINE.decrypt_update(
+                hSession,
+                pEncryptedPart,
+                ulEncryptedPartLen,
+                pPart,
+                pulPartLen
+            )
         )
     }
 }
@@ -632,7 +676,14 @@ pub unsafe extern "C" fn C_DeriveKey(
     unsafe {
         traced!(
             "C_DeriveKey",
-            G_ENGINE.derive_key(hSession, pMechanism, hBaseKey, pTemplate, ulAttributeCount, phKey)
+            G_ENGINE.derive_key(
+                hSession,
+                pMechanism,
+                hBaseKey,
+                pTemplate,
+                ulAttributeCount,
+                phKey
+            )
         )
     }
 }
@@ -694,8 +745,16 @@ pub unsafe extern "C" fn C_DecapsulateKey(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn C_DestroyObject(hSession: CK_SESSION_HANDLE, hObject: CK_OBJECT_HANDLE) -> CK_RV {
-    unsafe { traced!("C_DestroyObject", G_ENGINE.destroy_object(hSession, hObject)) }
+pub unsafe extern "C" fn C_DestroyObject(
+    hSession: CK_SESSION_HANDLE,
+    hObject: CK_OBJECT_HANDLE,
+) -> CK_RV {
+    unsafe {
+        traced!(
+            "C_DestroyObject",
+            G_ENGINE.destroy_object(hSession, hObject)
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -721,7 +780,12 @@ pub unsafe extern "C" fn C_InitToken(
     ulPinLen: CK_ULONG,
     pLabel: CK_UTF8CHAR_PTR,
 ) -> CK_RV {
-    unsafe { traced!("C_InitToken", G_ENGINE.init_token(slotID, pPin, ulPinLen, pLabel)) }
+    unsafe {
+        traced!(
+            "C_InitToken",
+            G_ENGINE.init_token(slotID, pPin, ulPinLen, pLabel)
+        )
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -295,7 +295,10 @@ pub trait Backend: Sized + 'static {
     }
 
     /// Finalize the encrypt operation started by `encrypt_init`
-    fn encrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+    fn encrypt_final(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+    ) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
@@ -321,7 +324,10 @@ pub trait Backend: Sized + 'static {
     }
 
     /// Finalize the decrypt operation started by `decrypt_init`
-    fn decrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+    fn decrypt_final(
+        _slot: &mut Slot<Self>,
+        _h_session: CK_SESSION_HANDLE,
+    ) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
@@ -435,7 +441,8 @@ unsafe fn extract_attribute_template(
                 let value = if a.pValue.is_null() || a.ulValueLen == 0 {
                     Vec::new()
                 } else {
-                    std::slice::from_raw_parts(a.pValue as *const u8, a.ulValueLen as usize).to_vec()
+                    std::slice::from_raw_parts(a.pValue as *const u8, a.ulValueLen as usize)
+                        .to_vec()
                 };
                 (a.type_, value)
             })
@@ -617,7 +624,8 @@ impl<B: Backend> Engine<B> {
             }
             for iface in interfaces {
                 if !p_interface_name.is_null() {
-                    let requested = std::ffi::CStr::from_ptr(p_interface_name as *const std::ffi::c_char);
+                    let requested =
+                        std::ffi::CStr::from_ptr(p_interface_name as *const std::ffi::c_char);
                     let this_name =
                         std::ffi::CStr::from_ptr(iface.pInterfaceName as *const std::ffi::c_char);
                     if requested != this_name {
@@ -625,7 +633,8 @@ impl<B: Backend> Engine<B> {
                     }
                 }
                 if !p_version.is_null() {
-                    let actual: CK_VERSION = std::ptr::read(iface.pFunctionList as *const CK_VERSION);
+                    let actual: CK_VERSION =
+                        std::ptr::read(iface.pFunctionList as *const CK_VERSION);
                     let requested = &*p_version;
                     if actual.major != requested.major || actual.minor != requested.minor {
                         continue;
@@ -1322,7 +1331,7 @@ impl<B: Backend> Engine<B> {
     ///
     /// No per-backend logic needed, since it calls `object_handles`/
     /// `get_one_attribute_value` which are implemented in the backend
-      pub unsafe fn get_object_size(
+    pub unsafe fn get_object_size(
         &self,
         h_session: CK_SESSION_HANDLE,
         h_object: CK_OBJECT_HANDLE,
@@ -1351,14 +1360,20 @@ impl<B: Backend> Engine<B> {
             }
 
             let attr = |attr_type: u32| {
-                B::get_one_attribute_value(&slot_guard.data, h_object, attr_type as CK_ATTRIBUTE_TYPE)
+                B::get_one_attribute_value(
+                    &slot_guard.data,
+                    h_object,
+                    attr_type as CK_ATTRIBUTE_TYPE,
+                )
             };
 
             let size = attr(CKA_VALUE).map(|v| v.len()).or_else(|| {
                 let key_type = CK_ULONG::from_ne_bytes(attr(CKA_KEY_TYPE)?.try_into().ok()?);
                 match key_type as u32 {
                     CKK_RSA => attr(CKA_MODULUS).map(|v| v.len()),
-                    CKK_EC | CKK_EC_EDWARDS | CKK_EC_MONTGOMERY => attr(CKA_EC_POINT).map(|v| v.len()),
+                    CKK_EC | CKK_EC_EDWARDS | CKK_EC_MONTGOMERY => {
+                        attr(CKA_EC_POINT).map(|v| v.len())
+                    }
                     _ => None,
                 }
             });
@@ -1583,16 +1598,15 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             match B::sign_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -1666,11 +1680,7 @@ impl<B: Backend> Engine<B> {
 
             match result {
                 Ok(signature) => {
-                    std::ptr::copy_nonoverlapping(
-                        signature.as_ptr(),
-                        p_signature,
-                        signature.len(),
-                    );
+                    std::ptr::copy_nonoverlapping(signature.as_ptr(), p_signature, signature.len());
                     *pul_signature_len = signature.len() as CK_ULONG;
                     CKR_OK.into()
                 }
@@ -1773,11 +1783,7 @@ impl<B: Backend> Engine<B> {
 
             match result {
                 Ok(signature) => {
-                    std::ptr::copy_nonoverlapping(
-                        signature.as_ptr(),
-                        p_signature,
-                        signature.len(),
-                    );
+                    std::ptr::copy_nonoverlapping(signature.as_ptr(), p_signature, signature.len());
                     *pul_signature_len = signature.len() as CK_ULONG;
                     CKR_OK.into()
                 }
@@ -1816,16 +1822,15 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             match B::verify_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -1866,7 +1871,8 @@ impl<B: Backend> Engine<B> {
             if !session.verify_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if (ul_data_len > 0 && p_data.is_null()) || (ul_signature_len > 0 && p_signature.is_null())
+            if (ul_data_len > 0 && p_data.is_null())
+                || (ul_signature_len > 0 && p_signature.is_null())
             {
                 slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
                 return CKR_ARGUMENTS_BAD.into();
@@ -1931,7 +1937,8 @@ impl<B: Backend> Engine<B> {
             match B::verify_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().verify_op =
+                        VerifyOp::default();
                     rv
                 }
             }
@@ -2013,16 +2020,15 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             match B::encrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -2149,7 +2155,8 @@ impl<B: Backend> Engine<B> {
             match B::encrypt_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op =
+                        EncryptOp::default();
                     rv
                 }
             }
@@ -2244,16 +2251,15 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             match B::decrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -2310,11 +2316,13 @@ impl<B: Backend> Engine<B> {
                 .is_none()
             {
                 if ul_encrypted_data_len > 0 && p_encrypted_data.is_null() {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
+                        DecryptOp::default();
                     return CKR_ARGUMENTS_BAD.into();
                 }
                 if slot_guard.login_state == LoginState::Public {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
+                        DecryptOp::default();
                     return CKR_USER_NOT_LOGGED_IN.into();
                 }
 
@@ -2415,12 +2423,16 @@ impl<B: Backend> Engine<B> {
             let data: &[u8] = if ul_encrypted_part_len == 0 {
                 &[]
             } else {
-                std::slice::from_raw_parts(p_encrypted_part as *const u8, ul_encrypted_part_len as usize)
+                std::slice::from_raw_parts(
+                    p_encrypted_part as *const u8,
+                    ul_encrypted_part_len as usize,
+                )
             };
             match B::decrypt_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
+                        DecryptOp::default();
                     rv
                 }
             }
@@ -2465,7 +2477,8 @@ impl<B: Backend> Engine<B> {
                 .is_none()
             {
                 if slot_guard.login_state == LoginState::Public {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
+                        DecryptOp::default();
                     return CKR_USER_NOT_LOGGED_IN.into();
                 }
                 match B::decrypt_final(&mut slot_guard, h_session) {
@@ -2636,25 +2649,33 @@ impl<B: Backend> Engine<B> {
             if !slot_guard.sessions.contains_key(&h_session) {
                 return CKR_SESSION_HANDLE_INVALID.into();
             }
-            if p_mechanism.is_null() || ph_key.is_null() || (ul_attribute_count > 0 && p_template.is_null())
+            if p_mechanism.is_null()
+                || ph_key.is_null()
+                || (ul_attribute_count > 0 && p_template.is_null())
             {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             let template = extract_attribute_template(p_template, ul_attribute_count);
 
-            match B::derive_key(&mut slot_guard, h_session, mechanism, parameter, h_base_key, &template) {
+            match B::derive_key(
+                &mut slot_guard,
+                h_session,
+                mechanism,
+                parameter,
+                h_base_key,
+                &template,
+            ) {
                 Ok(handle) => {
                     *ph_key = handle;
                     CKR_OK.into()
@@ -2713,25 +2734,35 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             let template = extract_attribute_template(p_template, ul_attribute_count);
 
-            match B::encapsulate_key(&mut slot_guard, h_session, mechanism, parameter, h_public_key, &template) {
+            match B::encapsulate_key(
+                &mut slot_guard,
+                h_session,
+                mechanism,
+                parameter,
+                h_public_key,
+                &template,
+            ) {
                 Ok((ciphertext, handle)) => {
                     if (*pul_ciphertext_len as usize) < ciphertext.len() {
                         *pul_ciphertext_len = ciphertext.len() as CK_ULONG;
                         return CKR_BUFFER_TOO_SMALL.into();
                     }
-                    std::ptr::copy_nonoverlapping(ciphertext.as_ptr(), p_ciphertext, ciphertext.len());
+                    std::ptr::copy_nonoverlapping(
+                        ciphertext.as_ptr(),
+                        p_ciphertext,
+                        ciphertext.len(),
+                    );
                     *pul_ciphertext_len = ciphertext.len() as CK_ULONG;
                     *ph_key = handle;
                     CKR_OK.into()
@@ -2777,16 +2808,15 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
-                || (*p_mechanism).ulParameterLen == 0
-            {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    (*p_mechanism).pParameter as *const u8,
-                    (*p_mechanism).ulParameterLen as usize,
-                )
-            };
+            let parameter: &[u8] =
+                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(
+                        (*p_mechanism).pParameter as *const u8,
+                        (*p_mechanism).ulParameterLen as usize,
+                    )
+                };
             let ciphertext: &[u8] = if ul_ciphertext_len == 0 {
                 &[]
             } else {
@@ -2812,7 +2842,11 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    pub unsafe fn destroy_object(&self, h_session: CK_SESSION_HANDLE, h_object: CK_OBJECT_HANDLE) -> CK_RV {
+    pub unsafe fn destroy_object(
+        &self,
+        h_session: CK_SESSION_HANDLE,
+        h_object: CK_OBJECT_HANDLE,
+    ) -> CK_RV {
         let mut guard = self.state.lock();
         let state = match guard.as_mut() {
             Some(s) => s,

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use std::ffi::c_void;
 
 const DLL_PROCESS_ATTACH: u32 = 1;

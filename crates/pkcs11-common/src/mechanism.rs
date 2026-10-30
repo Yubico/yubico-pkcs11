@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use pkcs11_sys::*;
 
 pub enum MechanismKind {
@@ -114,7 +113,9 @@ pub fn classify_crypt_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<CryptMec
     })
 }
 
-pub fn resolve_oaep_params(parameter: &[u8]) -> Result<(CK_MECHANISM_TYPE, CK_MECHANISM_TYPE, Vec<u8>), CK_RV> {
+pub fn resolve_oaep_params(
+    parameter: &[u8],
+) -> Result<(CK_MECHANISM_TYPE, CK_MECHANISM_TYPE, Vec<u8>), CK_RV> {
     if parameter.len() != std::mem::size_of::<CK_RSA_PKCS_OAEP_PARAMS>() {
         return Err(CKR_MECHANISM_PARAM_INVALID.into());
     }
