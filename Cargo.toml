@@ -11,6 +11,7 @@ resolver = "3"
 edition = "2024"
 rust-version = "1.88"
 repository = "https://github.com/Yubico/yubico-pkcs11"
+license = "Apache-2.0"
 
 [workspace.lints.clippy]
 too_many_arguments = "allow"
