@@ -1,7 +1,9 @@
 [package]
 name = "ykcs11"
 version = "0.0.1"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 license = "Apache-2.0"
 description = "YubiKey PIV PKCS#11 module"
 
@@ -50,3 +52,6 @@ ml-kem = "0.3"
 [dev-dependencies]
 pkcs11-sys = { workspace = true }
 shake = "0.1"
+
+[lints]
+workspace = true

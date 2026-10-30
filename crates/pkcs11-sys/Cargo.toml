@@ -1,7 +1,9 @@
 [package]
 name = "pkcs11-sys"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 description = "Raw PKCS#11 FFI bindings generated from OASIS 3.2 headers"
 license = "Apache-2.0"
 build = "build.rs"
