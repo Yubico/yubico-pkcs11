@@ -41,7 +41,7 @@ Each module has its own version in its `Cargo.toml`:
 ## Dependencies
 
 - **yubihsm-pkcs11** depends on [`yubihsmrs`](https://github.com/Yubico/yubihsmrs)
-- **ykcs11** depends on [`yubikit`](https://github.com/Yubico/yubikey-manager/tree/experiment/rust) with the `hardware` feature
+- **ykcs11** depends on [`yubikit`](https://github.com/Yubico/yubikey-manager/tree/6.0.0-beta.0) with the `hardware` feature
 
 `ykcs11` is otherwise self-contained (`yubikit` is pure Rust). `yubihsm-pkcs11`
 is not: `yubihsmrs` is a binding to the native `libyubihsm` C library, so the
