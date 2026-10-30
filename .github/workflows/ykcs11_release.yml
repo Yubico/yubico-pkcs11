@@ -4,11 +4,25 @@ on: [push]
 
 jobs:
 
+  metadata:
+    name: Read release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read ykcs11 package version
+        id: version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/ykcs11/Cargo.toml", "rb"))["package"]["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   source:
     name: Build source release
+    needs: metadata
     runs-on: ubuntu-latest
     env:
-      VERSION: 3.0.0
+      VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - name: checkout
         uses: actions/checkout@v5
@@ -31,43 +45,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-about
-        run: cargo install cargo-about --version '~0.6'
+        run: cargo install cargo-about --locked --version 0.9.1
 
       - name: Generate license bundle
         run: |
-          cat > about.toml << 'EOF'
-          accepted = [
-            "Apache-2.0",
-            "MIT",
-            "BSD-2-Clause",
-            "BSD-3-Clause",
-            "MPL-2.0",
-            "ISC",
-            "Unicode-3.0",
-            "Zlib",
-          ]
-          EOF
-
-          cat > about.hbs << 'TEMPLATE'
-          Third Party Licenses
-          ====================
-
-          {{#each licenses}}
-          ================================================================================
-          {{name}}
-          ================================================================================
-          Used by:
-          {{#each used_by}}
-            - {{crate.name}} v{{crate.version}}
-          {{/each}}
-
-          {{text}}
-
-          {{/each}}
-          TEMPLATE
-
-          cargo about generate --locked about.hbs > THIRDPARTY.txt
+          cargo fetch --locked
+          cargo about generate --locked --offline --fail \
+            --manifest-path crates/ykcs11/Cargo.toml \
+            --config resources/ykcs11/release/about.toml \
+            --output-file THIRDPARTY.txt \
+            resources/ykcs11/release/about.hbs
 
       - name: Upload license bundle
         uses: actions/upload-artifact@v5
@@ -76,11 +66,11 @@ jobs:
           path: THIRDPARTY.txt
 
   Windows:
-    needs: licenses
+    needs: [metadata, licenses]
     name: Windows
     runs-on: windows-latest
     env:
-      VERSION: 3.0.0
+      VERSION: ${{ needs.metadata.outputs.version }}
 
     steps:
       - name: Checkout repository
@@ -190,10 +180,10 @@ jobs:
 
   MacOS-universal:
     name: MacOS-universal
-    needs: [licenses, MacOS-AMD]
+    needs: [metadata, licenses, MacOS-AMD]
     runs-on: macos-latest-xlarge
     env:
-      VERSION: 3.0.0
+      VERSION: ${{ needs.metadata.outputs.version }}
 
     steps:
       - name: Checkout repository
