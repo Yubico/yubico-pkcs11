@@ -1,31 +1,17 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 
@@ -33,14 +19,10 @@ use crate::digest::DigestOp;
 use crate::sign::mgf1;
 use pkcs11_sys::*;
 
-/// `CKM_RSA_PKCS` decrypt: EME-PKCS1-v1_5-DECODE. `em` is the raw RSA
-/// private-key operation's output (exactly `modulus_len` bytes once
-/// zero-padded — matches `decrypt_mechanism_final`'s raw `ykpiv_decipher_data`
-/// call followed by `RSA_padding_check_PKCS1_type_2`, mechanisms.c:737-750).
 pub fn eme_pkcs1_v15_unpad(em: &[u8]) -> Result<Vec<u8>, CK_RV> {
-    // RFC 8017 step 3: EM = 0x00 || 0x02 || PS || 0x00 || M, with PS at
-    // least 8 bytes of non-zero padding — so a valid EM is at least 11
-    // bytes, and the first two bytes are fixed.
+    // EM = 0x00 || 0x02 || PS || 0x00 || M, with PS at
+    // least 8 bytes of non-zero padding => a valid EM is at least 11
+    // bytes, the first two bytes are fixed.
     if em.len() < 11 || em[0] != 0x00 || em[1] != 0x02 {
         return Err(CKR_ENCRYPTED_DATA_INVALID.into());
     }
@@ -53,11 +35,6 @@ pub fn eme_pkcs1_v15_unpad(em: &[u8]) -> Result<Vec<u8>, CK_RV> {
     Ok(em[2 + sep + 1..].to_vec())
 }
 
-/// `CKM_RSA_PKCS_OAEP` decrypt: EME-OAEP-DECODE. `em` is the raw RSA
-/// private-key operation's output, zero-padded to `modulus_len` bytes —
-/// matches `RSA_padding_check_PKCS1_OAEP_mgf1` (mechanisms.c:752-754).
-/// `label` is the (possibly empty) `CKZ_DATA_SPECIFIED` source data from the
-/// mechanism's `CK_RSA_PKCS_OAEP_PARAMS`.
 pub fn eme_oaep_unpad(
     em: &[u8],
     label: &[u8],
@@ -131,10 +108,6 @@ mod tests {
 
     #[test]
     fn eme_oaep_round_trips_with_hand_written_reference_encode() {
-        // A from-scratch EME-OAEP-ENCODE (RFC 8017 §7.1.1), written
-        // independently of `eme_oaep_unpad` itself, so the round trip
-        // actually exercises two separate implementations of the same math
-        // rather than just checking a function undoes its own bug.
         fn oaep_encode(message: &[u8], label: &[u8], modulus_len: usize, h_len: usize) -> Vec<u8> {
             let mut l_hasher = DigestOp::new(CKM_SHA256 as CK_MECHANISM_TYPE).unwrap();
             l_hasher.update(label);

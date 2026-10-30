@@ -1,31 +1,17 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 
@@ -37,17 +23,12 @@ use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 use yubikit::piv::KeyType;
 
-/// `(key_type, expected raw public-point length)` for whatever
-/// `calculate_secret` needs. A raw uncompressed EC point is `2*coord_len+1`
-/// bytes; X25519's "point" is just its 32-byte public value. Matches
-/// ykcs11.c:3732-3745's own `switch(algo)`.
 fn ecdh_key_type(public_key: &PublicKey) -> Result<(KeyType, usize), CK_RV> {
     match public_key {
         PublicKey::Ec(k) => match k.curve {
+            // A raw uncompressed EC point is `2 * point_len + 1` bytes
             yubikit::keys::EcCurve::P256 => Ok((KeyType::EccP256, 65)),
             yubikit::keys::EcCurve::P384 => Ok((KeyType::EccP384, 97)),
-            // PIV only ever generates/imports P-256/P-384 EC keys for ECDH;
-            // any other curve here would mean the key was discovered oddly.
             _ => Err(CKR_KEY_TYPE_INCONSISTENT.into()),
         },
         PublicKey::X25519(_) => Ok((KeyType::X25519, 32)),
@@ -55,10 +36,7 @@ fn ecdh_key_type(public_key: &PublicKey) -> Result<(KeyType, usize), CK_RV> {
     }
 }
 
-/// Reads a `CK_ECDH1_DERIVE_PARAMS` out of the mechanism's raw parameter
-/// bytes and validates it exactly like ykcs11.c:3752-3762: `CKD_NULL` only,
-/// no shared data, and a public point matching `expected_point_len`.
-/// Returns the peer's raw public-point bytes.
+/// Parses `CK_ECDH1_DERIVE_PARAMS` and validates it
 fn resolve_ecdh1_derive_params(
     parameter: &[u8],
     expected_point_len: usize,
@@ -66,9 +44,8 @@ fn resolve_ecdh1_derive_params(
     if parameter.len() != std::mem::size_of::<CK_ECDH1_DERIVE_PARAMS>() {
         return Err(CKR_MECHANISM_PARAM_INVALID.into());
     }
-    // SAFETY: length just checked above; read_unaligned since a PKCS#11
-    // caller isn't guaranteed to hand us a suitably aligned pointer (same
-    // reasoning as pkcs11_common::mechanism's PSS/OAEP param readers).
+    // SAFETY: length checked above; read_unaligned since a PKCS#11
+    // caller isn't guaranteed to send a suitably aligned pointer
     let params: CK_ECDH1_DERIVE_PARAMS =
         unsafe { std::ptr::read_unaligned(parameter.as_ptr() as *const CK_ECDH1_DERIVE_PARAMS) };
 
@@ -80,24 +57,14 @@ fn resolve_ecdh1_derive_params(
         return Err(CKR_MECHANISM_PARAM_INVALID.into());
     }
 
-    // SAFETY: `pPublicData`/`ulPublicDataLen` are a second caller-supplied
-    // pointer+length pair, out-of-line from `parameter` itself -- same
-    // trust boundary as `parameter` (valid for the duration of this call).
+    // SAFETY: `pPublicData`/`ulPublicDataLen` are a caller-supplied
+    // pointer+length pair, out-of-line from `parameter` itself.
     Ok(unsafe {
         std::slice::from_raw_parts(params.pPublicData as *const u8, params.ulPublicDataLen as usize)
             .to_vec()
     })
 }
 
-/// Matches `validate_derive_key_attribute` (mechanisms.c:562-598): every
-/// attribute the caller supplies in `phKey`'s template is checked against a
-/// fixed expectation (the derived object is always a session
-/// `CKO_SECRET_KEY`/`CKK_GENERIC_SECRET`, always extractable) -- anything
-/// else in the template is silently ignored, matching the C reference's
-/// `default: break;` catch-all. `pub(crate)` since `encapsulate.rs` reuses
-/// this verbatim for `C_EncapsulateKey`/`C_DecapsulateKey` -- no C reference
-/// for those (PKCS#11 3.2), but they produce the exact same kind of object
-/// `C_DeriveKey` does, so the same template expectations apply.
 pub(crate) fn validate_derive_template(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<(), CK_RV> {
     if let Some(token) = find_attr(template, CKA_TOKEN).and_then(|b| b.first().copied()) {
         if token != 0 {
@@ -141,8 +108,6 @@ pub fn derive_key(
     base_key_handle: CK_OBJECT_HANDLE,
     template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
-    // Matches ykcs11.c:3723-3726's key-handle range check (via
-    // `find_private_key`, the same lookup `C_SignInit`/`C_DecryptInit` use).
     let Some((piv_slot, public_key)) = find_private_key(&slot.data.objects, base_key_handle) else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };

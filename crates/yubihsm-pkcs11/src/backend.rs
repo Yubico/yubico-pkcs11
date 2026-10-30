@@ -35,7 +35,6 @@ const VERSION_MINOR: u8 = 0;
 const MANUFACTURER_ID: &str = "Yubico";
 const LIBRARY_DESCRIPTION: &str = "YubiHSM PKCS#11 Library";
 
-// yubihsm_pkcs11.c:49-50.
 const YUBIHSM_PKCS11_MIN_PIN_LEN: usize = 8;
 const YUBIHSM_PKCS11_MAX_PIN_LEN: usize = 64;
 
@@ -43,7 +42,7 @@ pub struct YubiHsmBackend;
 
 impl YubiHsmBackend {
     /// The connected device's reported algorithm capabilities, or `None` if
-    /// not connected / the query failed.
+    /// not connected
     fn device_algorithms(data: &YubiHsmSlotData) -> Option<Vec<ObjectAlgorithm>> {
         let hsm = data.hsm.as_ref()?;
         Some(hsm.get_device_info().ok()?.algorithms())
@@ -53,9 +52,7 @@ impl YubiHsmBackend {
 impl Backend for YubiHsmBackend {
     type SlotData = YubiHsmSlotData;
     // The authenticated device session is shared per-slot
-    // (`YubiHsmSlotData::device_session`), not per PKCS#11 session — matches
-    // `yubihsm_pkcs11_session` in the C module, which holds no session
-    // handle of its own, only a pointer back to its slot.
+    // (`YubiHsmSlotData::device_session`), not per PKCS#11 session
     type SessionData = ();
     type ModuleData = Config;
 
@@ -65,9 +62,7 @@ impl Backend for YubiHsmBackend {
             library_description: LIBRARY_DESCRIPTION,
             library_version: (VERSION_MAJOR, VERSION_MINOR),
             // This module only ever exposes the legacy `CK_FUNCTION_LIST`
-            // via `C_GetFunctionList` -- no `C_GetInterface`/3.2 table (see
-            // dispatch.rs) -- so there's only one version to report here,
-            // unlike ykcs11's split between legacy and 3.2 paths.
+            // via `C_GetFunctionList`, no `C_GetInterface`/3.2 table yet
             cryptoki_version: (
                 CRYPTOKI_LEGACY_VERSION_MAJOR as u8,
                 CRYPTOKI_LEGACY_VERSION_MINOR as u8,
@@ -179,8 +174,7 @@ impl Backend for YubiHsmBackend {
         pin: &[u8],
         username: &[u8],
     ) -> Result<(), CK_RV> {
-        // Only CKU_USER exists in this module — there's no separate SO
-        // role (yubihsm_pkcs11.c:6377-6380).
+        // Only CKU_USER is supported for now
         if user_type != CKU_USER as CK_USER_TYPE {
             return Err(CKR_USER_TYPE_INVALID.into());
         }
@@ -192,7 +186,7 @@ impl Backend for YubiHsmBackend {
         }
 
         // Strip the '@' (asymmetric) / '#label#' (YubiKey ykhsmauth)
-        // identity-scheme prefix, if any (yubihsm_pkcs11.c:6408-6436). Only
+        // identity-scheme prefix, if any. Only
         // plain AES/symmetric auth (no prefix) is supported for now.
         let key_id_hex = match username[0] {
             b'@' => return Err(CKR_FUNCTION_NOT_SUPPORTED.into()),
@@ -200,15 +194,12 @@ impl Backend for YubiHsmBackend {
             _ => username,
         };
         // What's left must be exactly the 4-hex-digit auth key ID
-        // (yubihsm_pkcs11.c:6438-6456).
         if key_id_hex.len() != 4 {
             return Err(CKR_ARGUMENTS_BAD.into());
         }
         let key_id_bytes = hex_decode(key_id_hex).ok_or(CK_RV::from(CKR_PIN_INCORRECT))?;
         let key_id = u16::from_be_bytes([key_id_bytes[0], key_id_bytes[1]]);
 
-        // Matches get_session(..., SESSION_NOT_AUTHENTICATED) failing with
-        // CKR_USER_ALREADY_LOGGED_IN in C_LoginUser (yubihsm_pkcs11.c:6459).
         if slot.login_state == LoginState::User {
             return Err(CKR_USER_ALREADY_LOGGED_IN.into());
         }
@@ -218,14 +209,8 @@ impl Backend for YubiHsmBackend {
             .hsm
             .as_ref()
             .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
-        // yubihsmrs's session-establishing API takes the password as `&str`;
-        // the C module treats it as opaque KDF input bytes with no encoding
-        // requirement, so a non-UTF8 password is a (rare) capability gap
-        // here, reported as bad arguments.
         let password = std::str::from_utf8(pin).map_err(|_| CK_RV::from(CKR_ARGUMENTS_BAD))?;
 
-        // yubihsm_pkcs11.c:6542-6566 (symmetric/AES branch): create +
-        // authenticate the session in one round trip.
         let session = hsm
             .establish_session(key_id, password, true)
             .map_err(hsm_error_to_rv)?;
@@ -236,15 +221,10 @@ impl Backend for YubiHsmBackend {
     }
 
     fn logout(slot: &mut Slot<Self>) -> Result<(), CK_RV> {
-        // Matches get_session(..., SESSION_AUTHENTICATED) failing with
-        // CKR_USER_NOT_LOGGED_IN in C_Logout (yubihsm_pkcs11.c:1348).
         if slot.login_state != LoginState::User {
             return Err(CKR_USER_NOT_LOGGED_IN.into());
         }
 
-        // Matches yubihsm_pkcs11.c:1353-1367: if closing the device session
-        // fails, the module leaves its login state untouched rather than
-        // pretending logout succeeded.
         if let Some(session) = slot.data.device_session.as_ref() {
             session.close().map_err(hsm_error_to_rv)?;
         }
@@ -255,9 +235,6 @@ impl Backend for YubiHsmBackend {
     }
 
     fn generate_random(slot: &Slot<Self>, buf: &mut [u8]) -> Result<(), CK_RV> {
-        // Matches get_session(..., SESSION_AUTHENTICATED) in C_GenerateRandom
-        // (yubihsm_pkcs11.c:6225) — unlike ykcs11, randomness comes from the
-        // HSM hardware itself, over the authenticated session.
         if slot.login_state != LoginState::User {
             return Err(CKR_USER_NOT_LOGGED_IN.into());
         }
@@ -271,14 +248,9 @@ impl Backend for YubiHsmBackend {
         Ok(())
     }
 
-    // seed_random: not overridden — yubihsm_pkcs11.c's C_SeedRandom
-    // unconditionally returns CKR_RANDOM_SEED_NOT_SUPPORTED, matching the
-    // Backend trait's default.
+    // seed_random: not overridden
 
-    // Object enumeration isn't implemented for yubihsm-pkcs11 yet (its
-    // dispatch.rs still wires C_FindObjects*/C_GetAttributeValue to the
-    // shared not-yet-implemented stubs) — these are never actually called,
-    // but the trait requires an impl.
+    // Object enumeration isn't implemented for yubihsm-pkcs11 yet
     fn object_handles(_slot: &Slot<Self>) -> Vec<CK_OBJECT_HANDLE> {
         Vec::new()
     }

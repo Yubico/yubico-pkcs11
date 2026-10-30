@@ -1,33 +1,18 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 
 use crate::discovery::ActivePivSession;
 use der::asn1::ObjectIdentifier;
@@ -45,8 +30,8 @@ const CKA_YUBICO: u32 = CKA_VENDOR_DEFINED + YUBICO_BASE_VENDOR;
 pub(crate) const CKA_YUBICO_TOUCH_POLICY: u32 = CKA_YUBICO + 1;
 pub(crate) const CKA_YUBICO_PIN_POLICY: u32 = CKA_YUBICO + 2;
 
-/// YKPIV_OID_USAGE_POLICY (ykpiv.h:808) — the Yubico-private X.509 extension
-/// an attestation certificate carries its origin slot's PIN/touch policy in.
+/// The Yubico-private X.509 extension an attestation certificate
+/// carries its origin slot's PIN/touch policy in.
 const OID_USAGE_POLICY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
 
 const ALL_SLOTS: [Slot; 25] = [
@@ -77,8 +62,7 @@ const ALL_SLOTS: [Slot; 25] = [
     Slot::Attestation,
 ];
 
-/// `CKA_ID` for every object derived from this container — matches the
-/// PKCS#11 "slot" numbering in ykcs11's own docs (1-4 for 9a/9c/9d/9e).
+/// `CKA_ID` for every object derived from this container
 fn slot_cka_id(slot: Slot) -> u8 {
     match slot {
         Slot::Authentication => 1,
@@ -106,17 +90,10 @@ fn slot_cka_id(slot: Slot) -> u8 {
         Slot::Retired19 => 23,
         Slot::Retired20 => 24,
         Slot::Attestation => 25,
-        // yubikit::piv::Slot is #[non_exhaustive] — every slot that exists
-        // today is covered above, this only guards future additions.
         _ => 0,
     }
 }
 
-/// The inverse of `slot_cka_id` — resolves a `CKA_ID` byte from a
-/// `C_GenerateKeyPair` template back to the PIV slot to generate into.
-/// `None` for `25` (the attestation slot, never a valid generation target —
-/// matches `C_GenerateKeyPair` having no `find_pvtk_object` entry that maps
-/// to it) and for anything outside `1..=24`.
 pub(crate) fn slot_from_cka_id(id: u8) -> Option<Slot> {
     Some(match id {
         1 => Slot::Authentication,
@@ -165,19 +142,14 @@ pub(crate) enum ObjectClass {
     PrivateKey,
     Data,
     AttestationCertificate,
-    /// `PIV_SECRET_OBJ` -- the ECDH shared secret `C_DeriveKey` produces.
-    /// Unlike the other classes, this isn't one-per-slot: it's a single
-    /// global object (matches ykcs11.c's own `PIV_SECRET_OBJ`, a fixed enum
-    /// value rather than a `(class, slot)` pair), overwritten each time
-    /// `C_DeriveKey` runs.
+    /// the ECDH shared secret `C_DeriveKey` produces.
+    /// Unlike the other classes, this isn't one-per-slot but a single
+    /// global object overwritten each time `C_DeriveKey` runs.
     SecretKey,
 }
 
 /// A flat, per-(slot, class) enumeration whose value doubles as the
-/// `CK_OBJECT_HANDLE` for that object — matching how ykcs11.c's own
-/// `piv_obj_id_t` enum is cast directly into a `CK_OBJECT_HANDLE`
-/// (ykcs11.c:2018). `0` is skipped (left unassigned) since PKCS#11 reserves
-/// it as `CK_INVALID_HANDLE`.
+/// `CK_OBJECT_HANDLE` for that object.
 // TODO: this is mostly from OpenSC, how to give credit?
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -326,8 +298,6 @@ pub enum PivObjectId {
 }
 
 impl PivObjectId {
-    /// `None` for any `(class, slot)` pair this module doesn't model yet
-    /// (the 20 retired slots, the standalone attestation slot).
     pub(crate) fn from_slot_class(class: ObjectClass, slot: Slot) -> Self {
         match slot {
             Slot::Authentication => match class {
@@ -555,9 +525,6 @@ impl PivObjectId {
                 ObjectClass::Data => Self::PIV_DATA_OBJ_X509_ATTESTATION,
                 ObjectClass::AttestationCertificate => unreachable!(),
             },
-            // yubikit::piv::Slot is #[non_exhaustive] — every slot that
-            // exists today is covered above, this only guards future
-            // additions.
             _ => unreachable!("unsupported PIV slot"),
         }
     }
@@ -759,9 +726,6 @@ impl PivObjectId {
     }
 }
 
-/// One PKCS#11 object backed by a PIV container — one per `(slot, class)`
-/// pair actually discovered, read once per slot at `C_OpenSession` time
-/// (matching ykcs11.c's per-slot object cache, `objects.c`).
 #[derive(Clone)]
 pub struct PivObject {
     pub id: PivObjectId,
@@ -779,9 +743,7 @@ pub struct PivObject {
     data: Option<Vec<u8>>,
 }
 
-/// Reads the PIN/touch policy an attestation certificate asserts for its key,
-/// matching `do_parse_attestation` (openssl_utils.c:348). The extension's
-/// value is a 2-byte OCTET STRING: `[pin_policy, touch_policy]`.
+/// Reads the PIN/touch policy an attestation certificate asserts for its key
 fn parse_attestation(cert: &Certificate) -> Option<(PinPolicy, TouchPolicy)> {
     let ext = cert
         .tbs_certificate
@@ -799,20 +761,14 @@ fn parse_attestation(cert: &Certificate) -> Option<(PinPolicy, TouchPolicy)> {
 
 /// Whether a slot's key, independent of whatever certificate it might also
 /// hold, is known to exist, known to be absent, or genuinely undeterminable
-/// (old firmware + an imported key — attestation only works for on-device
-/// generated keys, and slot metadata needs firmware >= 5.3).
+/// since attestation only works for on-device generated keys and slot
+/// metadata needs firmware >= 5.3).
 enum KeyPresence {
     Present(PublicKey),
     Absent,
     Unknown,
 }
 
-/// SW 0x6A88/0x6B00 ("referenced data"/"slot" not found) is the device's
-/// definitive "there's no key here" answer for both GET METADATA and ATTEST
-/// (ykpiv.c:1183-1188, `SW_ERR_REFERENCE_NOT_FOUND`/`SW_ERR_INCORRECT_SLOT`
-/// both translate to `YKPIV_KEY_ERROR`). Anything else (old-firmware
-/// "instruction not supported", a transport error, ...) tells us nothing
-/// about whether a key is actually present.
 fn is_key_absent(err: &PivError) -> bool {
     let PivError::Connection(SmartCardError::Apdu { sw, .. }) = err else {
         return false;
@@ -824,12 +780,7 @@ fn is_key_absent(err: &PivError) -> bool {
 }
 
 /// Figures out whether `slot` actually has a key in it, independent of
-/// whether it also has a certificate. Mirrors ykcs11.c:991-1039's
-/// attest-then-metadata chain (attestation first — it works on any firmware
-/// >= 4.3, strictly more than metadata's >= 5.3 — falling back to metadata
-/// only if attestation fails), but returns an explicit three-way
-/// [`KeyPresence`] instead of leaving "could not determine" implicit in a
-/// leftover `ykpiv_rc` value.
+/// whether it also has a certificate
 fn detect_key(
     piv: &mut ActivePivSession,
     slot: Slot,
@@ -860,8 +811,7 @@ fn detect_key(
                 }
             }
             // A key exists (attestation succeeded) but we couldn't get a
-            // usable public key out of it -- fall through and give
-            // metadata a shot.
+            // usable public key out of it. Fall through and give metadata a shot.
         }
         Err(e) if is_key_absent(&e) => {
             return (
@@ -900,10 +850,6 @@ fn detect_key(
     }
 }
 
-/// One slot's worth of the discovery block in ykcs11.c (ykcs11.c:980-1068)
-/// — factored out of `read_objects` so a post-`C_GenerateKeyPair` refresh
-/// (see `refresh_slot_objects`) can re-derive just the one slot that
-/// changed, instead of re-running discovery for all 25.
 fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
     let mut found = Vec::new();
 
@@ -932,9 +878,6 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
         });
     }
 
-    // The slot's certificate (ykcs11.c:1057-1065) — independent of
-    // whether `detect_key` found a key above. Scoped-down model: a cert
-    // whose key isn't RSA/EC is treated the same as no cert at all.
     let mut cert_public_key = None;
     let mut ec_params_der = None;
     if let Ok(cert_der) = piv.get_certificate(slot) {
@@ -986,10 +929,9 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
     }
 
     if let Some(attestation_der) = attestation_der {
-        // Matches get_atst/_get_coa (objects.c:410-411) — an attestation
-        // cert exposes the same CKA_SUBJECT/CKA_ISSUER/CKA_SERIAL_NUMBER
-        // as a regular certificate object, just backed by a freshly
-        // generated (not token-persisted) certificate.
+        // An attestation cert exposes the same CKA_SUBJECT/CKA_ISSUER/CKA_SERIAL_NUMBER
+        // as a regular certificate object but is a freshly generated, not
+        // token-persisted, certificate.
         let (subject_der, issuer_der, serial_der) = Certificate::from_der(&attestation_der)
             .ok()
             .map(|cert| {
@@ -1020,10 +962,9 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
         });
     }
 
-    // Reconcile: which public key (if any) actually backs this slot's
-    // key objects. A confirmed device key always wins over the cert's
-    // SPKI, even when they disagree -- the device is authoritative for
-    // what C_Sign/C_Decrypt will actually use.
+    // Match the public key (if any) to this slot's key objects.
+    // A confirmed device key always wins over the cert's
+    // SPKI, even when they disagree.
     let key_public_key = match (&key_presence, &cert_public_key) {
         (KeyPresence::Present(pk), Some(cert_pk)) if pk != cert_pk => {
             log::warn!(
@@ -1035,9 +976,9 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
         }
         (KeyPresence::Present(pk), _) => Some(pk.clone()),
         (KeyPresence::Absent, _) => None,
-        // Undeterminable (old firmware + imported key): fall back to
-        // the cert's key as a heuristic, same as ykcs11.c's own
-        // fallback (ykcs11.c:1063) -- only applies when a cert exists.
+
+        // Undeterminable (old firmware + imported key). Fall back to
+        // the cert's key as a heuristic.
         (KeyPresence::Unknown, cert_pk) => cert_pk.clone(),
     };
 
@@ -1065,25 +1006,19 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
     found
 }
 
-/// Read every standard PIV container's contents, mirroring the discovery
-/// block in ykcs11.c (ykcs11.c:980-1068, run once per slot — see
-/// `PivBackend::new_session_data`).
 pub fn read_objects(piv: &mut ActivePivSession) -> Vec<PivObject> {
     let mut found = Vec::new();
     for slot in ALL_SLOTS {
         found.extend(read_slot_objects(piv, slot));
     }
 
-    // Non-per-slot generic data objects (token_objects[] tail,
-    // token.c:107-118) — unlike everything above, these aren't tied to any
+    // Non-per-slot generic data objects.
+    // Unlike all other objects, these aren't tied to any
     // PIV key slot, so they're probed once per session rather than once
-    // per slot. They only ever produce a `Data`-class object: their
+    // per slot.
+    // They only ever produce a `Data`-class object, their
     // sub_ids never appear in find_cert_object/find_pvtk_object/
-    // find_pubk_object's lookup tables in the C reference, so no cert/key
-    // objects are derived from them. The other 6 generic data objects
-    // (fingerprints, facial images, printed information, iris images,
-    // BITGT) are commented out of `token_objects[]` in the C reference
-    // itself — not modeled here either, matching that.
+    // find_pubk_object's lookup tables
     if let Ok(raw) = piv.get_object(ObjectId::Capability) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_CCC, raw);
     }
@@ -1099,7 +1034,7 @@ pub fn read_objects(piv: &mut ActivePivSession) -> Vec<PivObject> {
     if let Ok(raw) = piv.get_object(ObjectId::KeyHistory) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_HISTORY, raw);
     }
-    // yubikit's ObjectId enum doesn't have these two (yet) — raw numeric
+    // yubikit's ObjectId enum doesn't have these two (yet). Raw numeric
     // tags from ykpiv.h (YKPIV_OBJ_SM_SIGNER/YKPIV_OBJ_PC_REF_DATA).
     if let Ok(raw) = piv.get_object_raw(0x5fc122) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_SM_SIGNER, raw);
@@ -1111,15 +1046,7 @@ pub fn read_objects(piv: &mut ActivePivSession) -> Vec<PivObject> {
     found
 }
 
-/// Re-derives just one slot's objects after `C_GenerateKeyPair` changes it
-/// (a new key, and `generate::generate_key_pair`'s freshly-written
-/// placeholder certificate), without re-running discovery for the other 24
-/// slots. Drops every existing object belonging to `slot` first — filtered
-/// by `PivObjectId`, not `PivObject::slot`, since the latter is a
-/// meaningless placeholder (`Slot::Authentication`) on the 7 non-per-slot
-/// data objects `read_objects` also appends (`push_data_object`); filtering
-/// by `PivObject::slot == slot` would wrongly also drop those whenever
-/// `slot == Slot::Authentication` (9a).
+/// Re-reads one slot's objects after, for example, `C_GenerateKeyPair`
 pub(crate) fn refresh_slot_objects(
     objects: &mut Vec<PivObject>,
     piv: &mut ActivePivSession,
@@ -1137,10 +1064,6 @@ pub(crate) fn refresh_slot_objects(
     objects.extend(read_slot_objects(piv, slot));
 }
 
-/// Pushes a `Data`-class object that isn't tied to any PIV slot — `slot` is
-/// set to an arbitrary placeholder since nothing reads it for this class
-/// (`CKA_ID` for these objects comes from `data_object_cka_id`'s
-/// `PivObjectId`-keyed lookup instead of `slot_cka_id`).
 fn push_data_object(found: &mut Vec<PivObject>, id: PivObjectId, raw: Vec<u8>) {
     found.push(PivObject {
         id,
@@ -1159,9 +1082,8 @@ fn push_data_object(found: &mut Vec<PivObject>, id: PivObjectId, raw: Vec<u8>) {
     });
 }
 
-/// Handles for every object this slot currently exposes. `include_private`
-/// should be `false` while the slot isn't logged in — matches
-/// `C_FindObjectsInit`'s `is_private_object` filter (ykcs11.c:1946).
+/// Returns a list of handles of every object this slot currently exposes.
+/// `include_private` should be `false` while the slot isn't logged in
 pub fn object_handles(objects: &[PivObject], include_private: bool) -> Vec<CK_OBJECT_HANDLE> {
     objects
         .iter()
@@ -1170,12 +1092,6 @@ pub fn object_handles(objects: &[PivObject], include_private: bool) -> Vec<CK_OB
         .collect()
 }
 
-/// The PIV slot and public key backing a private-key object handle, for
-/// `C_SignInit`/`C_DecryptInit` — `None` for any handle that isn't a
-/// `CKO_PRIVATE_KEY` object, matching `C_SignInit`'s own
-/// `hKey < PIV_PVTK_OBJ_PIV_AUTH || hKey > PIV_PVTK_OBJ_ATTESTATION` range
-/// check (ykcs11.c:2872) — `C_DecryptInit`'s is identical (ykcs11.c:2347-
-/// 2351) since both operations use the same private-key object class.
 pub fn find_private_key(
     objects: &[PivObject],
     handle: CK_OBJECT_HANDLE,
@@ -1189,15 +1105,6 @@ pub fn find_private_key(
     Some((obj.slot, obj.public_key.as_ref()?))
 }
 
-/// The public key backing a `CKO_PUBLIC_KEY` object handle, plus its
-/// originating PIV slot -- `None` for any handle that isn't a public-key
-/// object (certificates are not accepted, matching `C_VerifyInit`'s own
-/// `hKey < PIV_PUBK_OBJ_PIV_AUTH || hKey > PIV_PUBK_OBJ_ATTESTATION` range
-/// check, ykcs11.c:3189). Used by `C_VerifyInit`/`C_EncryptInit` (which only
-/// need the key, never the device) and `C_EncapsulateKey` (which also needs
-/// the slot, to know which PIV slot the resulting secret-key object belongs
-/// to) -- the same shared lookup `find_private_key` already is for
-/// `C_SignInit`/`C_DeriveKey`/`C_DecapsulateKey`.
 pub fn find_public_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
     let obj = objects
         .iter()
@@ -1221,17 +1128,13 @@ pub fn get_attribute(
         ObjectClass::PublicKey => get_pubkey_attribute(obj, attr_type),
         ObjectClass::PrivateKey => get_privkey_attribute(obj, attr_type),
         ObjectClass::Data => get_data_attribute(obj, attr_type),
-        // Matches get_atst (objects.c:410-411) — identical to a regular
-        // certificate object, except CKA_TOKEN is false (it's generated
-        // fresh each session, not persisted on the token).
         ObjectClass::AttestationCertificate => get_cert_attribute(obj, attr_type, false),
         ObjectClass::SecretKey => get_secret_key_attribute(obj, attr_type),
     }
 }
 
-/// Matches `get_skoa` (objects.c:1124-1261) exactly -- the ECDH shared
-/// secret `C_DeriveKey` produces is a `CKO_SECRET_KEY`/`CKK_GENERIC_SECRET`
-/// session object, extractable, with its raw bytes in `CKA_VALUE`.
+/// Returns the attributes of the ECDH shared secret `C_DeriveKey` produces.
+/// It is extractable, with its raw bytes in `CKA_VALUE`.
 fn get_secret_key_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
     yk_dbg!("For secret key object {}, get ", obj.id as CK_OBJECT_HANDLE);
     match attr_type as u32 {
@@ -1284,10 +1187,7 @@ fn get_secret_key_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Op
 }
 
 /// Builds (or replaces) the single `PIV_SECRET_OBJ` object with a freshly
-/// derived ECDH shared secret. Matches `C_DeriveKey`'s own
-/// `store_data(session->slot, 0, buf, len)` -- there is only ever one, so a
-/// new derive overwrites whatever secret was previously cached (ykcs11.c:
-/// 3788-3792).
+/// derived ECDH shared secret.
 pub(crate) fn store_secret_key(objects: &mut Vec<PivObject>, slot: Slot, secret: Vec<u8>) {
     objects.retain(|o| o.class != ObjectClass::SecretKey);
     objects.push(PivObject {
@@ -1313,7 +1213,7 @@ fn cka_bool(b: bool) -> Vec<u8> {
 
 // Takes a plain u32 since every caller passes either a bindgen CKx constant
 // (always u32, regardless of CK_ULONG's platform-dependent width) or a
-// small derived value — writes out the full native CK_ULONG width/encoding.
+// small derived value. Returns the full native CK_ULONG width/encoding.
 fn cka_ulong(v: u32) -> Vec<u8> {
     (v as CK_ULONG).to_ne_bytes().to_vec()
 }
@@ -1322,7 +1222,6 @@ fn key_type_attr(key: &PublicKey) -> Option<Vec<u8>> {
     let kt = match key {
         PublicKey::Rsa(_) => CKK_RSA,
         PublicKey::Ec(_) => CKK_EC,
-        // Matches do_get_key_type (openssl_utils.c:372-373).
         PublicKey::Ed25519(_) => CKK_EC_EDWARDS,
         PublicKey::X25519(_) => CKK_EC_MONTGOMERY,
         PublicKey::MlDsa(_) => CKK_ML_DSA,
@@ -1332,25 +1231,19 @@ fn key_type_attr(key: &PublicKey) -> Option<Vec<u8>> {
     Some(cka_ulong(kt))
 }
 
-/// `CKA_PARAMETER_SET` (PKCS#11 3.2) — the ML-DSA/ML-KEM analogue of
-/// `CKA_EC_PARAMS`, identifying which of the 44/65/87 (ML-DSA) or
-/// 512/768/1024 (ML-KEM) variants this key is. No C reference to match.
+/// The ML-DSA/ML-KEM analogue of `CKA_EC_PARAMS`
 fn parameter_set_attr(key: &PublicKey) -> Option<Vec<u8>> {
     match key {
         PublicKey::MlDsa(k) => Some(cka_ulong(match k.parameter_set {
             MlDsaParameterSet::MlDsa44 => CKP_ML_DSA_44,
             MlDsaParameterSet::MlDsa65 => CKP_ML_DSA_65,
             MlDsaParameterSet::MlDsa87 => CKP_ML_DSA_87,
-            // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] — every
-            // variant that exists today is covered above, this only guards
-            // future additions.
             _ => return None,
         })),
         PublicKey::MlKem(k) => Some(cka_ulong(match k.parameter_set {
             MlKemParameterSet::MlKem512 => CKP_ML_KEM_512,
             MlKemParameterSet::MlKem768 => CKP_ML_KEM_768,
             MlKemParameterSet::MlKem1024 => CKP_ML_KEM_1024,
-            // Same non_exhaustive guard as the MlDsaParameterSet arm above.
             _ => return None,
         })),
         _ => None,
@@ -1358,8 +1251,7 @@ fn parameter_set_attr(key: &PublicKey) -> Option<Vec<u8>> {
 }
 
 /// `CKA_VALUE` for an ML-DSA or ML-KEM public key object — the raw public
-/// key bytes (PKCS#11 3.2's analogue of `CKA_EC_POINT`/`CKA_MODULUS` for
-/// these algorithm families, which have neither).
+/// key bytes
 fn raw_key_value_attr(key: &PublicKey) -> Option<Vec<u8>> {
     match key {
         PublicKey::MlDsa(k) => Some(k.key.clone()),
@@ -1368,12 +1260,10 @@ fn raw_key_value_attr(key: &PublicKey) -> Option<Vec<u8>> {
     }
 }
 
-/// `CKA_EC_PARAMS` for Ed25519/X25519 keys isn't a real OID — yubico-piv-tool
+/// `CKA_EC_PARAMS` for Ed25519/X25519 keys isn't a real OID. yubico-piv-tool
 /// encodes it as a PrintableString naming the curve instead (objects.c:42-43),
 /// since RFC 8410 SPKI for these algorithms carries no AlgorithmIdentifier
-/// parameters to derive it from the certificate. Byte-for-byte match with the
-/// C reference, quirky length byte (X25519's declared length doesn't match
-/// its actual content length) included.
+/// parameters to derive it from the certificate.
 pub(crate) const ED25519_CURVE_PARAMS: &[u8] = &[
     0x13, 0x0c, b'e', b'd', b'w', b'a', b'r', b'd', b's', b'2', b'5', b'5', b'1', b'9',
 ];
@@ -1390,11 +1280,8 @@ fn ec_params_attr(obj: &PivObject, public_key: &PublicKey) -> Option<Vec<u8>> {
     }
 }
 
-/// `CKA_EC_POINT` content for any point-shaped key — SEC1 uncompressed
+/// `CKA_EC_POINT` content for any point-shaped key. SEC1 uncompressed
 /// bytes for NIST/Brainpool EC, or the raw 32-byte key for Ed25519/X25519
-/// (both wrapped in a DER OCTET STRING by `ec_point_attr`, matching
-/// `do_get_public_key`'s identical treatment of all three in the C
-/// reference: openssl_utils.c:517-549).
 fn ec_point_bytes(public_key: &PublicKey) -> Option<Vec<u8>> {
     match public_key {
         PublicKey::Ec(k) => ec_point_attr(&k.point),
@@ -1405,14 +1292,11 @@ fn ec_point_bytes(public_key: &PublicKey) -> Option<Vec<u8>> {
 }
 
 /// `CKA_EC_POINT` is the DER encoding of an OCTET STRING wrapping the raw
-/// SEC1 point — not the raw point bytes themselves (a common PKCS#11
-/// interop gotcha; matches `do_get_public_key` in ykcs11.c's `objects.c`).
+/// SEC1 point, not the raw point bytes themselves
 fn ec_point_attr(point: &[u8]) -> Option<Vec<u8>> {
     der::asn1::OctetStringRef::new(point).ok()?.to_der().ok()
 }
 
-// Matches _get_coa (objects.c:406-539), shared by get_coa (token=true) and
-// get_atst (token=false) in the C reference.
 fn get_cert_attribute(
     obj: &PivObject,
     attr_type: CK_ATTRIBUTE_TYPE,
@@ -1486,7 +1370,6 @@ fn get_cert_attribute(
     }
 }
 
-// Matches get_puoa (objects.c:844-1121).
 fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
     let public_key = obj.public_key.as_ref()?;
     yk_dbg!("For public key object {}, get ", obj.id as CK_OBJECT_HANDLE);
@@ -1594,11 +1477,6 @@ fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option
                 PublicKey::Ec(_) | PublicKey::X25519(_)
             )))
         }
-        // PKCS#11 3.2 — a KEM public key's analogue of CKA_WRAP; no C
-        // reference to match. `C_EncapsulateKey` itself isn't implemented
-        // (see generate.rs's own doc comment), but the attribute still
-        // correctly describes which keys are algorithmically capable of it,
-        // same as CKA_DERIVE above.
         CKA_ENCAPSULATE => {
             yk_dbg!("ENCAPSULATE");
             Some(cka_bool(matches!(public_key, PublicKey::MlKem(_))))
@@ -1651,9 +1529,6 @@ fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option
     }
 }
 
-// Matches get_proa (objects.c:546-831). Modulus/EC attributes mirror the
-// public-key object — the device never discloses private key material
-// itself (objects.c:710-774).
 fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
     let public_key = obj.public_key.as_ref()?;
     yk_dbg!(
@@ -1719,9 +1594,7 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
         }
         CKA_DECRYPT => {
             yk_dbg!("DECRYPT");
-            // pvtkey_objects[25] (the attestation key) is all-zero in the C
-            // reference (objects.c:266) — it can't decrypt, sign, or do
-            // anything besides exist.
+            // The attestation key cannot decrypt, sign, or do anything besides existing.
             Some(cka_bool(obj.slot != Slot::Attestation))
         }
         CKA_WRAP => {
@@ -1752,9 +1625,6 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
             yk_dbg!("DERIVE");
             Some(cka_bool(false))
         }
-        // PKCS#11 3.2 — a KEM private key's analogue of CKA_UNWRAP; same
-        // "attribute describes capability, not whether the PKCS#11 op is
-        // wired up" rationale as the public-key CKA_ENCAPSULATE arm.
         CKA_DECAPSULATE => {
             yk_dbg!("DECAPSULATE");
             Some(cka_bool(
@@ -1829,9 +1699,7 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
 }
 
 /// The PIV-spec object identifier (NIST SP 800-73) for a standard data
-/// object's container, as raw DER content octets (no tag/length header) —
-/// matches the `data_objects[]` table's encoding (objects.c:199-238), which
-/// `get_doa`'s `CKA_OBJECT_ID` case returns byte-for-byte as-is.
+/// object's container, as raw DER content octets (no tag/length header)
 fn data_object_oid(id: PivObjectId) -> Option<&'static [u8]> {
     match id {
         // 2.16.840.1.101.3.7.2.1.1
@@ -1966,7 +1834,6 @@ fn data_object_oid(id: PivObjectId) -> Option<&'static [u8]> {
     }
 }
 
-// Matches get_doa (objects.c:303-400).
 fn get_data_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<Vec<u8>> {
     yk_dbg!("For data object {}, get ", obj.id as CK_OBJECT_HANDLE);
     match attr_type as u32 {

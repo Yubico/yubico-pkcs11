@@ -1,31 +1,17 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 
@@ -34,18 +20,11 @@ use crate::sign::{mgf1, zero_pad};
 use crate::verify::rsa_public_raw_op;
 use pkcs11_sys::*;
 
-/// `CKM_RSA_X_509` encrypt: no padding beyond left-zero-padding the message
-/// to `modulus_len`, then the raw RSA public-key operation.
 pub fn rsa_x509_encrypt(n: &[u8], e: &[u8], modulus_len: usize, message: &[u8]) -> Result<Vec<u8>, CK_RV> {
     let padded = zero_pad(message, modulus_len)?;
     rsa_public_raw_op(n, e, &padded, modulus_len)
 }
 
-/// EME-PKCS1-v1_5-ENCODE (RFC 8017 §7.2.1): `0x00 0x02 || PS || 0x00 || M`,
-/// where `PS` is exactly `modulus_len - message.len() - 3` non-zero random
-/// bytes supplied by the caller (`ps.len()` must already be that exact
-/// count — this function only assembles the block and validates shape, it
-/// doesn't draw or filter randomness itself).
 fn eme_pkcs1_v15_encode(message: &[u8], ps: &[u8], modulus_len: usize) -> Result<Vec<u8>, CK_RV> {
     if message.len() + 11 > modulus_len {
         return Err(CKR_DATA_LEN_RANGE.into());
@@ -64,8 +43,6 @@ fn eme_pkcs1_v15_encode(message: &[u8], ps: &[u8], modulus_len: usize) -> Result
     Ok(em)
 }
 
-/// `CKM_RSA_PKCS` encrypt: `eme_pkcs1_v15_encode` then the raw RSA
-/// public-key operation.
 pub fn rsa_pkcs1_encrypt(
     n: &[u8],
     e: &[u8],
@@ -77,9 +54,6 @@ pub fn rsa_pkcs1_encrypt(
     rsa_public_raw_op(n, e, &em, modulus_len)
 }
 
-/// EME-OAEP-ENCODE (RFC 8017 §7.1.1): the inverse of `decrypt.rs`'s
-/// `eme_oaep_unpad`. `seed` must be exactly `hLen` (the hash's output size)
-/// random bytes, supplied by the caller.
 fn eme_oaep_encode(
     message: &[u8],
     label: &[u8],
@@ -118,8 +92,6 @@ fn eme_oaep_encode(
     Ok(em)
 }
 
-/// `CKM_RSA_PKCS_OAEP` encrypt: `eme_oaep_encode` then the raw RSA
-/// public-key operation.
 #[allow(clippy::too_many_arguments)]
 pub fn rsa_oaep_encrypt(
     n: &[u8],

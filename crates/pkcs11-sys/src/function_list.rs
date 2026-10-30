@@ -1,31 +1,17 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 
@@ -324,7 +310,8 @@ pub type CK_C_WaitForSlotEvent =
 
 /* ==============================================================
  * PKCS#11 3.0 additions (pkcs11f.h, guarded by `#ifndef
- * CK_PKCS11_2_0_ONLY`) -- included in CK_FUNCTION_LIST_3_0 and
+ * CK_PKCS11_2_0_ONLY`)
+ * Included in CK_FUNCTION_LIST_3_0 and
  * CK_FUNCTION_LIST_3_2, but not the legacy CK_FUNCTION_LIST above.
  * ==============================================================
  */
@@ -564,14 +551,6 @@ pub type CK_C_UnwrapKeyAuthenticated = Option<
     ) -> CK_RV,
 >;
 
-/* Same Windows-only 1-byte-packing convention as wrapper.h's pragma, applied
- * by hand here since this struct is hand-written, not bindgen-generated
- * (bindgen can't parse the macro-inclusion pattern the real headers use for
- * it). Without `packed` on Windows, `version` (2 bytes) gets padded to
- * align `C_Initialize` (an 8-byte function pointer) to offset 8 instead of
- * the spec's offset 2 — so any real caller reading through this table
- * (which every PKCS#11 consumer does, via C_GetFunctionList) reads garbage
- * function pointers and crashes calling through them. */
 #[cfg_attr(windows, repr(packed))]
 #[repr(C)]
 pub struct CK_FUNCTION_LIST {
@@ -649,14 +628,6 @@ pub struct CK_FUNCTION_LIST {
 pub type CK_FUNCTION_LIST_PTR = *mut CK_FUNCTION_LIST;
 pub type CK_FUNCTION_LIST_PTR_PTR = *mut CK_FUNCTION_LIST_PTR;
 
-/// The full PKCS#11 3.2 function table -- every field `CK_FUNCTION_LIST`
-/// has, plus all 24 functions PKCS#11 3.0 added and all 12 PKCS#11 3.2
-/// added (in the exact order pkcs11f.h declares them; the real header
-/// builds this by `#include`-ing pkcs11f.h a third time with neither the
-/// `CK_PKCS11_2_0_ONLY` nor `CK_PKCS11_3_0_ONLY` guard set). Reachable only
-/// via `C_GetInterfaceList`/`C_GetInterface` (PKCS#11 3.0+) -- unlike
-/// `CK_FUNCTION_LIST`, this isn't something `C_GetFunctionList` can ever
-/// return, since that function's contract is fixed at the 2.0 shape.
 #[cfg_attr(windows, repr(packed))]
 #[repr(C)]
 pub struct CK_FUNCTION_LIST_3_2 {

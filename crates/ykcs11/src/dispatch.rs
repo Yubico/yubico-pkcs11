@@ -1,33 +1,18 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 
 use crate::backend::G_ENGINE;
 use pkcs11_common::debug;
@@ -35,13 +20,7 @@ use pkcs11_common::function_list::{RealFunctions, build_function_list, build_fun
 use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 
-/// Brackets a call into `G_ENGINE` with the same entry/exit tracing the
-/// original C module printed around every `C_*` function (`DIN;`/`DOUT;`
-/// plus a return-code log). The function name is passed explicitly rather
-/// than relying on `din!`/`dout!`'s own `file!()`/`line!()` — those would
-/// resolve to wherever `traced!` calls them, once, and every one of the ~14
-/// call sites below would print the identical location. `rv` is a bare
-/// PKCS#11 return-code number, not a symbolic name (e.g. `0` for `CKR_OK`).
+/// Brackets a call into `G_ENGINE` with entry/exit tracing output.
 macro_rules! traced {
     ($name:literal, $body:expr) => {{
         yk_dbg!("{}: in", $name);
@@ -51,22 +30,8 @@ macro_rules! traced {
     }};
 }
 
-/// Forwards `yubikit`'s own `log::debug!`/`log::info!` calls (APDU-level
-/// detail like "Authenticating with management key"/"Resetting PIV
-/// application") to stderr, gated by the same `YKCS11_DBG` verbosity switch
-/// as `yk_dbg!` -- without this, those calls are silently discarded, since
-/// nothing otherwise installs a `log` backend. A dedicated logging crate
-/// (e.g. `env_logger`) would be the usual choice here, but would need its
-/// own `RUST_LOG` convention alongside this module's existing `YKCS11_DBG`
-/// one; reusing the same switch (and the same `DBG:` prefix style as
-/// `yk_dbg!`) is more consistent for this module's existing users.
-///
-/// `log::Level::Trace` is gated one tier higher (`YKCS11_DBG>=2`, via
-/// `debug::is_trace_verbose()`) than everything else (`YKCS11_DBG>=1`) --
-/// `yubikit`'s `log_traffic!` macro (raw APDU `SEND:`/`RECV:` hex dumps, see
-/// `platform/pcsc.rs`) logs at `Trace`, and that's far noisier than its
-/// regular `debug!`/`info!` messages, so it shouldn't turn on by default
-/// just because some debug output was requested.
+/// Forwards `yubikit`'s own `log::debug!`/`log::info!` calls containing APDU-level
+/// data to stderr, gated by the same `YKCS11_DBG` verbosity switch as `yk_dbg!`
 struct ForwardingLogger;
 
 impl log::Log for ForwardingLogger {
@@ -97,13 +62,9 @@ pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         debug::set_verbose(dbg_level);
+
         // Ignore the error: harmless if a logger is already installed (e.g.
-        // a second C_Initialize after C_Finalize). The max-level filter is
-        // set unconditionally, though (not just on the first successful
-        // `set_logger`), so a later C_Initialize with a different
-        // YKCS11_DBG value still takes effect -- `log::trace!` call sites
-        // are skipped entirely below whatever `set_max_level` says, before
-        // `ForwardingLogger::enabled`'s own per-record check ever runs.
+        // a second C_Initialize after C_Finalize).
         let _ = log::set_logger(&LOGGER);
         log::set_max_level(if debug::is_trace_verbose() {
             log::LevelFilter::Trace
@@ -124,16 +85,6 @@ pub unsafe extern "C" fn C_GetInfo(pInfo: CK_INFO_PTR) -> CK_RV {
     unsafe { traced!("C_GetInfo", G_ENGINE.get_info(pInfo)) }
 }
 
-/// Backs `G_FUNCTION_LIST_3_2.C_GetInfo` specifically, reporting
-/// `CRYPTOKI_VERSION_MAJOR`/`_MINOR` (3.2, from `pkcs11-sys`'s own vendored
-/// OASIS header) instead of the legacy `CRYPTOKI_LEGACY_VERSION_MAJOR`/
-/// `_MINOR` (2.40) the plain `C_GetInfo` above reports via
-/// `PivBackend::library_info()` -- a caller that reached this module
-/// through `C_GetInterface`'s 3.2 interface is talking to the
-/// `CK_FUNCTION_LIST_3_2`-shaped table specifically, so `C_GetInfo` should
-/// describe *that* table's version, not the legacy one's. Not a
-/// `#[no_mangle]` export: nothing looks this up by symbol name, it's only
-/// ever reached through `G_FUNCTION_LIST_3_2.C_GetInfo`'s function pointer.
 unsafe extern "C" fn get_info_3_2(pInfo: CK_INFO_PTR) -> CK_RV {
     unsafe {
         traced!(
@@ -156,12 +107,6 @@ pub unsafe extern "C" fn C_GetFunctionList(ppFunctionList: *mut CK_FUNCTION_LIST
     }
 }
 
-/// PKCS#11 3.0 interface discovery -- the only way a real caller can reach
-/// `C_EncapsulateKey`/`C_DecapsulateKey` at all, since `C_GetFunctionList`
-/// above is contractually fixed at the 2.0 function set (see
-/// `pkcs11_sys::function_list::CK_FUNCTION_LIST_3_2`'s own doc comment).
-/// This module exposes exactly one interface, "PKCS 11" at version 3.2 (the
-/// full superset), via `G_INTERFACES`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn C_GetInterfaceList(
     pInterfacesList: CK_INTERFACE_PTR,
@@ -811,15 +756,8 @@ pub unsafe extern "C" fn C_GenerateKeyPair(
 // Function List
 // ============================================================
 
-// `const`, not `static` -- referenced twice below (by `build_function_list`
-// for the legacy 2.0-shaped table, and `build_function_list_3_2` for the
-// full 3.2 one); a `const` is re-materialized at each use site, so this
-// doesn't need a `Copy`/`Clone` derive on `RealFunctions` to be used twice.
 const REAL: RealFunctions = RealFunctions {
-    // The legacy `CK_FUNCTION_LIST` shape hasn't changed since Cryptoki
-    // 2.40 -- matches `ykcs11.c`'s own `function_list.version` (not
-    // `CRYPTOKI_VERSION_MAJOR`/`_MINOR`, which is 3.2 and only describes
-    // the separate, newer `CK_FUNCTION_LIST_3_2` built below).
+    // The legacy `CK_FUNCTION_LIST` shape hasn't changed since Cryptoki 2.40
     version: CK_VERSION {
         major: CRYPTOKI_LEGACY_VERSION_MAJOR as u8,
         minor: CRYPTOKI_LEGACY_VERSION_MINOR as u8,
@@ -879,12 +817,7 @@ const REAL: RealFunctions = RealFunctions {
 };
 
 static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(REAL);
-// `build_function_list_3_2` always hardcodes its own `.version` field to
-// {3, 2} regardless of `RealFunctions.version` -- but `C_GetInfo` doesn't
-// get that same treatment (it's just a function pointer, copied verbatim
-// from whichever `RealFunctions` value is passed in), so this needs its
-// own `c_get_info` override to report {3, 2} too. See `get_info_3_2`'s own
-// doc comment.
+
 const REAL_3_2: RealFunctions = RealFunctions {
     c_get_info: Some(get_info_3_2),
     ..REAL
@@ -893,31 +826,6 @@ static G_FUNCTION_LIST_3_2: CK_FUNCTION_LIST_3_2 = build_function_list_3_2(REAL_
 
 const PKCS11_INTERFACE_NAME: &[u8] = b"PKCS 11\0";
 
-/// The interfaces `C_GetInterfaceList`/`C_GetInterface` report -- just the
-/// one, "PKCS 11" at the full 3.2 function set. `pFunctionList` here is
-/// exactly the pattern `CK_INTERFACE` is designed around: an opaque
-/// `CK_VOID_PTR` a caller casts back to the right `CK_FUNCTION_LIST*` shape
-/// based on the `version` embedded at its start (see `Engine::get_interface`
-/// in pkcs11-common, which reads that same field generically).
-///
-/// Known, deliberate gap: there's no separate `CK_FUNCTION_LIST_3_0`/entry
-/// at version `{3, 0}` -- since 3.2 is a strict superset of 3.0, any 3.0
-/// call a caller might want to make already works against this one 3.2
-/// table. The one caller this doesn't serve is one that calls
-/// `C_GetInterface("PKCS 11", &{3, 0}, ...)` asking for *exactly* 3.0 (not
-/// "give me whatever you've got," which `pVersion == NULL` already
-/// satisfies) -- `Engine::get_interface`'s exact-version match rejects that
-/// with `CKR_ARGUMENTS_BAD` today. Add a second `CK_FUNCTION_LIST_3_0`
-/// struct/interface entry if that specific case ever needs to work.
-///
-/// Wrapped in `InterfaceTable` because `CK_INTERFACE` holds raw data
-/// pointers (`pInterfaceName`/`pFunctionList`), which aren't `Sync` by
-/// default -- unlike `CK_FUNCTION_LIST`'s fields, which are *function*
-/// pointers (`Option<unsafe extern "C" fn(...)>`), auto-`Sync` regardless.
-/// `static` requires `Sync`, so this needs an explicit (sound) opt-in: both
-/// pointers here point at other `'static` data (`PKCS11_INTERFACE_NAME`,
-/// `G_FUNCTION_LIST_3_2`) that's immutable for the life of the process, so
-/// sharing read-only access to it across threads is safe.
 struct InterfaceTable([CK_INTERFACE; 1]);
 unsafe impl Sync for InterfaceTable {}
 

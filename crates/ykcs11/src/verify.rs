@@ -1,33 +1,18 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 
 use crate::backend::PivBackend;
 use crate::sign::{Accumulator, resolve_ml_dsa_context};
@@ -38,9 +23,6 @@ use pkcs11_common::verify::{verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, ver
 use pkcs11_sys::*;
 use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey};
 
-/// Everything needed to finish a verify operation once `C_VerifyFinal` (or
-/// `C_Verify`'s equivalent single-shot update+final) is called — stashed in
-/// `PivBackend::SessionData` by `verify_init`, opaque to the shared engine.
 pub struct VerifyState {
     algo: VerifyAlgorithm,
     acc: Accumulator,
@@ -84,7 +66,6 @@ fn curve_byte_len(curve: EcCurve) -> Result<usize, CK_RV> {
     Ok(match curve {
         EcCurve::P256 => 32,
         EcCurve::P384 => 48,
-        // PIV only ever generates P-256/P-384 EC keys.
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
@@ -100,18 +81,10 @@ pub fn verify_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    // No login check — matches ykcs11.c, which has none anywhere in the
-    // C_Verify* family (confirmed: Verify only ever needs public key
-    // material, never the device).
-
     let Some(mech_kind) = classify_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
-    // Same deliberate strengthening as `sign.rs`: require the mechanism and
-    // key family to actually agree, stricter than ykcs11.c's `default:` case
-    // (mechanisms.c:181-186/423-424), which only checks "is this an RSA
-    // key".
     let algo = match (&mech_kind, public_key) {
         (MechanismKind::RsaX509, PublicKey::Rsa(k)) => VerifyAlgorithm::RsaX509 {
             n: k.n.clone(),
@@ -269,18 +242,6 @@ pub fn verify_final(
     }
 }
 
-/// `CKM_ML_DSA` (FIPS 204, "pure" mode, default empty context) verify — no
-/// C reference (see this module's own doc comment for why this stays local
-/// rather than living in `pkcs11_common::verify` alongside everything
-/// else). Mirrors the exact usage already proven against real hardware in
-/// `yubikit`'s own device tests
-/// (`crates/yubikit/tests/device_tests/piv.rs`'s `test_piv_mldsa44_verify`):
-/// the device's raw-message signature round-trips through the `ml-dsa`
-/// crate's default (empty-context) `Verifier` impl with no extra message
-/// framing needed on either side. Three near-identical arms rather than one
-/// generic helper, since `MlDsa44`/`MlDsa65`/`MlDsa87` are distinct marker
-/// types in the `ml-dsa` crate with no common byte-array-length bound to
-/// abstract over.
 fn verify_ml_dsa(
     parameter_set: MlDsaParameterSet,
     key: &[u8],
@@ -319,9 +280,6 @@ fn verify_ml_dsa(
             vk.verify(message, &sig)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
         }
-        // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] -- every
-        // variant that exists today is covered above, this only guards
-        // future additions.
         _ => Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     }
 }

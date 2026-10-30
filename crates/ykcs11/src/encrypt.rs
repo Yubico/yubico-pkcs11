@@ -1,33 +1,18 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 
 use pkcs11_common::backend::Slot;
 use pkcs11_common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
@@ -37,10 +22,6 @@ use yubikit::keys::PublicKey;
 
 use crate::backend::PivBackend;
 
-/// Everything needed to finish an encrypt operation once `C_EncryptFinal`
-/// (or `C_Encrypt`'s equivalent single-shot update+final) is called —
-/// stashed in `PivBackend::SessionData` by `encrypt_init`, opaque to the
-/// shared engine.
 pub struct EncryptState {
     n: Vec<u8>,
     e: Vec<u8>,
@@ -70,16 +51,10 @@ pub fn encrypt_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    // No login check — matches ykcs11.c, which has none anywhere in the
-    // C_Encrypt* family (same reasoning as C_Verify*: only public key
-    // material is ever touched).
-
     let Some(mech_kind) = classify_crypt_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
-    // Matches decrypt_mechanism_init's CKK_RSA check (mechanisms.c:686-689),
-    // shared by C_EncryptInit — every encrypt mechanism is RSA-only.
     let PublicKey::Rsa(k) = public_key else {
         return Err(CKR_KEY_TYPE_INCONSISTENT.into());
     };
@@ -175,10 +150,6 @@ pub fn encrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) 
     }
 }
 
-/// `PS` for EME-PKCS1-v1_5-ENCODE must be random *and* non-zero (RFC 8017
-/// §7.2.1 step 2(b)) — matches `RSA_padding_add_PKCS1_type_2`'s own
-/// redraw-on-zero loop. `getrandom` is this module's OS-backed randomness
-/// source, same as used for `C_GenerateRandom` and PSS's salt.
 fn non_zero_random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     let mut buf = vec![0u8; len];
     getrandom::fill(&mut buf).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;
@@ -190,9 +161,6 @@ fn non_zero_random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     Ok(buf)
 }
 
-/// OAEP's seed has no non-zero requirement (unlike PKCS#1 v1.5's `PS`) — a
-/// separate function (rather than reusing `non_zero_random_bytes`) to keep
-/// that distinction explicit at the call site.
 fn random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     let mut buf = vec![0u8; len];
     getrandom::fill(&mut buf).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;

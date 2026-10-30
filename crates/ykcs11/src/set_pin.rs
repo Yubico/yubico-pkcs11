@@ -1,33 +1,18 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use pkcs11_common::backend::Slot;
@@ -52,7 +37,6 @@ enum UserPinRequest<'a> {
     UnblockPin { puk: &'a [u8], new_pin: &'a [u8] },
 }
 
-/// Matches token.c:267-281's `CKU_USER` branch dispatch exactly.
 fn classify_user_pin_request<'a>(old_pin: &'a [u8], new_pin: &'a [u8]) -> UserPinRequest<'a> {
     match old_pin.strip_prefix(PUK_PREFIX) {
         Some(puk) => match new_pin.strip_prefix(PIN_PREFIX) {
@@ -72,7 +56,6 @@ pub fn set_pin(
     old_pin: &[u8],
     new_pin: &[u8],
 ) -> Result<(), CK_RV> {
-    // Matches ykcs11.c:895-899.
     let is_rw = slot
         .sessions
         .get(&h_session)
@@ -89,15 +72,11 @@ pub fn set_pin(
         .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
 
     if login_state == LoginState::SO {
-        // Matches token.c:243-262: pOldPin is unused; pNewPin is the new
-        // management key, hex-encoded.
+        // pOldPin is unused; pNewPin is the new management key, hex-encoded.
         let key_bytes = hex_decode(new_pin).ok_or(CK_RV::from(CKR_PIN_INVALID))?;
         let key_type = piv.management_key_type();
         let new_key =
             ManagementKey::new(key_type, &key_bytes).map_err(|_| CK_RV::from(CKR_PIN_INVALID))?;
-        // "Same touch policy the old one had" (token.c:251) -- yubikit's
-        // set_management_key only takes a bool, so this reads the current
-        // touch requirement back from the device rather than hardcoding one.
         let require_touch = piv
             .get_management_key_metadata()
             .map(|m| matches!(m.touch_policy, TouchPolicy::Always | TouchPolicy::Cached))

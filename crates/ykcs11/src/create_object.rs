@@ -1,31 +1,17 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 
@@ -45,8 +31,7 @@ fn map_key_error(_: yubikit::keys::KeyError) -> CK_RV {
     CKR_ATTRIBUTE_VALUE_INVALID.into()
 }
 
-/// `CKA_SEED` if present, else `CKA_VALUE` -- see `resolve_private_key`'s own
-/// doc comment for the ML-DSA/ML-KEM arms: a caller that only supplies the
+/// Read `CKA_SEED` if present, else `CKA_VALUE`. A caller that only supplies the
 /// full expanded key (no `CKA_SEED`) still gets its bytes sent to the
 /// device, which is the actual authority on what it'll accept, rather than
 /// this module rejecting the template client-side.
@@ -71,11 +56,6 @@ fn resolve_pqc_key_bytes<'a>(
     Err(CKR_TEMPLATE_INCOMPLETE.into())
 }
 
-/// `p`'s byte length (the RSA CRT prime, half the modulus) → `RsaKeySize` —
-/// matches ykcs11.c's own inference (ykcs11.c:1555-1582): `p_len` 63/64 →
-/// 1024, 127/128 → 2048, 191/192 → 3072, 255/256 → 4096 (the C reference
-/// accepts either the exact half-modulus byte count or one byte short, for
-/// a prime whose DER/transport encoding dropped a leading zero).
 fn rsa_key_size_from_prime_len(len: usize) -> Option<RsaKeySize> {
     Some(match len {
         63 | 64 => RsaKeySize::Rsa1024,
@@ -86,34 +66,8 @@ fn rsa_key_size_from_prime_len(len: usize) -> Option<RsaKeySize> {
     })
 }
 
-/// `CKO_PRIVATE_KEY` import: `CKA_KEY_TYPE` selects which attribute set to
-/// read, matching `check_create_rsa_key`/`check_create_ec_key`/
-/// `check_create_ed_key`/`check_create_x25519_key` (objects.c:2155-2467+).
-/// RSA uses the CRT components (`CKA_PRIME_1/2`, `CKA_EXPONENT_1/2`,
-/// `CKA_COEFFICIENT`) — *not* `CKA_MODULUS`/`CKA_PRIVATE_EXPONENT`, which
-/// the C reference's template checker never reads either. EC/Ed25519/
-/// X25519 use the raw private scalar (`CKA_VALUE`), with EC's curve chosen
-/// via `CKA_EC_PARAMS` the same way `generate::resolve_key_type` does.
-/// ML-DSA/ML-KEM have no C reference to match — both prefer `CKA_SEED`
-/// (PKCS#11 3.2's dedicated "new post-quantum (general)" attribute,
-/// pkcs11t.h:675) over `CKA_VALUE`: the device's import APDU only ever
-/// accepts the raw FIPS 204/203 seed (32 bytes for ML-DSA, 64 for ML-KEM),
-/// never the full expanded private key. But unlike every other key type
-/// here, an incomplete/wrong-format key isn't rejected client-side -- if a
-/// caller only supplies `CKA_VALUE` (e.g. a `pkcs11-tool` build that doesn't
-/// yet know to extract the seed specifically for these algorithms), those
-/// bytes are sent to the device anyway, which is the actual authority on
-/// what it'll accept; it'll reject a non-seed payload itself
-/// (`CKR_DEVICE_ERROR`, ISO 7816 SW 6A80) rather than this module silently
-/// failing the call before ever reaching the token. The parameter set is
-/// chosen via `CKA_PARAMETER_SET`, the same way `generate::resolve_key_type`
-/// does for `CKM_ML_DSA_KEY_PAIR_GEN`/`CKM_ML_KEM_KEY_PAIR_GEN`.
+/// Parses private parameters for import
 fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<PrivateKey, CK_RV> {
-    // `create_object`'s own entry already logs this template's attribute
-    // types (not the values -- some, like CKA_SEED, are secret); the
-    // per-field logs below just pinpoint *which* expected attribute a
-    // caller (e.g. pkcs11-tool) silently omitted, which otherwise just
-    // surfaces as an opaque CKR_TEMPLATE_INCOMPLETE either way.
     let key_type = find_attr(template, CKA_KEY_TYPE).ok_or_else(|| {
         yk_dbg!("resolve_private_key: missing CKA_KEY_TYPE");
         CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
@@ -257,9 +211,8 @@ pub fn create_object(
     match class as u32 {
         CKO_CERTIFICATE => {
             let value = find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
-            // Matches do_check_cert (openssl_utils.c:244) — just confirms
-            // the bytes parse as a valid X.509 structure before writing
-            // them to the device; no cross-check against any existing key.
+
+            // Verifies that the bytes are a valid X.509 structure before import.
             x509_cert::Certificate::from_der(value).map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
 
             let piv = slot
@@ -294,8 +247,6 @@ pub fn create_object(
                 piv_slot,
             ) as CK_OBJECT_HANDLE)
         }
-        // CKO_DATA/CKO_PUBLIC_KEY/CKO_SECRET_KEY have no case in ykcs11.c's
-        // own C_CreateObject either.
         _ => Err(CKR_ATTRIBUTE_VALUE_INVALID.into()),
     }
 }

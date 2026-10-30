@@ -16,8 +16,6 @@
 
 
 //! Backend-specific per-slot data: one slot per configured connector.
-//! Everything generic (login state, open sessions) lives in
-//! `pkcs11_common::backend::Slot`; this is just `Slot::data`.
 
 use crate::config::ConnectorConfig;
 use pkcs11_sys::CK_RV;
@@ -26,9 +24,7 @@ pub struct YubiHsmSlotData {
     pub connector_config: ConnectorConfig,
     pub hsm: Option<yubihsmrs::YubiHsm>,
     /// The authenticated device session established by `C_Login`/
-    /// `C_LoginUser`, shared by every PKCS#11 session open on this slot —
-    /// matches `yubihsm_pkcs11_slot.device_session` in the C module (one
-    /// session per slot, not per PKCS#11 session).
+    /// `C_LoginUser`, shared by every PKCS#11 session open on this slot
     pub device_session: Option<yubihsmrs::Session>,
 }
 

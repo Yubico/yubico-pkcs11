@@ -1,31 +1,17 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 
@@ -33,20 +19,6 @@ use crate::digest::DigestOp;
 use crate::sign::{digest_info_prefix, mgf1, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
 use rsa::BigUint;
-
-/// The raw RSA public-key operation (`x^e mod n`), zero-padded to
-/// `modulus_len` bytes — the same operation both RSA verification (recovers
-/// the padded message from a signature) and RSA encryption (produces
-/// ciphertext from an already-padded message, in `encrypt.rs`) start from;
-/// it's the same modular exponentiation either way, just applied to a
-/// different semantic role of input/output. Uses `rsa::hazmat::rsa_encrypt`
-/// (the crate's deliberately low-level, no-padding primitive — this project
-/// can't use any of the crate's own higher-level signature/encryption
-/// schemes anyway, since the modulus/exponent come from a device's public
-/// key, not an `rsa::RsaPublicKey` constructed from a private key).
-///
-/// `pub(crate)` rather than a free-standing shared module since it's one
-/// small function reused by exactly two sibling modules in this crate.
 pub(crate) fn rsa_public_raw_op(
     n: &[u8],
     e: &[u8],
@@ -63,12 +35,6 @@ pub(crate) fn rsa_public_raw_op(
     zero_pad(&result.to_bytes_be(), modulus_len)
 }
 
-/// `CKM_RSA_X_509` verify: the raw RSA public-key operation's output, once
-/// zero-padded to `modulus_len`, must equal `message` zero-padded the same
-/// way — matches both C references doing a plain `EVP_PKEY_verify` with
-/// `RSA_NO_PADDING` (ykcs11's mechanisms.c:380-426, yubihsm's
-/// util_pkcs11.c:3407-3509), i.e. OpenSSL does the same raw-operation-then-
-/// compare this does explicitly.
 pub fn verify_rsa_x509(
     n: &[u8],
     e: &[u8],
@@ -85,12 +51,6 @@ pub fn verify_rsa_x509(
     }
 }
 
-/// `CKM_RSA_PKCS`/`CKM_SHAx_RSA_PKCS` verify (RFC 8017 §9.2): recompute the
-/// expected padded block (`DigestInfo`-wrapped only when `hash_mechanism` is
-/// `Some` — matches `sign.rs`'s identical asymmetry on the signing side) via
-/// the same `pkcs1_v15_pad`/`digest_info_prefix` this project already uses
-/// to *produce* PKCS#1 v1.5 signatures, and compare it byte-for-byte against
-/// the raw RSA public-key operation's output.
 pub fn verify_rsa_pkcs1v15(
     n: &[u8],
     e: &[u8],
@@ -184,8 +144,6 @@ fn emsa_pss_verify(
     }
 }
 
-/// `CKM_RSA_PKCS_PSS`/`CKM_SHAx_RSA_PKCS_PSS` verify: raw RSA public-key
-/// operation, then `emsa_pss_verify`.
 #[allow(clippy::too_many_arguments)]
 pub fn verify_rsa_pss(
     n: &[u8],
@@ -209,21 +167,6 @@ pub fn verify_rsa_pss(
     )
 }
 
-/// Applies SEC1 §2.3.8's `bits2int` conversion by hand: left-truncate an
-/// over-length digest to `curve_byte_len`, left-zero-pad an under-length
-/// one. Needed because `ecdsa::Signature::verify_prehash` doesn't just do
-/// this — it calls `bits2field` internally, which *additionally* rejects
-/// any input shorter than *half* the curve's field width (`ecdsa` crate's
-/// own defensive minimum, not a SEC1/PKCS#11 requirement). That silently
-/// breaks `CKM_ECDSA_SHA1` against a P-384 key: a 20-byte digest is below
-/// P-384's 24-byte half-field threshold, so `verify_prehash` errors out
-/// before any actual verification math runs, rejecting a perfectly valid
-/// signature (confirmed independently: a real P-384 keypair + real
-/// `ECDSA-SHA1` signature, built with Python's `cryptography` library,
-/// reproduced this exact rejection; pre-sizing the digest ourselves first
-/// fixes it). Pre-sizing to exactly `curve_byte_len` here means
-/// `bits2field` always sees an already-correct-length input and passes it
-/// through unchanged, regardless of the original digest's length.
 fn bits2field_manual(digest: &[u8], curve_byte_len: usize) -> Vec<u8> {
     let mut field_bytes = vec![0u8; curve_byte_len];
     if digest.len() >= curve_byte_len {
@@ -274,9 +217,6 @@ pub fn verify_ecdsa(
     }
 }
 
-/// `CKM_EDDSA` verify. `key` is the raw 32-byte Ed25519 public key;
-/// `signature` is the raw fixed 64-byte signature (no DER wrapping, matching
-/// the signing side's identical "no post-processing" treatment).
 pub fn verify_eddsa(key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), CK_RV> {
     use ed25519_dalek::Verifier;
 
@@ -298,7 +238,7 @@ mod tests {
     use crate::sign::emsa_pss_encode;
 
     // 2048-bit RSA test key (n, e, d) -- not from any real device, generated
-    // purely for these unit tests.
+    // for these unit tests.
     include!("verify_test_key.rs");
 
     fn modexp(input: &[u8], exp: &[u8]) -> Vec<u8> {

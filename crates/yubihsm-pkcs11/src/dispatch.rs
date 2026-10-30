@@ -15,9 +15,9 @@
  */
 
 
-//! PKCS#11 C_xxx dispatch entry points. Session/slot bookkeeping lives in
-//! the shared `pkcs11_common::backend::Engine` (`crate::backend::G_ENGINE`);
-//! this file only wires the fixed C ABI entry points to it.
+/// PKCS#11 C_xxx dispatch entry points. Session/slot bookkeeping lives in
+/// the shared `pkcs11_common::backend::Engine` (`crate::backend::G_ENGINE`);
+/// this file only wires the fixed C ABI entry points to it.
 
 use crate::backend::G_ENGINE;
 use crate::{din, dout};
@@ -25,10 +25,7 @@ use pkcs11_common::function_list::{RealFunctions, build_function_list};
 use pkcs11_common::stubs;
 use pkcs11_sys::*;
 
-/// Brackets a call into `G_ENGINE` with the same entry/exit tracing the
-/// original C module printed around every `C_*` function (`DIN;`/`DOUT;`,
-/// no return-code value). The function name is passed explicitly since Rust
-/// has no `__func__` equivalent available from inside `din!`/`dout!`.
+/// Brackets a call into `G_ENGINE` with the an entry/exit debug tracing
 macro_rules! traced {
     ($name:literal, $body:expr) => {{
         din!($name);
@@ -183,10 +180,6 @@ pub unsafe extern "C" fn C_Login(
     ulPinLen: CK_ULONG,
 ) -> CK_RV {
     unsafe {
-        // Matches yubihsm_pkcs11.c's C_Login (util_pkcs11.c isn't involved):
-        // split the combined pPin buffer into a leading "identity" substring
-        // (the optional '@'/'#label#' auth-scheme marker plus the 4-hex-digit
-        // auth key ID) and a trailing password, then delegate to C_LoginUser.
         let mut username_len: CK_ULONG = 0;
         if !pPin.is_null() && ulPinLen > 0 {
             let pin_bytes = std::slice::from_raw_parts(pPin as *const u8, ulPinLen as usize);
@@ -662,8 +655,6 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_logout: Some(C_Logout),
     c_seed_random: Some(C_SeedRandom),
     c_generate_random: Some(C_GenerateRandom),
-    // Object enumeration isn't implemented for yubihsm-pkcs11 yet — keep
-    // these wired to the shared not-yet-implemented stubs.
     c_find_objects_init: Some(stubs::C_FindObjectsInit),
     c_find_objects: Some(stubs::C_FindObjects),
     c_find_objects_final: Some(stubs::C_FindObjectsFinal),
@@ -672,28 +663,14 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_digest: Some(C_Digest),
     c_digest_update: Some(C_DigestUpdate),
     c_digest_final: Some(C_DigestFinal),
-    // Signing isn't implemented for yubihsm-pkcs11 yet — these route
-    // through the shared engine, which falls back to
-    // CKR_FUNCTION_NOT_SUPPORTED via Backend::sign_init's default impl
-    // since YubiHsmBackend doesn't override it.
     c_sign_init: Some(C_SignInit),
     c_sign: Some(C_Sign),
     c_sign_update: Some(C_SignUpdate),
     c_sign_final: Some(C_SignFinal),
-    // Verification isn't implemented for yubihsm-pkcs11 yet (see
-    // pkcs11-common's verify.rs doc comment) — these route through the
-    // shared engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::verify_init's default impl since YubiHsmBackend doesn't
-    // override it.
     c_verify_init: Some(C_VerifyInit),
     c_verify: Some(C_Verify),
     c_verify_update: Some(C_VerifyUpdate),
     c_verify_final: Some(C_VerifyFinal),
-    // Encryption/decryption aren't implemented for yubihsm-pkcs11 yet (same
-    // object-model gap as Sign/Verify) — these route through the shared
-    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::encrypt_init's/decrypt_init's default impls since
-    // YubiHsmBackend doesn't override them.
     c_encrypt_init: Some(C_EncryptInit),
     c_encrypt: Some(C_Encrypt),
     c_encrypt_update: Some(C_EncryptUpdate),
@@ -702,54 +679,13 @@ static G_FUNCTION_LIST: CK_FUNCTION_LIST = build_function_list(RealFunctions {
     c_decrypt: Some(C_Decrypt),
     c_decrypt_update: Some(C_DecryptUpdate),
     c_decrypt_final: Some(C_DecryptFinal),
-    // Key generation isn't implemented for yubihsm-pkcs11 yet (same
-    // object-model gap as Sign/Verify/Encrypt/Decrypt) — routes through the
-    // shared engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::generate_key_pair's default impl since YubiHsmBackend
-    // doesn't override it.
     c_generate_key_pair: Some(C_GenerateKeyPair),
-    // Object creation/import isn't implemented for yubihsm-pkcs11 yet (same
-    // object-model gap as everything else) — routes through the shared
-    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::create_object's default impl since YubiHsmBackend doesn't
-    // override it.
     c_create_object: Some(C_CreateObject),
-    // Key derivation isn't implemented for yubihsm-pkcs11 yet (same
-    // object-model gap as everything else) — routes through the shared
-    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::derive_key's default impl since YubiHsmBackend doesn't
-    // override it.
     c_derive_key: Some(C_DeriveKey),
-    // Unlike the other `Real*` fields above, `Engine::get_object_size` is
-    // fully generic (no `Backend` trait method to override) — it just asks
-    // `object_handles`/`get_one_attribute_value` for the `CKA_VALUE` length,
-    // both of which yubihsm-pkcs11 already has to implement regardless. So
-    // this is wired up for real here, not routed through a not-yet-supported
-    // fallback.
     c_get_object_size: Some(C_GetObjectSize),
-    // Object destruction isn't implemented for yubihsm-pkcs11 yet (same
-    // object-model gap as everything else) — routes through the shared
-    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::destroy_object's default impl since YubiHsmBackend doesn't
-    // override it.
     c_destroy_object: Some(C_DestroyObject),
-    // PIN/PUK/management-key change isn't implemented for yubihsm-pkcs11 yet
-    // (same object-model gap as everything else) — routes through the
-    // shared engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::set_pin's default impl since YubiHsmBackend doesn't
-    // override it.
     c_set_pin: Some(C_SetPIN),
-    // Token re-initialization isn't implemented for yubihsm-pkcs11 yet (same
-    // object-model gap as everything else) — routes through the shared
-    // engine, which falls back to CKR_FUNCTION_NOT_SUPPORTED via
-    // Backend::init_token's default impl since YubiHsmBackend doesn't
-    // override it.
     c_init_token: Some(C_InitToken),
-    // PKCS#11 3.0 interface discovery and 3.2 ML-KEM encapsulation aren't
-    // implemented for yubihsm-pkcs11 -- it only ever exposes the legacy 2.0
-    // function table via C_GetFunctionList, so these are never read by
-    // build_function_list (only build_function_list_3_2, which this module
-    // doesn't call).
     c_get_interface_list: None,
     c_get_interface: None,
     c_encapsulate_key: None,

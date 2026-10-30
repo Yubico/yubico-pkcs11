@@ -1,33 +1,18 @@
 /*
- * Copyright (c) 2026 Yubico AB
- * All rights reserved.
+ * Copyright 2026 Yubico AB
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are
- * met:
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *   * Redistributions in binary form must reproduce the above
- *     copyright notice, this list of conditions and the following
- *     disclaimer in the documentation and/or other materials provided
- *     with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::derive::validate_derive_template;
@@ -37,30 +22,18 @@ use pkcs11_sys::*;
 use yubikit::keys::{MlKemParameterSet, PublicKey};
 use yubikit::piv::KeyType;
 
-/// FIPS 203 Table 3's fixed ciphertext length per parameter set --
+/// FIPS 203 Table 3 is fixed ciphertext length per parameter set
 /// independent of any encapsulation randomness, so this can answer
-/// `C_EncapsulateKey`'s length-query call without side effects.
+/// `C_EncapsulateKey`'s length-query call without performing any operation
 fn ml_kem_ciphertext_len(parameter_set: MlKemParameterSet) -> Result<usize, CK_RV> {
     Ok(match parameter_set {
         MlKemParameterSet::MlKem512 => 768,
         MlKemParameterSet::MlKem768 => 1088,
         MlKemParameterSet::MlKem1024 => 1568,
-        // yubikit::keys::MlKemParameterSet is #[non_exhaustive] -- every
-        // variant that exists today is covered above, this only guards
-        // future additions.
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
 
-/// Encapsulates a fresh 32-byte shared secret against the raw ML-KEM
-/// encapsulation-key bytes, returning `(ciphertext, shared_secret)`. Mirrors
-/// the exact usage already proven against real hardware in `yubikit`'s own
-/// device tests (`crates/yubikit/tests/device_tests/piv.rs`'s
-/// `test_piv_mlkem768_decapsulate`, which encapsulates host-side with this
-/// same crate and confirms the device decapsulates to the identical shared
-/// secret). Three near-identical arms rather than one generic helper, since
-/// `EncapsulationKey512`/`768`/`1024` are distinct marker types in the
-/// `ml-kem` crate with no common byte-array-length bound to abstract over.
 fn ml_kem_encapsulate(parameter_set: MlKemParameterSet, key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CK_RV> {
     use ml_kem::{EncapsulationKey512, EncapsulationKey768, EncapsulationKey1024};
 
@@ -105,9 +78,7 @@ fn check_mechanism(mechanism: CK_MECHANISM_TYPE, parameter: &[u8]) -> Result<(),
 }
 
 /// The ciphertext length `encapsulate_key` will produce for `h_public_key`,
-/// without performing the (randomized) encapsulation -- see
-/// `pkcs11_common::backend::Backend::encapsulate_key_len`'s own doc comment
-/// for why this needs to be side-effect-free.
+/// without performing the (randomized) encapsulation
 pub fn encapsulate_key_len(slot: &mut Slot<PivBackend>, h_public_key: CK_OBJECT_HANDLE) -> Result<usize, CK_RV> {
     let Some((_, public_key)) = find_public_key(&slot.data.objects, h_public_key) else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
@@ -156,8 +127,7 @@ pub fn decapsulate_key(
     check_mechanism(mechanism, parameter)?;
     validate_derive_template(template)?;
 
-    // Matches derive.rs's own doc comment: no host-side login check here
-    // either -- the device's AUTHENTICATE APDU rejects if the PIN hasn't
+    // No host-side login check here. The device's AUTHENTICATE APDU rejects if the PIN hasn't
     // been verified.
     let Some((piv_slot, public_key)) = find_private_key(&slot.data.objects, h_private_key) else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
