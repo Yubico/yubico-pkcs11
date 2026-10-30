@@ -1,12 +1,9 @@
 name: "yubihsm-pkcs11 - Build and test"
 
 on: [push, pull_request]
-<<<<<<< HEAD:.github/workflows/yubihsm_pkcs11_build.yml
 
 permissions:
   contents: read
-=======
->>>>>>> 9330341 (Add reproducible builds and Rust quality checks):.github/workflows/build.yml
 
 env:
   CARGO_TERM_COLOR: always
