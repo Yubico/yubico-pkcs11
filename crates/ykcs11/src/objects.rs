@@ -301,7 +301,9 @@ impl PivObjectId {
     pub(crate) fn from_slot_class(class: ObjectClass, slot: Slot) -> Self {
         match slot {
             Slot::Authentication => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_PIV_AUTH,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_PIV_AUTH,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_PIV_AUTH,
@@ -309,7 +311,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_PIV_AUTH,
             },
             Slot::Signature => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_DS,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_DS,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_DS,
@@ -317,7 +321,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_DS,
             },
             Slot::KeyManagement => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_KM,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_KM,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_KM,
@@ -325,7 +331,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_KM,
             },
             Slot::CardAuth => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_CARD_AUTH,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_CARD_AUTH,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_CARD_AUTH,
@@ -335,7 +343,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired1 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED1,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED1,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED1,
@@ -344,7 +354,9 @@ impl PivObjectId {
             },
 
             Slot::Retired2 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED2,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED2,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED2,
@@ -352,7 +364,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED2,
             },
             Slot::Retired3 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED3,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED3,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED3,
@@ -360,7 +374,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED3,
             },
             Slot::Retired4 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED4,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED4,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED4,
@@ -368,7 +384,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED4,
             },
             Slot::Retired5 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED5,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED5,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED5,
@@ -376,7 +394,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED5,
             },
             Slot::Retired6 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED6,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED6,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED6,
@@ -384,7 +404,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED6,
             },
             Slot::Retired7 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED7,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED7,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED7,
@@ -392,7 +414,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED7,
             },
             Slot::Retired8 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED8,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED8,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED8,
@@ -400,7 +424,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED8,
             },
             Slot::Retired9 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED9,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED9,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED9,
@@ -408,7 +434,9 @@ impl PivObjectId {
                 ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED9,
             },
             Slot::Retired10 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED10,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED10,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED10,
@@ -418,7 +446,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired11 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED11,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED11,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED11,
@@ -428,7 +458,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired12 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED12,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED12,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED12,
@@ -438,7 +470,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired13 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED13,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED13,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED13,
@@ -448,7 +482,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired14 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED14,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED14,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED14,
@@ -458,7 +494,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired15 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED15,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED15,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED15,
@@ -468,7 +506,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired16 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED16,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED16,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED16,
@@ -478,7 +518,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired17 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED17,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED17,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED17,
@@ -488,7 +530,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired18 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED18,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED18,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED18,
@@ -498,7 +542,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired19 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED19,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED19,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED19,
@@ -508,7 +554,9 @@ impl PivObjectId {
                 }
             },
             Slot::Retired20 => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED20,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED20,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED20,
@@ -518,7 +566,9 @@ impl PivObjectId {
                 }
             },
             Slot::Attestation => match class {
-                ObjectClass::SecretKey => unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object"),
+                ObjectClass::SecretKey => {
+                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
+                }
                 ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_ATTESTATION,
                 ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_ATTESTATION,
                 ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_ATTESTATION,
@@ -1105,7 +1155,10 @@ pub fn find_private_key(
     Some((obj.slot, obj.public_key.as_ref()?))
 }
 
-pub fn find_public_key(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<(Slot, &PublicKey)> {
+pub fn find_public_key(
+    objects: &[PivObject],
+    handle: CK_OBJECT_HANDLE,
+) -> Option<(Slot, &PublicKey)> {
     let obj = objects
         .iter()
         .find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
@@ -1158,8 +1211,13 @@ fn get_secret_key_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Op
             yk_dbg!("LOCAL");
             Some(cka_bool(false))
         }
-        CKA_SENSITIVE | CKA_ALWAYS_SENSITIVE | CKA_NEVER_EXTRACTABLE | CKA_ENCRYPT
-        | CKA_DECRYPT | CKA_DERIVE | CKA_MODIFIABLE => {
+        CKA_SENSITIVE
+        | CKA_ALWAYS_SENSITIVE
+        | CKA_NEVER_EXTRACTABLE
+        | CKA_ENCRYPT
+        | CKA_DECRYPT
+        | CKA_DERIVE
+        | CKA_MODIFIABLE => {
             yk_dbg!("{:x}", attr_type);
             Some(cka_bool(false))
         }
@@ -1945,10 +2003,18 @@ mod tests {
 
     #[test]
     fn destroy_object_removes_the_secret_key_singleton_without_login() {
-        let obj = test_object(PivObjectId::PIV_SECRET_OBJ, ObjectClass::SecretKey, Slot::Authentication);
+        let obj = test_object(
+            PivObjectId::PIV_SECRET_OBJ,
+            ObjectClass::SecretKey,
+            Slot::Authentication,
+        );
         let mut slot = test_slot(vec![obj], LoginState::Public);
         assert_eq!(
-            crate::destroy_object::destroy_object(&mut slot, 1, PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE),
+            crate::destroy_object::destroy_object(
+                &mut slot,
+                1,
+                PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE
+            ),
             Ok(())
         );
         assert!(slot.data.objects.is_empty());
@@ -1971,7 +2037,11 @@ mod tests {
 
     #[test]
     fn destroy_object_rejects_a_data_object_as_a_deliberate_scope_limit() {
-        let obj = test_object(PivObjectId::PIV_DATA_OBJ_CHUI, ObjectClass::Data, Slot::Authentication);
+        let obj = test_object(
+            PivObjectId::PIV_DATA_OBJ_CHUI,
+            ObjectClass::Data,
+            Slot::Authentication,
+        );
         let handle = obj.id as CK_OBJECT_HANDLE;
         let mut slot = test_slot(vec![obj], LoginState::SO);
         assert_eq!(

@@ -25,13 +25,20 @@ pub fn destroy_object(
     _h_session: CK_SESSION_HANDLE,
     handle: CK_OBJECT_HANDLE,
 ) -> Result<(), CK_RV> {
-    let Some(obj) = slot.data.objects.iter().find(|o| o.id as CK_OBJECT_HANDLE == handle) else {
+    let Some(obj) = slot
+        .data
+        .objects
+        .iter()
+        .find(|o| o.id as CK_OBJECT_HANDLE == handle)
+    else {
         return Err(CKR_OBJECT_HANDLE_INVALID.into());
     };
 
     match obj.class {
         ObjectClass::SecretKey => {
-            slot.data.objects.retain(|o| o.class != ObjectClass::SecretKey);
+            slot.data
+                .objects
+                .retain(|o| o.class != ObjectClass::SecretKey);
             Ok(())
         }
         ObjectClass::PrivateKey => Err(CKR_OBJECT_HANDLE_INVALID.into()),

@@ -340,7 +340,10 @@ impl Backend for PivBackend {
         crate::encrypt::encrypt_update(slot, h_session, data)
     }
 
-    fn encrypt_final(slot: &mut Slot<Self>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+    fn encrypt_final(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+    ) -> Result<Vec<u8>, CK_RV> {
         crate::encrypt::encrypt_final(slot, h_session)
     }
 
@@ -362,7 +365,10 @@ impl Backend for PivBackend {
         crate::decrypt::decrypt_update(slot, h_session, data)
     }
 
-    fn decrypt_final(slot: &mut Slot<Self>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+    fn decrypt_final(
+        slot: &mut Slot<Self>,
+        h_session: CK_SESSION_HANDLE,
+    ) -> Result<Vec<u8>, CK_RV> {
         crate::decrypt::decrypt_final(slot, h_session)
     }
 
@@ -398,7 +404,14 @@ impl Backend for PivBackend {
         base_key_handle: CK_OBJECT_HANDLE,
         template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
-        crate::derive::derive_key(slot, h_session, mechanism, parameter, base_key_handle, template)
+        crate::derive::derive_key(
+            slot,
+            h_session,
+            mechanism,
+            parameter,
+            base_key_handle,
+            template,
+        )
     }
 
     fn destroy_object(
@@ -422,7 +435,10 @@ impl Backend for PivBackend {
         crate::init_token::init_token(slot, pin)
     }
 
-    fn encapsulate_key_len(slot: &mut Slot<Self>, h_public_key: CK_OBJECT_HANDLE) -> Result<usize, CK_RV> {
+    fn encapsulate_key_len(
+        slot: &mut Slot<Self>,
+        h_public_key: CK_OBJECT_HANDLE,
+    ) -> Result<usize, CK_RV> {
         crate::encapsulate::encapsulate_key_len(slot, h_public_key)
     }
 
@@ -434,7 +450,14 @@ impl Backend for PivBackend {
         h_public_key: CK_OBJECT_HANDLE,
         template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<(Vec<u8>, CK_OBJECT_HANDLE), CK_RV> {
-        crate::encapsulate::encapsulate_key(slot, h_session, mechanism, parameter, h_public_key, template)
+        crate::encapsulate::encapsulate_key(
+            slot,
+            h_session,
+            mechanism,
+            parameter,
+            h_public_key,
+            template,
+        )
     }
 
     fn decapsulate_key(
@@ -531,7 +554,11 @@ mod tests {
     use pkcs11_common::backend::{DecryptOp, EncryptOp, FindOp, Session, SignOp, VerifyOp};
     use std::collections::HashMap;
 
-    fn slot_with_session(h_session: CK_SESSION_HANDLE, sign_active: bool, decrypt_active: bool) -> Slot<PivBackend> {
+    fn slot_with_session(
+        h_session: CK_SESSION_HANDLE,
+        sign_active: bool,
+        decrypt_active: bool,
+    ) -> Slot<PivBackend> {
         let mut sessions = HashMap::new();
         sessions.insert(
             h_session,
@@ -563,7 +590,13 @@ mod tests {
     #[test]
     fn context_specific_login_rejected_with_no_operation_in_progress() {
         let mut slot = slot_with_session(1, false, false);
-        let rv = PivBackend::login(&mut slot, 1, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        let rv = PivBackend::login(
+            &mut slot,
+            1,
+            CKU_CONTEXT_SPECIFIC as CK_USER_TYPE,
+            b"123456",
+            b"",
+        );
         assert_eq!(rv, Err(CKR_USER_TYPE_INVALID.into()));
     }
 
@@ -575,21 +608,39 @@ mod tests {
         // is look up `slot.data.piv_session` and fail with
         // CKR_TOKEN_NOT_PRESENT, proving it got past the gate instead of
         // being rejected with CKR_USER_TYPE_INVALID.
-        let rv = PivBackend::login(&mut slot, 1, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        let rv = PivBackend::login(
+            &mut slot,
+            1,
+            CKU_CONTEXT_SPECIFIC as CK_USER_TYPE,
+            b"123456",
+            b"",
+        );
         assert_eq!(rv, Err(CKR_TOKEN_NOT_PRESENT.into()));
     }
 
     #[test]
     fn context_specific_login_passes_the_gate_while_a_decrypt_operation_is_active() {
         let mut slot = slot_with_session(1, false, true);
-        let rv = PivBackend::login(&mut slot, 1, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        let rv = PivBackend::login(
+            &mut slot,
+            1,
+            CKU_CONTEXT_SPECIFIC as CK_USER_TYPE,
+            b"123456",
+            b"",
+        );
         assert_eq!(rv, Err(CKR_TOKEN_NOT_PRESENT.into()));
     }
 
     #[test]
     fn context_specific_login_rejected_on_an_unknown_session_handle() {
         let mut slot = slot_with_session(1, true, true);
-        let rv = PivBackend::login(&mut slot, 2, CKU_CONTEXT_SPECIFIC as CK_USER_TYPE, b"123456", b"");
+        let rv = PivBackend::login(
+            &mut slot,
+            2,
+            CKU_CONTEXT_SPECIFIC as CK_USER_TYPE,
+            b"123456",
+            b"",
+        );
         assert_eq!(rv, Err(CKR_USER_TYPE_INVALID.into()));
     }
 }

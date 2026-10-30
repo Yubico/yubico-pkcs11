@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
-
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;
-use crate::template::{P256_CURVE_OID, P384_CURVE_OID, find_attr, is_public_exponent_65537, require_so_login};
+use crate::template::{
+    P256_CURVE_OID, P384_CURVE_OID, find_attr, is_public_exponent_65537, require_so_login,
+};
 use der::Decode;
 use pkcs11_common::backend::Slot;
 use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 use yubikit::keys::{
-    EcCurve, EcPrivateKey, Ed25519PrivateKey, MlDsaParameterSet, MlDsaPrivateKey, MlKemParameterSet,
-    MlKemPrivateKey, PrivateKey, RsaKeySize, RsaPrivateKey, X25519PrivateKey,
+    EcCurve, EcPrivateKey, Ed25519PrivateKey, MlDsaParameterSet, MlDsaPrivateKey,
+    MlKemParameterSet, MlKemPrivateKey, PrivateKey, RsaKeySize, RsaPrivateKey, X25519PrivateKey,
 };
 
 fn map_key_error(_: yubikit::keys::KeyError) -> CK_RV {
@@ -80,18 +81,23 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
 
     match key_type as u32 {
         CKK_RSA => {
-            let e = find_attr(template, CKA_PUBLIC_EXPONENT).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let e = find_attr(template, CKA_PUBLIC_EXPONENT)
+                .ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let p = find_attr(template, CKA_PRIME_1).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let q = find_attr(template, CKA_PRIME_2).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
-            let dp = find_attr(template, CKA_EXPONENT_1).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
-            let dq = find_attr(template, CKA_EXPONENT_2).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
-            let qinv = find_attr(template, CKA_COEFFICIENT).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let dp =
+                find_attr(template, CKA_EXPONENT_1).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let dq =
+                find_attr(template, CKA_EXPONENT_2).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let qinv =
+                find_attr(template, CKA_COEFFICIENT).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
 
             if !is_public_exponent_65537(e) {
                 return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
             }
 
-            let key_size = rsa_key_size_from_prime_len(p.len()).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
+            let key_size = rsa_key_size_from_prime_len(p.len())
+                .ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
 
             let rsa = RsaPrivateKey::new(
                 key_size,
@@ -107,7 +113,8 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             Ok(PrivateKey::Rsa(rsa))
         }
         CKK_EC => {
-            let params = find_attr(template, CKA_EC_PARAMS).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let params =
+                find_attr(template, CKA_EC_PARAMS).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let curve = if params == P256_CURVE_OID {
                 EcCurve::P256
             } else if params == P384_CURVE_OID {
@@ -115,17 +122,20 @@ fn resolve_private_key(template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)]) -> Result<Priv
             } else {
                 return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
             };
-            let scalar = find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let scalar =
+                find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let ec = EcPrivateKey::new(curve, scalar.to_vec(), None).map_err(map_key_error)?;
             Ok(PrivateKey::Ec(ec))
         }
         CKK_EC_EDWARDS => {
-            let secret = find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let secret =
+                find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let key = Ed25519PrivateKey::new(secret.to_vec()).map_err(map_key_error)?;
             Ok(PrivateKey::Ed25519(key))
         }
         CKK_EC_MONTGOMERY => {
-            let secret = find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let secret =
+                find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
             let key = X25519PrivateKey::new(secret.to_vec()).map_err(map_key_error)?;
             Ok(PrivateKey::X25519(key))
         }
@@ -210,10 +220,12 @@ pub fn create_object(
 
     match class as u32 {
         CKO_CERTIFICATE => {
-            let value = find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
+            let value =
+                find_attr(template, CKA_VALUE).ok_or(CK_RV::from(CKR_TEMPLATE_INCOMPLETE))?;
 
             // Verifies that the bytes are a valid X.509 structure before import.
-            x509_cert::Certificate::from_der(value).map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
+            x509_cert::Certificate::from_der(value)
+                .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
 
             let piv = slot
                 .data
@@ -345,14 +357,20 @@ mod tests {
             attr(CKA_EC_PARAMS, P256_CURVE_OID),
             attr(CKA_VALUE, &[0x01u8; 32]),
         ];
-        assert!(matches!(resolve_private_key(&p256_t), Ok(PrivateKey::Ec(_))));
+        assert!(matches!(
+            resolve_private_key(&p256_t),
+            Ok(PrivateKey::Ec(_))
+        ));
 
         let p384_t = [
             ulong_attr(CKA_KEY_TYPE, CKK_EC as CK_ULONG),
             attr(CKA_EC_PARAMS, P384_CURVE_OID),
             attr(CKA_VALUE, &[0x01u8; 48]),
         ];
-        assert!(matches!(resolve_private_key(&p384_t), Ok(PrivateKey::Ec(_))));
+        assert!(matches!(
+            resolve_private_key(&p384_t),
+            Ok(PrivateKey::Ec(_))
+        ));
     }
 
     #[test]
@@ -371,13 +389,19 @@ mod tests {
             ulong_attr(CKA_KEY_TYPE, CKK_EC_EDWARDS as CK_ULONG),
             attr(CKA_VALUE, &[0x01u8; 32]),
         ];
-        assert!(matches!(resolve_private_key(&ed_t), Ok(PrivateKey::Ed25519(_))));
+        assert!(matches!(
+            resolve_private_key(&ed_t),
+            Ok(PrivateKey::Ed25519(_))
+        ));
 
         let x_t = [
             ulong_attr(CKA_KEY_TYPE, CKK_EC_MONTGOMERY as CK_ULONG),
             attr(CKA_VALUE, &[0x01u8; 32]),
         ];
-        assert!(matches!(resolve_private_key(&x_t), Ok(PrivateKey::X25519(_))));
+        assert!(matches!(
+            resolve_private_key(&x_t),
+            Ok(PrivateKey::X25519(_))
+        ));
     }
 
     #[test]
@@ -415,7 +439,10 @@ mod tests {
             ];
             match resolve_private_key(&t) {
                 Ok(PrivateKey::MlDsa(ref k)) => {
-                    assert_eq!(k.algorithm(), yubikit::keys::KeyAlgorithm::MlDsa(expected_param_set))
+                    assert_eq!(
+                        k.algorithm(),
+                        yubikit::keys::KeyAlgorithm::MlDsa(expected_param_set)
+                    )
                 }
                 other => panic!("expected Ok(PrivateKey::MlDsa(_)), got {other:?}"),
             }
@@ -478,7 +505,10 @@ mod tests {
             ];
             match resolve_private_key(&t) {
                 Ok(PrivateKey::MlKem(ref k)) => {
-                    assert_eq!(k.algorithm(), yubikit::keys::KeyAlgorithm::MlKem(expected_param_set))
+                    assert_eq!(
+                        k.algorithm(),
+                        yubikit::keys::KeyAlgorithm::MlKem(expected_param_set)
+                    )
                 }
                 other => panic!("expected Ok(PrivateKey::MlKem(_)), got {other:?}"),
             }

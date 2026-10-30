@@ -2,16 +2,40 @@ name: "YKCS11 Release builds"
 
 on: [push]
 
+permissions:
+  contents: read
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: "2"
+
 jobs:
+
+  metadata:
+    name: Read release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Read ykcs11 package version
+        id: version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("crates/ykcs11/Cargo.toml", "rb"))["package"]["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   source:
     name: Build source release
+    needs: metadata
     runs-on: ubuntu-latest
     env:
-      VERSION: 3.0.0
+      VERSION: ${{ needs.metadata.outputs.version }}
     steps:
       - name: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
       - name: Create tar.gz
         run: |
           set -x
@@ -19,7 +43,7 @@ jobs:
           mkdir $GITHUB_WORKSPACE/artifact
           mv $GITHUB_WORKSPACE/../ykcs11-$VERSION.tar.gz $GITHUB_WORKSPACE/artifact/
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ykcs11-src
           path: artifact
@@ -29,70 +53,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Install cargo-about
-        run: cargo install cargo-about --version '~0.6'
+        run: cargo install cargo-about --locked --version 0.9.1 --features cli
 
       - name: Generate license bundle
         run: |
-          cat > about.toml << 'EOF'
-          accepted = [
-            "Apache-2.0",
-            "MIT",
-            "BSD-2-Clause",
-            "BSD-3-Clause",
-            "MPL-2.0",
-            "ISC",
-            "Unicode-3.0",
-            "Zlib",
-          ]
-          EOF
-
-          cat > about.hbs << 'TEMPLATE'
-          Third Party Licenses
-          ====================
-
-          {{#each licenses}}
-          ================================================================================
-          {{name}}
-          ================================================================================
-          Used by:
-          {{#each used_by}}
-            - {{crate.name}} v{{crate.version}}
-          {{/each}}
-
-          {{text}}
-
-          {{/each}}
-          TEMPLATE
-
-          cargo about generate about.hbs > THIRDPARTY.txt
+          cargo fetch --locked
+          cargo about generate --locked --offline --fail \
+            --manifest-path crates/ykcs11/Cargo.toml \
+            --config resources/ykcs11/release/about.toml \
+            --output-file THIRDPARTY.txt \
+            resources/ykcs11/release/about.hbs
 
       - name: Upload license bundle
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: licenses
           path: THIRDPARTY.txt
 
   Windows:
-    needs: licenses
+    needs: [metadata, licenses]
     name: Windows
     runs-on: windows-latest
     env:
-      VERSION: 3.0.0
+      VERSION: ${{ needs.metadata.outputs.version }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Download license bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: licenses
           path: .
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Install OpenSC
         env:
@@ -117,10 +133,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-          cargo update
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-          cargo build --release -p ykcs11
+          cargo build --locked --release -p ykcs11
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           install target/release/ykcs11.dll $env:GITHUB_WORKSPACE/artifact/ykcs11/
@@ -154,7 +167,7 @@ jobs:
           cp $env:GITHUB_WORKSPACE/THIRDPARTY.txt $env:GITHUB_WORKSPACE/artifact/ykcs11/licenses/THIRDPARTY.txt
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ykcs11-${{ env.VERSION }}-win64
           path: artifact
@@ -165,16 +178,24 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build ykcs11
         run: |
           set -e -o pipefail
           set -x
           
-          cargo build --release -p ykcs11
+          cargo build --locked --release -p ykcs11
           strip -u -r target/release/libykcs11.dylib
           
           mkdir -p $GITHUB_WORKSPACE/artifact/amd/          
@@ -186,42 +207,50 @@ jobs:
           #otool -l libykcs11.dylib | grep LC_RPATH -A 3
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ykcs11-macos-amd
           path: artifact
 
   MacOS-universal:
     name: MacOS-universal
-    needs: [licenses, MacOS-AMD]
+    needs: [metadata, licenses, MacOS-AMD]
     runs-on: macos-latest-xlarge
     env:
-      VERSION: 3.0.0
+      VERSION: ${{ needs.metadata.outputs.version }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Download license bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: licenses
           path: .
 
       - name: Download AMD artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: ykcs11-macos-amd
           path: .
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build ykcs11
         run: |
           set -e -o pipefail
           set -x
           
-          cargo build --release -p ykcs11
+          cargo build --locked --release -p ykcs11
           strip -u -r target/release/libykcs11.dylib
           
           mkdir -p $GITHUB_WORKSPACE/arm/
@@ -266,7 +295,7 @@ jobs:
           #cp resources/release/macos/* $GITHUB_WORKSPACE/artifact/
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ykcs11-${{ env.VERSION }}-macos-universal
           path: artifact

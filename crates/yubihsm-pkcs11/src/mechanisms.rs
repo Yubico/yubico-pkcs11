@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! Maps the connected device's reported algorithm capabilities to the
 //! `CKM_*` mechanisms `C_GetMechanismList` should report
 
@@ -100,7 +99,10 @@ fn minmax_aes_key_length_in_bytes(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, 
     (min, max)
 }
 
-pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
+pub fn mechanism_info(
+    algorithms: &[ObjectAlgorithm],
+    mechanism: CK_MECHANISM_TYPE,
+) -> Option<MechanismInfo> {
     let rsa = || minmax_rsa_key_length_in_bits(algorithms);
     let ec = || minmax_ec_key_length_in_bits(algorithms);
     let aes = || minmax_aes_key_length_in_bytes(algorithms);
@@ -124,7 +126,11 @@ pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TY
             || m == CKM_SHA512_RSA_PKCS.into() =>
         {
             let (min, max) = rsa();
-            (min, max, CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS)
+            (
+                min,
+                max,
+                CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+            )
         }
         m if m == CKM_RSA_PKCS_PSS.into()
             || m == CKM_SHA1_RSA_PKCS_PSS.into()
@@ -133,19 +139,35 @@ pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TY
             || m == CKM_SHA512_RSA_PKCS_PSS.into() =>
         {
             let (min, max) = rsa();
-            (min, max, CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS)
+            (
+                min,
+                max,
+                CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+            )
         }
         m if m == CKM_RSA_PKCS_OAEP.into() => {
             let (min, max) = rsa();
-            (min, max, CKF_HW as CK_FLAGS | CKF_DECRYPT as CK_FLAGS | CKF_ENCRYPT as CK_FLAGS)
+            (
+                min,
+                max,
+                CKF_HW as CK_FLAGS | CKF_DECRYPT as CK_FLAGS | CKF_ENCRYPT as CK_FLAGS,
+            )
         }
         m if m == CKM_YUBICO_RSA_WRAP || m == CKM_RSA_AES_KEY_WRAP.into() => {
             let (min, max) = rsa();
-            (min, max, CKF_HW as CK_FLAGS | CKF_WRAP as CK_FLAGS | CKF_UNWRAP as CK_FLAGS)
+            (
+                min,
+                max,
+                CKF_HW as CK_FLAGS | CKF_WRAP as CK_FLAGS | CKF_UNWRAP as CK_FLAGS,
+            )
         }
         m if m == CKM_RSA_PKCS_KEY_PAIR_GEN.into() => {
             let (min, max) = rsa();
-            (min, max, CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS)
+            (
+                min,
+                max,
+                CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
+            )
         }
         m if m == CKM_EC_KEY_PAIR_GEN.into() => {
             let (min, max) = ec();
@@ -178,10 +200,26 @@ pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TY
                 | CKF_EC_NAMEDCURVE as CK_FLAGS
                 | CKF_EC_COMPRESS as CK_FLAGS,
         ),
-        m if m == CKM_SHA_1_HMAC.into() => (1, 64 * 8, CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS),
-        m if m == CKM_SHA256_HMAC.into() => (1, 64 * 8, CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS),
-        m if m == CKM_SHA384_HMAC.into() => (1, 128 * 8, CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS),
-        m if m == CKM_SHA512_HMAC.into() => (1, 128 * 8, CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS),
+        m if m == CKM_SHA_1_HMAC.into() => (
+            1,
+            64 * 8,
+            CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+        ),
+        m if m == CKM_SHA256_HMAC.into() => (
+            1,
+            64 * 8,
+            CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+        ),
+        m if m == CKM_SHA384_HMAC.into() => (
+            1,
+            128 * 8,
+            CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+        ),
+        m if m == CKM_SHA512_HMAC.into() => (
+            1,
+            128 * 8,
+            CKF_HW as CK_FLAGS | CKF_SIGN as CK_FLAGS | CKF_VERIFY as CK_FLAGS,
+        ),
         m if m == CKM_ECDSA.into()
             || m == CKM_ECDSA_SHA1.into()
             || m == CKM_ECDSA_SHA256.into()
@@ -212,7 +250,11 @@ pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TY
                     | CKF_EC_UNCOMPRESS as CK_FLAGS,
             )
         }
-        m if m == CKM_SHA_1.into() || m == CKM_SHA256.into() || m == CKM_SHA384.into() || m == CKM_SHA512.into() => {
+        m if m == CKM_SHA_1.into()
+            || m == CKM_SHA256.into()
+            || m == CKM_SHA384.into()
+            || m == CKM_SHA512.into() =>
+        {
             (0, 0, CKF_DIGEST as CK_FLAGS)
         }
         m if m == CKM_YUBICO_AES_CCM_WRAP => (
@@ -224,14 +266,20 @@ pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TY
                 | CKF_ENCRYPT as CK_FLAGS
                 | CKF_DECRYPT as CK_FLAGS,
         ),
-        m if m == CKM_GENERIC_SECRET_KEY_GEN.into() => (1, 128 * 8, CKF_HW as CK_FLAGS | CKF_GENERATE as CK_FLAGS),
+        m if m == CKM_GENERIC_SECRET_KEY_GEN.into() => {
+            (1, 128 * 8, CKF_HW as CK_FLAGS | CKF_GENERATE as CK_FLAGS)
+        }
         m if m == CKM_AES_KEY_GEN.into() => {
             let (min, max) = aes();
             (min, max, CKF_HW as CK_FLAGS | CKF_GENERATE as CK_FLAGS)
         }
         m if m == CKM_AES_ECB.into() || m == CKM_AES_CBC.into() || m == CKM_AES_CBC_PAD.into() => {
             let (min, max) = aes();
-            (min, max, CKF_HW as CK_FLAGS | CKF_ENCRYPT as CK_FLAGS | CKF_DECRYPT as CK_FLAGS)
+            (
+                min,
+                max,
+                CKF_HW as CK_FLAGS | CKF_ENCRYPT as CK_FLAGS | CKF_DECRYPT as CK_FLAGS,
+            )
         }
         m if m == CKM_AES_KEY_WRAP_KWP.into() => {
             let (min, max) = aes();

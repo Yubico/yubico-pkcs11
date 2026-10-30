@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use crate::sign::{mgf1, zero_pad};
 use crate::verify::rsa_public_raw_op;
 use pkcs11_sys::*;
 
-pub fn rsa_x509_encrypt(n: &[u8], e: &[u8], modulus_len: usize, message: &[u8]) -> Result<Vec<u8>, CK_RV> {
+pub fn rsa_x509_encrypt(
+    n: &[u8],
+    e: &[u8],
+    modulus_len: usize,
+    message: &[u8],
+) -> Result<Vec<u8>, CK_RV> {
     let padded = zero_pad(message, modulus_len)?;
     rsa_public_raw_op(n, e, &padded, modulus_len)
 }
@@ -83,7 +87,11 @@ fn eme_oaep_encode(
     let db_mask = mgf1(seed, db.len(), mgf_hash_mechanism)?;
     let masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
     let seed_mask = mgf1(&masked_db, h_len, mgf_hash_mechanism)?;
-    let masked_seed: Vec<u8> = seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+    let masked_seed: Vec<u8> = seed
+        .iter()
+        .zip(seed_mask.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
 
     let mut em = Vec::with_capacity(modulus_len);
     em.push(0x00);
@@ -103,7 +111,14 @@ pub fn rsa_oaep_encrypt(
     hash_mechanism: CK_MECHANISM_TYPE,
     mgf_hash_mechanism: CK_MECHANISM_TYPE,
 ) -> Result<Vec<u8>, CK_RV> {
-    let em = eme_oaep_encode(message, label, seed, modulus_len, hash_mechanism, mgf_hash_mechanism)?;
+    let em = eme_oaep_encode(
+        message,
+        label,
+        seed,
+        modulus_len,
+        hash_mechanism,
+        mgf_hash_mechanism,
+    )?;
     rsa_public_raw_op(n, e, &em, modulus_len)
 }
 

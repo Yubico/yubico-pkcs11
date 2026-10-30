@@ -1,0 +1,7 @@
+/target/
+/artifact/
+/THIRDPARTY.txt
+/about.toml
+/about.hbs
+/yubihsm_pkcs11.conf
+/.venv/

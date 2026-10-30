@@ -19,10 +19,9 @@ fn main() {
     {
         if std::env::var("YUBIHSM_STATIC").is_ok() {
             if let Ok(lib_dir) = std::env::var("YUBIHSM_LIB_DIR") {
-                let lib_name = std::env::var("YUBIHSM_LIB_NAME")
-                    .unwrap_or_else(|_| "yubihsm".to_string());
-                let lib_path = std::path::Path::new(&lib_dir)
-                    .join(format!("lib{}.a", lib_name));
+                let lib_name =
+                    std::env::var("YUBIHSM_LIB_NAME").unwrap_or_else(|_| "yubihsm".to_string());
+                let lib_path = std::path::Path::new(&lib_dir).join(format!("lib{}.a", lib_name));
                 println!("cargo:rustc-link-arg=-Wl,--push-state,--whole-archive");
                 println!("cargo:rustc-link-arg={}", lib_path.display());
                 println!("cargo:rustc-link-arg=-Wl,--pop-state");

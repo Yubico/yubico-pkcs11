@@ -24,8 +24,8 @@ pub mod mechanism;
 pub mod session;
 pub mod sign;
 pub mod stubs;
-pub mod verify;
 pub mod util;
+pub mod verify;
 #[cfg(windows)]
 mod win_dllmain;
 

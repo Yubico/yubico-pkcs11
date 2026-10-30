@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use crate::sign::{digest_info_prefix, mgf1, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
@@ -31,7 +30,8 @@ pub(crate) fn rsa_public_raw_op(
     let pub_key = rsa::RsaPublicKey::new(BigUint::from_bytes_be(n), BigUint::from_bytes_be(e))
         .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
     let m = BigUint::from_bytes_be(input);
-    let result = rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
+    let result =
+        rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
     zero_pad(&result.to_bytes_be(), modulus_len)
 }
 
@@ -115,7 +115,11 @@ fn emsa_pss_verify(
     }
 
     let db_mask = mgf1(h, db_len, mgf_hash_mechanism)?;
-    let mut db: Vec<u8> = masked_db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    let mut db: Vec<u8> = masked_db
+        .iter()
+        .zip(db_mask.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
     if extra_bits > 0 {
         db[0] &= 0xFFu8 >> extra_bits;
     }
@@ -223,13 +227,16 @@ pub fn verify_eddsa(key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), 
     if signature.len() != 64 {
         return Err(CKR_SIGNATURE_LEN_RANGE.into());
     }
-    let key_bytes: [u8; 32] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+    let key_bytes: [u8; 32] = key
+        .try_into()
+        .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
     let vk = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)
         .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
     // SAFETY-free: length already checked above.
     let sig_bytes: [u8; 64] = signature.try_into().unwrap();
     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-    vk.verify(message, &sig).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
+    vk.verify(message, &sig)
+        .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
 }
 
 #[cfg(test)]

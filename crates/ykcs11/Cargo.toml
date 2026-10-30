@@ -1,8 +1,10 @@
 [package]
 name = "ykcs11"
 version = "0.0.1"
-edition = "2024"
-license = "Apache-2.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
 description = "YubiKey PIV PKCS#11 module"
 
 [lib]
@@ -45,3 +47,6 @@ ml-kem = "0.3"
 # CK_ATTRIBUTE/CK_* values for the real C_* calls those tests exercise.
 [dev-dependencies]
 pkcs11-sys = { workspace = true }
+
+[lints]
+workspace = true

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Debug output matching both ykcs11 and yubihsm-pkcs11 modules' format:
 //   ykcs11:      "DBG: file:line (func): message"
 //   yubihsm:     "[P11 - INF HH:MM:SS.UUUUUU] file:line (func): message"

@@ -19,7 +19,8 @@ use pkcs11_sys::*;
 use yubikit::piv::{PinPolicy, TouchPolicy};
 
 /// `prime256v1`/P-256 (1.2.840.10045.3.1.7) as a DER `OBJECT IDENTIFIER`
-pub(crate) const P256_CURVE_OID: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+pub(crate) const P256_CURVE_OID: &[u8] =
+    &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 
 /// `secp384r1`/P-384 (1.3.132.0.34) as a DER `OBJECT IDENTIFIER`
 pub(crate) const P384_CURVE_OID: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
@@ -52,11 +53,15 @@ pub(crate) fn find_byte(
 pub(crate) fn resolve_policies(
     private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<(PinPolicy, TouchPolicy), CK_RV> {
-    let mut pin_policy = match find_byte(private_key_template, crate::objects::CKA_YUBICO_PIN_POLICY)? {
-        Some(b) => PinPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        None => PinPolicy::Default,
-    };
-    let touch_policy = match find_byte(private_key_template, crate::objects::CKA_YUBICO_TOUCH_POLICY)? {
+    let mut pin_policy =
+        match find_byte(private_key_template, crate::objects::CKA_YUBICO_PIN_POLICY)? {
+            Some(b) => PinPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+            None => PinPolicy::Default,
+        };
+    let touch_policy = match find_byte(
+        private_key_template,
+        crate::objects::CKA_YUBICO_TOUCH_POLICY,
+    )? {
         Some(b) => TouchPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
         None => TouchPolicy::Default,
     };
