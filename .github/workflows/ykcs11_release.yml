@@ -66,7 +66,7 @@ jobs:
           cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Install cargo-about
-        run: cargo install cargo-about --locked --version 0.9.1
+        run: cargo install cargo-about --locked --version 0.9.1 --features cli
 
       - name: Generate license bundle
         run: |
