@@ -138,7 +138,9 @@ jobs:
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo check --locked --workspace --all-targets --all-features
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
-          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo test --locked
+          YUBIHSM_LIB_DIR="$GITHUB_WORKSPACE/../yubihsm-shell/build/lib" \
+            LD_LIBRARY_PATH="$GITHUB_WORKSPACE/../yubihsm-shell/build/lib" \
+            cargo test --locked
           cd target/debug
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           cat yubihsm_pkcs11.conf
