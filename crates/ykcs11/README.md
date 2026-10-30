@@ -17,7 +17,7 @@ On Windows: `.dll` + `.lib`; on macOS: `.dylib` + `.a`.
 
 ## Dependencies
 
-Depends on [`yubikit`](https://github.com/Yubico/yubikey-manager/tree/experiment/rust) with the `hardware` feature.
+Depends on [`yubikit`](https://github.com/Yubico/yubikey-manager/tree/6.0.0-beta.0) with the `hardware` feature.
 `ykcs11` is otherwise self-contained (`yubikit` is pure Rust).
 
 ## Usage

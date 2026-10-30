@@ -18,7 +18,7 @@ On Windows: `.dll` + `.lib`; on macOS: `.dylib` + `.a`.
 ## Dependencies
 
 Depends on [`yubihsmrs`](https://github.com/Yubico/yubihsmrs)
-- **ykcs11** depends on [`yubikit`](https://github.com/Yubico/yubikey-manager/tree/experiment/rust) with the `hardware` feature
+- **ykcs11** depends on [`yubikit`](https://github.com/Yubico/yubikey-manager/tree/6.0.0-beta.0) with the `hardware` feature
 
 `yubihsm-pkcs11` is not self-contained. `yubihsmrs` is a binding to the native `libyubihsm` C library, so the
 built module has a *runtime* shared-library dependency on it, separate from
