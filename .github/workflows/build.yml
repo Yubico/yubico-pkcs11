@@ -51,8 +51,12 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
   ubuntu:
-    name: Build and test on Linux
+    name: Build and test on Linux (Rust ${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, "1.88.0"]
     env:
       LIBYUBIHSM_VERSION: 2.8.0
 
@@ -83,6 +87,8 @@ jobs:
           sudo apt-get install -y opensc
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -120,6 +126,7 @@ jobs:
 
           cd ../../yubico-pkcs11
           ls $GITHUB_WORKSPACE/../yubihsm-shell/build/lib
+          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo check --locked --workspace --all-targets --all-features
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo test --locked

@@ -16,6 +16,9 @@ crates/
 
 ## Building
 
+Rust 1.88 or newer is required. Linux CI builds and tests the workspace on both
+the minimum supported Rust version and stable.
+
 ```bash
 # Build everything (both modules + common library)
 cargo build --locked
