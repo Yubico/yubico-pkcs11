@@ -67,7 +67,7 @@ jobs:
           {{/each}}
           TEMPLATE
 
-          cargo about generate about.hbs > THIRDPARTY.txt
+          cargo about generate --locked about.hbs > THIRDPARTY.txt
 
       - name: Upload license bundle
         uses: actions/upload-artifact@v5
@@ -117,10 +117,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-          cargo update
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-          cargo build --release -p ykcs11
+          cargo build --locked --release -p ykcs11
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           install target/release/ykcs11.dll $env:GITHUB_WORKSPACE/artifact/ykcs11/
@@ -174,7 +171,7 @@ jobs:
           set -e -o pipefail
           set -x
           
-          cargo build --release -p ykcs11
+          cargo build --locked --release -p ykcs11
           strip -u -r target/release/libykcs11.dylib
           
           mkdir -p $GITHUB_WORKSPACE/artifact/amd/          
@@ -221,7 +218,7 @@ jobs:
           set -e -o pipefail
           set -x
           
-          cargo build --release -p ykcs11
+          cargo build --locked --release -p ykcs11
           strip -u -r target/release/libykcs11.dylib
           
           mkdir -p $GITHUB_WORKSPACE/arm/

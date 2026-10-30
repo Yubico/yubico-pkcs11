@@ -17,8 +17,8 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;
 use crate::template::{
-    P256_CURVE_OID, P384_CURVE_OID, find_attr, find_byte, is_public_exponent_65537, require_so_login,
-    resolve_policies,
+    P256_CURVE_OID, P384_CURVE_OID, find_attr, find_byte, is_public_exponent_65537,
+    require_so_login, resolve_policies,
 };
 use der::{Decode, Encode};
 use pkcs11_common::backend::Slot;
@@ -243,7 +243,6 @@ pub fn generate_key_pair(
     public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE), CK_RV> {
-
     require_so_login(slot.login_state)?;
 
     let Some(family) = classify_generate_mechanism(mechanism) else {

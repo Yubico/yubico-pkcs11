@@ -47,7 +47,8 @@ pub fn encrypt_init(
     parameter: &[u8],
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<CK_ULONG, CK_RV> {
-    let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle) else {
+    let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle)
+    else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
@@ -106,7 +107,10 @@ pub fn encrypt_update(
     Ok(())
 }
 
-pub fn encrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+pub fn encrypt_final(
+    slot: &mut Slot<PivBackend>,
+    h_session: CK_SESSION_HANDLE,
+) -> Result<Vec<u8>, CK_RV> {
     let session = slot
         .sessions
         .get_mut(&h_session)
@@ -155,7 +159,8 @@ fn non_zero_random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     getrandom::fill(&mut buf).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;
     for byte in buf.iter_mut() {
         while *byte == 0 {
-            getrandom::fill(std::slice::from_mut(byte)).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;
+            getrandom::fill(std::slice::from_mut(byte))
+                .map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;
         }
     }
     Ok(buf)

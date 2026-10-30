@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! [`pkcs11_common::backend::Backend`] impl for the YubiHSM module.
 
 use crate::config::{self, Config};

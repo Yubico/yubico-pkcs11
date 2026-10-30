@@ -51,7 +51,8 @@ pub fn decrypt_init(
     parameter: &[u8],
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<(), CK_RV> {
-    let Some((piv_slot, public_key)) = crate::objects::find_private_key(&slot.data.objects, key_handle)
+    let Some((piv_slot, public_key)) =
+        crate::objects::find_private_key(&slot.data.objects, key_handle)
     else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
@@ -114,7 +115,10 @@ pub fn decrypt_update(
     Ok(())
 }
 
-pub fn decrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+pub fn decrypt_final(
+    slot: &mut Slot<PivBackend>,
+    h_session: CK_SESSION_HANDLE,
+) -> Result<Vec<u8>, CK_RV> {
     let session = slot
         .sessions
         .get_mut(&h_session)
@@ -136,7 +140,9 @@ pub fn decrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) 
         .piv_session
         .as_mut()
         .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
-    let raw = piv.decrypt(state.slot, &state.buf).map_err(piv_error_to_rv)?;
+    let raw = piv
+        .decrypt(state.slot, &state.buf)
+        .map_err(piv_error_to_rv)?;
     let em = zero_pad(&raw, state.modulus_len)?;
 
     match state.algo {

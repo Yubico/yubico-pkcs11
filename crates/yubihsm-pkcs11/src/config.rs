@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Parsing of the configurations file format (yubihsm_pkcs11.conf)
 
 use std::env;
@@ -28,16 +27,16 @@ pub struct ConnectorConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub connectors: Vec<ConnectorConfig>, // List of connectors to use
-    pub debug: bool, // Enable pkcs11 debugging
-    pub dinout: bool, // Enable pkcs11 function tracing
-    pub libdebug: bool, // Enable libyubihsm debugging
-    pub debug_file: Option<String>, // Output file for debugging
-    pub cacert: Option<String>, // Cacert to use for HTTPS validation
-    pub cert: Option<String>, // HTTPS client certificate to authenticate with
-    pub key: Option<String>, // HTTPS client certificate key
-    pub proxy: Option<String>, // Proxy server to use for connector
-    pub noproxy: Option<String>, // Comma separated list of hosts ignore proxy for
-    pub timeout: Option<u64>, // Timeout to use for initial connection to connector
+    pub debug: bool,                      // Enable pkcs11 debugging
+    pub dinout: bool,                     // Enable pkcs11 function tracing
+    pub libdebug: bool,                   // Enable libyubihsm debugging
+    pub debug_file: Option<String>,       // Output file for debugging
+    pub cacert: Option<String>,           // Cacert to use for HTTPS validation
+    pub cert: Option<String>,             // HTTPS client certificate to authenticate with
+    pub key: Option<String>,              // HTTPS client certificate key
+    pub proxy: Option<String>,            // Proxy server to use for connector
+    pub noproxy: Option<String>,          // Comma separated list of hosts ignore proxy for
+    pub timeout: Option<u64>,             // Timeout to use for initial connection to connector
     pub device_pubkey: Option<String>, // List of device public keys allowed for asymmetric authentication
 }
 
