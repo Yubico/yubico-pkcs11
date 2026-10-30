@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Run with: cargo run -p ykcs11 --example list_readers
+// Run with: cargo run -p ykcs11 --example list_readers
 
 fn main() {
     println!("Calling yubikit::platform::pcsc::list_readers_with_state() ...");

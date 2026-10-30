@@ -37,7 +37,6 @@ enum UserPinRequest<'a> {
     UnblockPin { puk: &'a [u8], new_pin: &'a [u8] },
 }
 
-/// Matches token.c:267-281's `CKU_USER` branch dispatch exactly.
 fn classify_user_pin_request<'a>(old_pin: &'a [u8], new_pin: &'a [u8]) -> UserPinRequest<'a> {
     match old_pin.strip_prefix(PUK_PREFIX) {
         Some(puk) => match new_pin.strip_prefix(PIN_PREFIX) {
@@ -57,7 +56,6 @@ pub fn set_pin(
     old_pin: &[u8],
     new_pin: &[u8],
 ) -> Result<(), CK_RV> {
-    // Matches ykcs11.c:895-899.
     let is_rw = slot
         .sessions
         .get(&h_session)
@@ -74,15 +72,11 @@ pub fn set_pin(
         .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
 
     if login_state == LoginState::SO {
-        // Matches token.c:243-262: pOldPin is unused; pNewPin is the new
-        // management key, hex-encoded.
+        // pOldPin is unused; pNewPin is the new management key, hex-encoded.
         let key_bytes = hex_decode(new_pin).ok_or(CK_RV::from(CKR_PIN_INVALID))?;
         let key_type = piv.management_key_type();
         let new_key =
             ManagementKey::new(key_type, &key_bytes).map_err(|_| CK_RV::from(CKR_PIN_INVALID))?;
-        // "Same touch policy the old one had" (token.c:251) -- yubikit's
-        // set_management_key only takes a bool, so this reads the current
-        // touch requirement back from the device rather than hardcoding one.
         let require_touch = piv
             .get_management_key_metadata()
             .map(|m| matches!(m.touch_policy, TouchPolicy::Always | TouchPolicy::Cached))

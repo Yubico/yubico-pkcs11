@@ -32,13 +32,12 @@ use yubikit::platform::pcsc::{list_readers_with_state, PcscSmartCardConnection};
 pub type ActivePivSession = PivSession<PcscSmartCardConnection>;
 
 const YKCS11_MANUFACTURER: &str = "Yubico (www.yubico.com)";
-// Matches YKPIV_MIN_PIN_LEN / YKPIV_MAX_MGM_KEY_LEN in the original module.
 const YKCS11_MIN_PIN_LEN: CK_ULONG = 6;
 const YKCS11_MAX_PIN_LEN: CK_ULONG = 64;
 
 /// Re-scan PC/SC readers and reconcile against `state.slots`. Must be called
 /// with the module state already locked (the caller owns `&mut
-/// ModuleState`); this mirrors `C_GetSlotList` holding `global_mutex` for
+/// ModuleState`). This mirrors `C_GetSlotList` holding `global_mutex` for
 /// the whole reconciliation in the C module.
 pub fn refresh_slots(state: &mut ModuleState<PivBackend>) -> Result<(), CK_RV> {
     let readers = list_readers_with_state().map_err(|e| {

@@ -72,12 +72,7 @@ pub struct RealFunctions {
     pub c_set_pin: CK_C_SetPIN,
     pub c_init_token: CK_C_InitToken,
     /// PKCS#11 3.0/3.2 -- only read by [`build_function_list_3_2`], not the
-    /// legacy [`build_function_list`]. `c_get_interface_list`/
-    /// `c_get_interface` should point at
-    /// `Engine::get_interface_list`/`get_interface`-backed entry points for
-    /// any module exposing a 3.2 interface at all; `c_encapsulate_key`/
-    /// `c_decapsulate_key` are `None` for a module that doesn't implement
-    /// ML-KEM encapsulation.
+    /// legacy [`build_function_list`].
     pub c_get_interface_list: CK_C_GetInterfaceList,
     pub c_get_interface: CK_C_GetInterface,
     pub c_encapsulate_key: CK_C_EncapsulateKey,
@@ -159,13 +154,7 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
 }
 
 /// Builds the full PKCS#11 3.2 function table, reachable only via
-/// `C_GetInterfaceList`/`C_GetInterface` (see
-/// `pkcs11_common::backend::Engine::get_interface_list`/`get_interface`) --
-/// unlike [`build_function_list`], which fills the legacy 2.0-shaped table
-/// `C_GetFunctionList` returns. Every PKCS#11 3.0/3.2 function besides
-/// `C_EncapsulateKey`/`C_DecapsulateKey` is wired to a shared not-yet-
-/// implemented stub from [`crate::stubs`], same as the legacy table does for
-/// functions this crate's callers haven't implemented.
+/// `C_GetInterfaceList`/`C_GetInterface`
 pub const fn build_function_list_3_2(real: RealFunctions) -> CK_FUNCTION_LIST_3_2 {
     CK_FUNCTION_LIST_3_2 {
         version: CK_VERSION { major: 3, minor: 2 },

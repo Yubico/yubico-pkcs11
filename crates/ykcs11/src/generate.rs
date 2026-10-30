@@ -51,8 +51,7 @@ fn classify_generate_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<KeyFamily
     })
 }
 
-/// `CKA_ID`, required in at least one template — present in both, they must
-/// agree (matches objects.c:2990-2996's cross-check).
+/// `CKA_ID`, if present in both templates, they have to match
 fn resolve_slot(
     public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
@@ -69,8 +68,7 @@ fn resolve_slot(
 }
 
 /// `CKA_KEY_TYPE`, if present in either template, must agree with the
-/// mechanism's own key family (objects.c's per-mechanism template checkers
-/// all validate this) — matches `CKR_TEMPLATE_INCONSISTENT` on mismatch.
+/// mechanism's own key family
 fn check_key_type_consistency(
     family: &KeyFamily,
     public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
@@ -99,17 +97,7 @@ fn check_key_type_consistency(
     Ok(())
 }
 
-/// `CKA_MODULUS_BITS` (RSA), `CKA_EC_PARAMS` (EC/Ed25519/X25519), or
-/// `CKA_PARAMETER_SET` (ML-DSA/ML-KEM) → `KeyType`. Matches
-/// `check_rsa_pubkey_template`/`check_ec_pubkey_template`/
-/// `check_ed_pubkey_template`/`check_x_pubkey_template` (objects.c:2638-
-/// 2923): RSA size and EC curve are required; Ed25519/X25519 default purely
-/// from the mechanism, with `CKA_EC_PARAMS` only checked if the caller
-/// bothered to supply it. ML-DSA/ML-KEM have no C reference to match —
-/// `CKA_PARAMETER_SET` is required here since neither `CKM_ML_DSA_KEY_PAIR_GEN`
-/// nor `CKM_ML_KEM_KEY_PAIR_GEN` alone disambiguates their three parameter
-/// sets; `CKP_ML_DSA_44`/`_65`/`_87` and `CKP_ML_KEM_512`/`_768`/`_1024`
-/// select the corresponding `KeyType` variant.
+/// Validates key type
 fn resolve_key_type(
     family: KeyFamily,
     public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
@@ -205,13 +193,8 @@ fn random_p256_signing_key() -> Result<p256::ecdsa::SigningKey, CK_RV> {
     }
 }
 
-/// Builds a disposable self-signed placeholder certificate for `piv_slot`'s
-/// freshly-generated public key — matches `do_create_empty_cert`
-/// (openssl_utils.c:190-242): a throwaway P-256 signing key, CN "YubiKey PIV
-/// Slot %x" (the real on-device slot byte, e.g. `9a`), self-signed, 10-year
-/// validity (the C reference doesn't document a specific validity window
-/// either — this is cosmetic, meant to be overwritten by a real CA-issued
-/// cert later).
+/// Builds a disposable self-signed placeholder certificate for a newly generated key.
+/// Should be overwritten by a real CA-issued cert later.
 fn build_placeholder_cert(
     piv_slot: PivSlot,
     public_key: &yubikit::keys::PublicKey,
@@ -220,9 +203,8 @@ fn build_placeholder_cert(
 }
 
 /// The actual cert-building logic, taking the throwaway signing key as a
-/// parameter rather than drawing its own randomness — split out purely so
-/// tests can supply a known key and verify the resulting signature, not
-/// just the DER shape.
+/// parameter rather than drawing its own randomness.
+/// Split out so tests can supply a known key and verify the resulting signature
 fn build_placeholder_cert_with_signer(
     piv_slot: PivSlot,
     public_key: &yubikit::keys::PublicKey,
@@ -237,10 +219,10 @@ fn build_placeholder_cert_with_signer(
     let subject: Name = format!("CN=YubiKey PIV Slot {:x}", piv_slot as u8)
         .parse()
         .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
-    // Purely cosmetic -- this placeholder is self-signed and meant to be
+
+    // This is a placeholder self-signed and meant to be
     // overwritten by a real CA-issued cert, so the serial doesn't need to
-    // be unique against anything. Matches both the C reference and
-    // yubikit's own self-signed-cert test, which use the same fixed value.
+    // be unique
     let serial = SerialNumber::new(&[0x01]).map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
     let validity = Validity::from_now(core::time::Duration::new(10 * 365 * 24 * 3600, 0))
         .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
@@ -261,9 +243,7 @@ pub fn generate_key_pair(
     public_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE), CK_RV> {
-    // Matches C_GenerateKeyPair's own login check (ykcs11.c:3587-3592):
-    // requires SO (PIV management key) authentication, not just a verified
-    // PIN — generating a new key is a card-management operation.
+
     require_so_login(slot.login_state)?;
 
     let Some(family) = classify_generate_mechanism(mechanism) else {

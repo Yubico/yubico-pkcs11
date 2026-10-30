@@ -15,8 +15,8 @@
  */
 
 
-//! Debug output matching the C module's format:
-//!   [P11 - INF HH:MM:SS.UUUUUU] file.rs:line (func): message
+// Debug output matching the C module's format:
+//   [P11 - INF HH:MM:SS.UUUUUU] file.rs:line (func): message
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
@@ -24,8 +24,7 @@ use std::time::SystemTime;
 pub static DBG_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static DINOUT_ENABLED: AtomicBool = AtomicBool::new(false);
 
-// Matches common/debug.h's ANSI_* macros: colors are only enabled when
-// building for Linux, empty strings everywhere else (including macOS).
+// Colors are only enabled when building for Linux, empty strings everywhere else (including macOS).
 #[cfg(target_os = "linux")]
 pub const ANSI_RED: &str = "\x1b[31m";
 #[cfg(target_os = "linux")]
@@ -44,10 +43,6 @@ pub const ANSI_BLUE: &str = "";
 #[cfg(not(target_os = "linux"))]
 pub const ANSI_RESET: &str = "";
 
-/// Initialize debug settings from config. Matches `yh_dbg_init` in the C
-/// module: each flag can also be turned on by setting the corresponding
-/// environment variable (to any value, including empty), independently of
-/// the config file, so debug output can be enabled without editing config.
 pub fn dbg_init(dbg: bool, dinout: bool, _libdbg: bool, _debug_file: Option<&str>) {
     DBG_ENABLED.store(dbg || std::env::var("YUBIHSM_PKCS11_DBG").is_ok(), Ordering::SeqCst);
     DINOUT_ENABLED.store(dinout || std::env::var("YUBIHSM_PKCS11_DINOUT").is_ok(), Ordering::SeqCst);
@@ -65,7 +60,7 @@ pub fn is_dinout() -> bool {
     DINOUT_ENABLED.load(Ordering::Relaxed)
 }
 
-/// Format a timestamp like the C code: HH:MM:SS.UUUUUU
+/// Format a timestamp into HH:MM:SS.UUUUUU
 fn timestamp() -> String {
     use std::time::UNIX_EPOCH;
     let now = SystemTime::now()
@@ -79,12 +74,8 @@ fn timestamp() -> String {
     format!("{:02}:{:02}:{:02}.{:06}", hours, minutes, seconds, usecs)
 }
 
-/// Print a debug line matching C format:
+/// Print a debug line in the format
 /// [P11 - INF HH:MM:SS.UUUUUU] file:line (func): message
-///
-/// `$name` is passed explicitly rather than derived automatically: Rust has
-/// no `__func__` equivalent usable from inside a `macro_rules!` body, so
-/// every call site names its own enclosing function.
 #[macro_export]
 macro_rules! dbg_info {
     ($name:literal, $($arg:tt)*) => {
@@ -124,8 +115,7 @@ macro_rules! dbg_warn {
     };
 }
 
-/// DIN/DOUT macros for function entry/exit tracing, matching the C module's
-/// `DIN;`/`DOUT;` exactly: just "In"/"Out", no return code.
+/// DIN/DOUT macros for function entry/exit tracing
 #[macro_export]
 macro_rules! din {
     ($name:literal) => {

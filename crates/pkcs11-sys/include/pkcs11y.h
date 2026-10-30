@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+// TODO Currently not used. Examine whether this should be deleted after yubihsm-pkcs11 complete implementation
+
 #ifndef PKCS11Y_H
 #define PKCS11Y_H
 

@@ -18,14 +18,8 @@
 use crate::digest::DigestOp;
 use pkcs11_sys::*;
 
-/// The DER prefix of a PKCS#1 `DigestInfo` (RFC 8017 §9.2, step 1) for each
-/// hash this project's `C_Sign*` mechanisms support — `DigestInfo ::=
-/// SEQUENCE { digestAlgorithm AlgorithmIdentifier, digest OCTET STRING }`
-/// with a NULL `AlgorithmIdentifier` parameter, independently re-derived
-/// (not transcribed) from first principles to avoid hex-transcription
-/// errors: these are the extremely well known, fixed byte sequences also
-/// hardcoded by most RSA/PKCS#1 implementations. The actual digest bytes
-/// follow immediately after.
+/// The DER prefix of a PKCS#1 `DigestInfo` for each
+/// hash algorithm
 pub fn digest_info_prefix(hash_mechanism: CK_MECHANISM_TYPE) -> Option<&'static [u8]> {
     match hash_mechanism as u32 {
         CKM_SHA_1 => Some(&[
@@ -48,11 +42,6 @@ pub fn digest_info_prefix(hash_mechanism: CK_MECHANISM_TYPE) -> Option<&'static 
     }
 }
 
-/// RSASSA-PKCS1-v1_5 EMSA encoding (RFC 8017 §9.2, step 2): `0x00 0x01 FF
-/// FF .. FF 0x00 || digest_info`, padded out to exactly `modulus_len` bytes
-/// — matches `RSA_padding_add_PKCS1_type_1` in the C reference
-/// (mechanisms.c:239-242), applied host-side before the raw-RSA private-key
-/// operation happens on the device.
 pub fn pkcs1_v15_pad(digest_info: &[u8], modulus_len: usize) -> Result<Vec<u8>, CK_RV> {
     // Need room for 0x00 0x01, at least 8 bytes of 0xFF padding (RFC 8017's
     // minimum), and the 0x00 separator, on top of digest_info itself.
@@ -69,11 +58,6 @@ pub fn pkcs1_v15_pad(digest_info: &[u8], modulus_len: usize) -> Result<Vec<u8>, 
     Ok(out)
 }
 
-/// `CKM_RSA_X_509`'s "no padding" scheme — in the C reference this is
-/// `RSA_padding_add_none`, which left-zero-pads `data` out to `modulus_len`
-/// (rejecting anything longer), the same big-endian left-padding convention
-/// as `BN_bn2binpad` (already relied on elsewhere for ECDSA signature
-/// components).
 pub fn zero_pad(data: &[u8], modulus_len: usize) -> Result<Vec<u8>, CK_RV> {
     if data.len() > modulus_len {
         return Err(CKR_DATA_LEN_RANGE.into());
@@ -100,14 +84,6 @@ pub fn mgf1(seed: &[u8], mask_len: usize, hash_mechanism: CK_MECHANISM_TYPE) -> 
     Ok(out)
 }
 
-/// EMSA-PSS-ENCODE (RFC 8017 §9.1.1), steps 4-12 — the caller has already
-/// computed `m_hash` (step 2, `mHash = Hash(M)`) and picked `salt` (step 3,
-/// `sLen` random bytes); this does the rest: build `M'`, hash it, build the
-/// mask, XOR it into the data block, clear the extra leading bits the RSA
-/// modulus's bit length (as opposed to its byte length) demands, and
-/// append the trailer byte. The result is exactly `em_bits.div_ceil(8)`
-/// bytes — the raw RSA private-key operation (on the device, in this
-/// project) is applied to it unmodified, with no further padding.
 pub fn emsa_pss_encode(
     m_hash: &[u8],
     salt: &[u8],
@@ -143,7 +119,7 @@ pub fn emsa_pss_encode(
     let mut masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
 
     // Step 10-11: zero the leftmost `8 * emLen - emBits` bits of the first
-    // byte — emBits (the modulus's actual bit length minus one) isn't
+    // byte. emBits (the modulus's actual bit length minus one) isn't
     // always a multiple of 8, so emLen*8 can overshoot it by a few bits.
     let extra_bits = em_len * 8 - em_bits;
     if extra_bits > 0 {
@@ -163,9 +139,6 @@ mod tests {
 
     #[test]
     fn digest_info_prefix_lengths_match_rfc_8017_appendix_b1() {
-        // Each prefix plus its hash's actual output length must equal the
-        // standard total DigestInfo length for that hash (RFC 8017 Appendix
-        // B.1): 35/51/67/83 bytes for SHA-1/256/384/512.
         assert_eq!(digest_info_prefix(CKM_SHA_1 as CK_MECHANISM_TYPE).unwrap().len() + 20, 35);
         assert_eq!(digest_info_prefix(CKM_SHA256 as CK_MECHANISM_TYPE).unwrap().len() + 32, 51);
         assert_eq!(digest_info_prefix(CKM_SHA384 as CK_MECHANISM_TYPE).unwrap().len() + 48, 67);

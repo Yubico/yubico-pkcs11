@@ -20,18 +20,11 @@ use crate::sign::{mgf1, zero_pad};
 use crate::verify::rsa_public_raw_op;
 use pkcs11_sys::*;
 
-/// `CKM_RSA_X_509` encrypt: no padding beyond left-zero-padding the message
-/// to `modulus_len`, then the raw RSA public-key operation.
 pub fn rsa_x509_encrypt(n: &[u8], e: &[u8], modulus_len: usize, message: &[u8]) -> Result<Vec<u8>, CK_RV> {
     let padded = zero_pad(message, modulus_len)?;
     rsa_public_raw_op(n, e, &padded, modulus_len)
 }
 
-/// EME-PKCS1-v1_5-ENCODE (RFC 8017 §7.2.1): `0x00 0x02 || PS || 0x00 || M`,
-/// where `PS` is exactly `modulus_len - message.len() - 3` non-zero random
-/// bytes supplied by the caller (`ps.len()` must already be that exact
-/// count — this function only assembles the block and validates shape, it
-/// doesn't draw or filter randomness itself).
 fn eme_pkcs1_v15_encode(message: &[u8], ps: &[u8], modulus_len: usize) -> Result<Vec<u8>, CK_RV> {
     if message.len() + 11 > modulus_len {
         return Err(CKR_DATA_LEN_RANGE.into());
@@ -50,8 +43,6 @@ fn eme_pkcs1_v15_encode(message: &[u8], ps: &[u8], modulus_len: usize) -> Result
     Ok(em)
 }
 
-/// `CKM_RSA_PKCS` encrypt: `eme_pkcs1_v15_encode` then the raw RSA
-/// public-key operation.
 pub fn rsa_pkcs1_encrypt(
     n: &[u8],
     e: &[u8],
@@ -63,9 +54,6 @@ pub fn rsa_pkcs1_encrypt(
     rsa_public_raw_op(n, e, &em, modulus_len)
 }
 
-/// EME-OAEP-ENCODE (RFC 8017 §7.1.1): the inverse of `decrypt.rs`'s
-/// `eme_oaep_unpad`. `seed` must be exactly `hLen` (the hash's output size)
-/// random bytes, supplied by the caller.
 fn eme_oaep_encode(
     message: &[u8],
     label: &[u8],
@@ -104,8 +92,6 @@ fn eme_oaep_encode(
     Ok(em)
 }
 
-/// `CKM_RSA_PKCS_OAEP` encrypt: `eme_oaep_encode` then the raw RSA
-/// public-key operation.
 #[allow(clippy::too_many_arguments)]
 pub fn rsa_oaep_encrypt(
     n: &[u8],

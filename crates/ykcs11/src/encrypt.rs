@@ -22,10 +22,6 @@ use yubikit::keys::PublicKey;
 
 use crate::backend::PivBackend;
 
-/// Everything needed to finish an encrypt operation once `C_EncryptFinal`
-/// (or `C_Encrypt`'s equivalent single-shot update+final) is called —
-/// stashed in `PivBackend::SessionData` by `encrypt_init`, opaque to the
-/// shared engine.
 pub struct EncryptState {
     n: Vec<u8>,
     e: Vec<u8>,
@@ -55,16 +51,10 @@ pub fn encrypt_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    // No login check — matches ykcs11.c, which has none anywhere in the
-    // C_Encrypt* family (same reasoning as C_Verify*: only public key
-    // material is ever touched).
-
     let Some(mech_kind) = classify_crypt_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
-    // Matches decrypt_mechanism_init's CKK_RSA check (mechanisms.c:686-689),
-    // shared by C_EncryptInit — every encrypt mechanism is RSA-only.
     let PublicKey::Rsa(k) = public_key else {
         return Err(CKR_KEY_TYPE_INCONSISTENT.into());
     };
@@ -160,10 +150,6 @@ pub fn encrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) 
     }
 }
 
-/// `PS` for EME-PKCS1-v1_5-ENCODE must be random *and* non-zero (RFC 8017
-/// §7.2.1 step 2(b)) — matches `RSA_padding_add_PKCS1_type_2`'s own
-/// redraw-on-zero loop. `getrandom` is this module's OS-backed randomness
-/// source, same as used for `C_GenerateRandom` and PSS's salt.
 fn non_zero_random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     let mut buf = vec![0u8; len];
     getrandom::fill(&mut buf).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;
@@ -175,9 +161,6 @@ fn non_zero_random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     Ok(buf)
 }
 
-/// OAEP's seed has no non-zero requirement (unlike PKCS#1 v1.5's `PS`) — a
-/// separate function (rather than reusing `non_zero_random_bytes`) to keep
-/// that distinction explicit at the call site.
 fn random_bytes(len: usize) -> Result<Vec<u8>, CK_RV> {
     let mut buf = vec![0u8; len];
     getrandom::fill(&mut buf).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;

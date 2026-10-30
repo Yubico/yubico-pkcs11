@@ -15,7 +15,7 @@
  */
 
 
-//! Configuration parsing matching the C module's yubihsm_pkcs11.conf format.
+// Parsing of the configurations file format (yubihsm_pkcs11.conf)
 
 use std::env;
 use std::fs;
@@ -84,7 +84,7 @@ pub fn parse_config(config_string: &str) -> Config {
     config
 }
 
-/// Load config from file.
+/// Load configurations from file.
 pub fn load_from_file(path: &str) -> Config {
     let mut config = Config::default();
 
@@ -119,10 +119,7 @@ pub fn load_from_file(path: &str) -> Config {
     config
 }
 
-/// Fold `other` into `config`: scalar settings already present in `config`
-/// win (matches `cmdline_parser_config_file`'s `params.override = 0`, which
-/// never overwrites a value already given on the pReserved "command line");
-/// connectors accumulate from both sources.
+/// Fold `other` into `config`
 fn merge(config: &mut Config, other: Config) {
     config.connectors.extend(other.connectors);
     config.debug |= other.debug;
@@ -138,17 +135,12 @@ fn merge(config: &mut Config, other: Config) {
     config.device_pubkey = config.device_pubkey.take().or(other.device_pubkey);
 }
 
-/// Resolve config, matching the C module's `C_Initialize`: pReserved is
+/// Parse configurations. pReserved is
 /// parsed first (`cmdline_parser_string_ext`), then a config file is parsed
-/// on top of it (`cmdline_parser_config_file`, `override = 0`) — settings
-/// already present from pReserved are kept, everything else (including
-/// `debug`/`dinout`/`libdebug`) is filled in from the file even when the
-/// file defines no connectors of its own.
+/// on top of it (`cmdline_parser_config_file`, `override = 0`)
 ///
-/// No default connector is substituted if none was found: the C module
-/// treats a missing connector as a hard `CKR_ARGUMENTS_BAD` failure
-/// (`args_info.connector_given == 0` in `C_Initialize`), not a fallback to
-/// localhost — callers must check `config.connectors.is_empty()`.
+/// No default connector is substituted if none was found, causing a
+/// hard `CKR_ARGUMENTS_BAD` failure
 pub fn resolve(reserved: Option<&str>) -> Config {
     let mut config = Config::default();
 

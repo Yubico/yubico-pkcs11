@@ -16,20 +16,12 @@
 
 
 //! Maps the connected device's reported algorithm capabilities to the
-//! `CKM_*` mechanisms `C_GetMechanismList` should report — dynamic, unlike
-//! ykcs11's fixed table, matching `get_mechanism_list` in the original C
-//! module's `util_pkcs11.c`, which builds the list from
-//! `slot->connector->device_info.algorithms[]`.
+//! `CKM_*` mechanisms `C_GetMechanismList` should report
 
 use pkcs11_sys::*;
 use yubihsmrs::object::ObjectAlgorithm;
 
-/// Yubico HSM vendor mechanisms. Not in the OASIS headers our `pkcs11-sys`
-/// vendors — they're defined in yubihsm-shell's own `pkcs11y.h`, and their
-/// values depend on yubihsm-shell's own libyubihsm object-type constants
-/// (`YH_WRAP_KEY`/`YH_PUBLIC_WRAP_KEY`), which have nothing to do with the
-/// PKCS#11 spec itself, so they don't belong in the shared crate. Values
-/// computed the same way as that header:
+/// Yubico HSM vendor mechanisms. Values computed as:
 /// `CKM_VENDOR_DEFINED (0x80000000) | YUBICO_BASE_VENDOR (0x59554200) | <YH object type>`.
 const CKM_YUBICO_AES_CCM_WRAP: CK_MECHANISM_TYPE = 0xD9554204; // | YH_WRAP_KEY (0x04)
 const CKM_YUBICO_RSA_WRAP: CK_MECHANISM_TYPE = 0xD9554209; // | YH_PUBLIC_WRAP_KEY (0x09)
@@ -46,9 +38,6 @@ pub struct MechanismInfo {
     pub flags: CK_FLAGS,
 }
 
-/// Min/max RSA key size in *bits* across the device's supported algorithms,
-/// matching `find_minmax_rsa_key_length_in_bits` in the C module's
-/// `util_pkcs11.c`.
 fn minmax_rsa_key_length_in_bits(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, CK_ULONG) {
     let mut min = 0;
     let mut max = 0;
@@ -69,8 +58,6 @@ fn minmax_rsa_key_length_in_bits(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, C
     (min, max)
 }
 
-/// Min/max EC key size in *bits*, matching
-/// `find_minmax_ec_key_length_in_bits`.
 fn minmax_ec_key_length_in_bits(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, CK_ULONG) {
     let mut min = 0;
     let mut max = 0;
@@ -93,8 +80,6 @@ fn minmax_ec_key_length_in_bits(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, CK
     (min, max)
 }
 
-/// Min/max AES key size in *bytes*, matching
-/// `find_minmax_aes_key_length_in_bytes`.
 fn minmax_aes_key_length_in_bytes(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, CK_ULONG) {
     let mut min = 0;
     let mut max = 0;
@@ -115,7 +100,6 @@ fn minmax_aes_key_length_in_bytes(algorithms: &[ObjectAlgorithm]) -> (CK_ULONG, 
     (min, max)
 }
 
-/// Matches `get_mechanism_info` in the C module's `util_pkcs11.c`.
 pub fn mechanism_info(algorithms: &[ObjectAlgorithm], mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
     let rsa = || minmax_rsa_key_length_in_bits(algorithms);
     let ec = || minmax_ec_key_length_in_bits(algorithms);

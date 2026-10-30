@@ -24,9 +24,6 @@ use pkcs11_sys::*;
 use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey, RsaKeySize};
 use yubikit::piv::{KeyType, Slot as PivSlot};
 
-/// Everything needed to finish a signing operation once `C_SignFinal` (or
-/// `C_Sign`'s equivalent single-shot update+final) is called — stashed in
-/// `PivBackend::SessionData` by `sign_init`, opaque to the shared engine.
 pub struct SignState {
     slot: PivSlot,
     key_type: KeyType,
@@ -34,12 +31,7 @@ pub struct SignState {
     acc: Accumulator,
 }
 
-/// Where `C_SignUpdate` data goes before it reaches the device — a real
-/// hash for the mechanisms with a built-in digest step, or just the raw
-/// bytes as given for the "raw"/pre-hashed mechanisms (matches
-/// `digest_mechanism_update`'s own `if(md_ctx) hash else buffer raw`
-/// branch, mechanisms.c:647-662 — `md_ctx` is only ever set for the 8
-/// hash-combined mechanisms in `sign_mechanism_init`).
+/// Collects the data from `C_SignUpdate` before it reaches the device
 pub(crate) enum Accumulator {
     Hash(DigestOp),
     Raw(Vec<u8>),
@@ -62,31 +54,18 @@ impl Accumulator {
 }
 
 enum SignAlgorithm {
-    /// `CKM_RSA_X_509` — no PKCS#1 structure at all, just left-zero-pad
-    /// whatever bytes were accumulated out to `modulus_len`.
+    /// `CKM_RSA_X_509`. No PKCS#1 structure, just left-zero-pad
+    /// the bytes out to `modulus_len`.
     RsaX509 { modulus_len: usize },
-    /// `CKM_RSA_PKCS` (raw, `hash_mechanism: None` — the accumulated bytes
-    /// are PKCS#1-padded directly, with no `DigestInfo` wrapping added) or
-    /// one of the `CKM_SHAx_RSA_PKCS` combined mechanisms (`Some`, needs
-    /// `DigestInfo`-wrapping the hash before padding). `modulus_len` is the
-    /// target padded size either way.
+    /// `CKM_RSA_PKCS`, raw, `hash_mechanism: None`
     RsaPkcs1 {
         hash_mechanism: Option<CK_MECHANISM_TYPE>,
         modulus_len: usize,
     },
-    /// Byte width of one coordinate (32 for P-256, 48 for P-384) — the
-    /// device's DER-encoded `r`/`s` are each padded out to this length.
-    /// Covers both `CKM_ECDSA` (raw) and `CKM_ECDSA_SHAx` (hashed) — the
-    /// device call and DER-stripping step are identical either way.
+    /// `CKM_ECDSA` (raw) and `CKM_ECDSA_SHAx` (hashed)
     Ecdsa { curve_byte_len: usize },
     /// `CKM_RSA_PKCS_PSS` (raw) or one of the `CKM_SHAx_RSA_PKCS_PSS`
-    /// combined mechanisms — covers both the same way `RsaPkcs1` does
-    /// (`Accumulator` already holds either the real hash or the caller's
-    /// pre-hashed bytes by the time `sign_final` runs); the PSS parameters
-    /// themselves (`hashAlg`/`mgf`/`sLen`) came from the mechanism's
-    /// `pParameter` at `sign_init` time either way, since PSS always
-    /// requires them regardless of whether the mechanism is raw or
-    /// combined (mechanisms.c:150-179).
+    /// combined mechanisms
     RsaPss {
         hash_mechanism: CK_MECHANISM_TYPE,
         mgf_hash_mechanism: CK_MECHANISM_TYPE,
@@ -94,27 +73,13 @@ enum SignAlgorithm {
         modulus_len: usize,
         modulus_bits: usize,
     },
-    /// `CKM_EDDSA` — PureEdDSA signs the whole accumulated message directly
-    /// (no hash, no padding); the device returns a fixed 64-byte signature
-    /// as-is (objects.c:666's DER-stripping `switch` has no case for
-    /// `YKPIV_ALGO_ED25519`, unlike the EC algorithms).
+    /// `CKM_EDDSA`
     Eddsa,
-    /// `CKM_ML_DSA` — "pure" ML-DSA (FIPS 204) signs the whole accumulated
-    /// message directly too (no hash, no padding, default empty context),
-    /// same as `Eddsa` above; see this module's own doc comment for the
-    /// scope/rationale. No C reference.
+    /// `CKM_ML_DSA`
     MlDsa,
 }
 
-/// Validates `CK_SIGN_ADDITIONAL_CONTEXT` (PKCS#11 3.2) for `CKM_ML_DSA` —
-/// shared by `sign_init` and `verify::verify_init`, since both need the
-/// identical check. No parameter at all (`NULL`/zero-length `pParameter`,
-/// the overwhelmingly common case) is accepted as the default: empty
-/// context, non-deterministic hedging — matching the device's own behavior
-/// (see this module's doc comment). A non-empty `pContext` is rejected
-/// outright (nothing in this module's device call path can pass one
-/// through), and so is `CKH_DETERMINISTIC_REQUIRED` (the device always
-/// hedges internally).
+/// Validates `CK_SIGN_ADDITIONAL_CONTEXT` for `CKM_ML_DSA`
 pub(crate) fn resolve_ml_dsa_context(parameter: &[u8]) -> Result<(), CK_RV> {
     if parameter.is_empty() {
         return Ok(());
@@ -122,9 +87,8 @@ pub(crate) fn resolve_ml_dsa_context(parameter: &[u8]) -> Result<(), CK_RV> {
     if parameter.len() != std::mem::size_of::<CK_SIGN_ADDITIONAL_CONTEXT>() {
         return Err(CKR_MECHANISM_PARAM_INVALID.into());
     }
-    // SAFETY: length just checked above; read_unaligned for the same reason
-    // as `resolve_pss_params` (PKCS#11 callers aren't guaranteed to hand us
-    // an aligned pointer).
+    // SAFETY: length checked above; read_unaligned since PKCS#11 callers are not
+    // guaranteed to enter an aligned pointer).
     let ctx: CK_SIGN_ADDITIONAL_CONTEXT = unsafe {
         std::ptr::read_unaligned(parameter.as_ptr() as *const CK_SIGN_ADDITIONAL_CONTEXT)
     };
@@ -134,15 +98,11 @@ pub(crate) fn resolve_ml_dsa_context(parameter: &[u8]) -> Result<(), CK_RV> {
     Ok(())
 }
 
-/// FIPS 204 Table 2's fixed signature length per parameter set.
 fn ml_dsa_signature_len(parameter_set: MlDsaParameterSet) -> Result<CK_ULONG, CK_RV> {
     Ok(match parameter_set {
         MlDsaParameterSet::MlDsa44 => 2420,
         MlDsaParameterSet::MlDsa65 => 3309,
         MlDsaParameterSet::MlDsa87 => 4627,
-        // yubikit::keys::MlDsaParameterSet is #[non_exhaustive] -- every
-        // variant that exists today is covered above, this only guards
-        // future additions.
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
@@ -153,8 +113,6 @@ fn rsa_key_type(size: RsaKeySize) -> Result<KeyType, CK_RV> {
         RsaKeySize::Rsa2048 => KeyType::Rsa2048,
         RsaKeySize::Rsa3072 => KeyType::Rsa3072,
         RsaKeySize::Rsa4096 => KeyType::Rsa4096,
-        // RsaKeySize is #[non_exhaustive] upstream; PIV only ever reports
-        // one of the four variants above today.
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
@@ -163,8 +121,6 @@ fn ec_key_type(curve: EcCurve) -> Result<(KeyType, usize), CK_RV> {
     Ok(match curve {
         EcCurve::P256 => (KeyType::EccP256, 32),
         EcCurve::P384 => (KeyType::EccP384, 48),
-        // PIV only ever generates P-256/P-384 EC keys; any other curve here
-        // would mean the key was imported/discovered oddly.
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
@@ -182,11 +138,6 @@ pub fn sign_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    // Matches ykcs11.c's own re-check in C_SignInit, right after key-handle
-    // validation and before mechanism setup (ykcs11.c:2886-2891): "This
-    // allows signing when logged in as SO and then doing a context-specific
-    // login to sign" — the condition it actually guards is just "someone is
-    // logged in at all".
     if slot.login_state == LoginState::Public {
         return Err(CKR_USER_NOT_LOGGED_IN.into());
     }
@@ -195,14 +146,6 @@ pub fn sign_init(
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
-    // Unlike the C reference (whose `default:` mechanism-switch case only
-    // ever checks "is this an RSA key", regardless of whether the mechanism
-    // is actually ECDSA- or EdDSA-shaped — mechanisms.c:181-186 — and then
-    // silently signs with whatever algorithm the *key* turns out to be),
-    // this requires the mechanism and key family to actually agree.
-    // Stricter than ykcs11.c in this one narrow edge case (mismatched
-    // mechanism/key-family pairs that no correctly-written caller would
-    // ever hit), never looser.
     let (key_type, algo, out_len) = match (&mech_kind, public_key) {
         (MechanismKind::RsaX509, PublicKey::Rsa(k)) => {
             let modulus_len = k.key_size.bit_len() / 8;
@@ -352,8 +295,7 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
 
     match state.algo {
         SignAlgorithm::RsaX509 { modulus_len } => {
-            // Matches `RSA_padding_add_none` (mechanisms.c:251-254) — no
-            // PKCS#1 structure, just left-zero-padding.
+            // No PKCS#1 structure, just left-zero-padding.
             let padded = zero_pad(&message, modulus_len)?;
             piv.sign(state.slot, state.key_type, &padded)
                 .map_err(piv_error_to_rv)
@@ -362,12 +304,6 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
             hash_mechanism,
             modulus_len,
         } => {
-            // Matches sign_mechanism_final's `prepare_rsa_signature` (wrap
-            // the digest in a PKCS#1 DigestInfo, only when a hash was
-            // actually computed) followed by `RSA_padding_add_PKCS1_type_1`
-            // (mechanisms.c:218-230) — both done host-side, since the
-            // device only performs the raw RSA private-key operation on
-            // whatever fully-padded block it's given.
             let to_pad = match hash_mechanism {
                 Some(h) => {
                     let prefix =
@@ -377,10 +313,7 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
                     v.extend_from_slice(&message);
                     v
                 }
-                // Raw CKM_RSA_PKCS: whatever the caller handed in goes
-                // straight into PKCS#1 padding, with no DigestInfo wrapping
-                // added on top — the caller is responsible for that if they
-                // want it.
+                // Raw CKM_RSA_PKCS
                 None => message,
             };
             let padded = pkcs1_v15_pad(&to_pad, modulus_len)?;
@@ -395,14 +328,6 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
             modulus_len,
             modulus_bits,
         } => {
-            // Matches `RSA_padding_add_PKCS1_PSS_mgf1` (mechanisms.c:224-
-            // 226): random salt (RFC 8017 §9.1.1 step 3 — OpenSSL draws it
-            // from its own RNG internally; `getrandom` is this module's
-            // equivalent OS-backed source, same as `C_GenerateRandom`'s),
-            // then the actual EMSA-PSS-ENCODE. `message` here is `mHash` —
-            // either the hash this function just computed (combined
-            // mechanisms) or whatever pre-hashed bytes the caller supplied
-            // directly (raw `CKM_RSA_PKCS_PSS`).
             let mut salt = vec![0u8; salt_len];
             getrandom::fill(&mut salt).map_err(|_| CK_RV::from(CKR_FUNCTION_FAILED))?;
             let em = emsa_pss_encode(
@@ -417,23 +342,8 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
                 .map_err(piv_error_to_rv)
         }
         SignAlgorithm::Ecdsa { curve_byte_len } => {
-            // The device signs the accumulated bytes directly for ECDSA —
-            // no DigestInfo wrapping (that's an RSA PKCS#1 concept) —
-            // matching sign_mechanism_final's padding `switch` having no
-            // case at all for ECDSA (padding stays 0, buf/buf_len pass
-            // through unmodified from the digest step, or straight from the
-            // caller for raw CKM_ECDSA; mechanisms.c:232-257). But a hash
-            // longer than the curve's field width (e.g. SHA-384's 48 bytes
-            // against P-256's 32-byte field) must be left-truncated to
-            // `curve_byte_len` first — `yubikit::piv::sign()` is a dumb
-            // passthrough (its own doc comment says `message` must already
-            // be "pre-padded/pre-hashed data appropriate for the key type"),
-            // so this doesn't happen for free the way it does in the C
-            // reference, where libykpiv's `_general_authenticate` applies
-            // this exact clamp just before building the APDU
-            // (lib/ykpiv.c:1764-1777) — matching ECDSA's own
-            // leftmost-bits-of-the-hash rule (SEC1/ANSI X9.62) for when the
-            // digest is longer than the curve order.
+            // The device signs the accumulated bytes directly for ECDSA,
+            // no DigestInfo wrapping
             let truncated = if message.len() > curve_byte_len {
                 &message[..curve_byte_len]
             } else {
@@ -451,13 +361,7 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
 }
 
 /// Converts the device's DER-encoded ECDSA signature into PKCS#11's
-/// fixed-width `r || s` format — matches `do_strip_DER_encoding_from_ECSIG`
-/// (openssl_utils.c:638-663), which does the same `BN_bn2binpad`-style
-/// left-padding via OpenSSL instead. `ecdsa::Signature::from_der` (exposed
-/// through `p256`/`p384`, the same curve crates `yubikit` itself already
-/// depends on) already left-zero-pads each coordinate to the curve's fixed
-/// field width and validates `r`/`s` are in range, so no hand-rolled DER
-/// parsing is needed here.
+/// fixed-width `r || s` format
 fn strip_ecdsa_der(der_sig: &[u8], curve_byte_len: usize) -> Result<Vec<u8>, CK_RV> {
     match curve_byte_len {
         32 => Ok(p256::ecdsa::Signature::from_der(der_sig)

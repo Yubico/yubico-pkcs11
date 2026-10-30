@@ -24,9 +24,6 @@ use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 use yubikit::piv::Slot as PivSlot;
 
-/// Everything needed to finish a decrypt operation once `C_DecryptFinal` (or
-/// `C_Decrypt`'s equivalent single-shot update+final) is called — stashed in
-/// `PivBackend::SessionData` by `decrypt_init`, opaque to the shared engine.
 pub struct DecryptState {
     slot: PivSlot,
     modulus_len: usize,
@@ -35,12 +32,11 @@ pub struct DecryptState {
 }
 
 enum DecryptAlgorithm {
-    /// `CKM_RSA_X_509` — the raw RSA private-key operation's output, once
-    /// zero-padded to `modulus_len`, *is* the plaintext; no unwrapping.
+    /// `CKM_RSA_X_509`
     RsaX509,
-    /// `CKM_RSA_PKCS` — EME-PKCS1-v1_5-DECODE.
+    /// `CKM_RSA_PKCS`
     RsaPkcs1,
-    /// `CKM_RSA_PKCS_OAEP` — EME-OAEP-DECODE.
+    /// `CKM_RSA_PKCS_OAEP`
     RsaOaep {
         hash_mechanism: CK_MECHANISM_TYPE,
         mgf_hash_mechanism: CK_MECHANISM_TYPE,
@@ -60,9 +56,6 @@ pub fn decrypt_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    // Matches ykcs11.c's own re-check in C_DecryptInit, right after
-    // key-handle validation and before mechanism setup (ykcs11.c:2365-2370)
-    // — structurally identical to C_SignInit's equivalent check.
     if slot.login_state == LoginState::Public {
         return Err(CKR_USER_NOT_LOGGED_IN.into());
     }
@@ -71,8 +64,6 @@ pub fn decrypt_init(
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
-    // Matches decrypt_mechanism_init's CKK_RSA check (mechanisms.c:686-689)
-    // — every decrypt mechanism is RSA-only.
     let PublicKey::Rsa(k) = public_key else {
         return Err(CKR_KEY_TYPE_INCONSISTENT.into());
     };
@@ -134,10 +125,8 @@ pub fn decrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) 
         .take()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
 
-    // The ciphertext must be exactly one RSA block — `yubikit::piv::decrypt`
-    // itself infers the key size purely from this length, so a wrong-length
-    // input is caught explicitly here rather than surfacing as whatever
-    // generic error that inference failure happens to produce.
+    // The ciphertext must be exactly one RSA block. `yubikit::piv::decrypt`
+    // itself infers the key size purely from this length
     if state.buf.len() != state.modulus_len {
         return Err(CKR_ENCRYPTED_DATA_LEN_RANGE.into());
     }
@@ -148,11 +137,6 @@ pub fn decrypt_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) 
         .as_mut()
         .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
     let raw = piv.decrypt(state.slot, &state.buf).map_err(piv_error_to_rv)?;
-    // The raw RSA private-key operation's output can be shorter than
-    // `modulus_len` (a leading zero byte, as EME-PKCS1-v1_5/OAEP always
-    // produce, doesn't round-trip through the device's own big-integer
-    // representation) — zero-pad back out before any EME-decode math, which
-    // assumes a fixed-width block.
     let em = zero_pad(&raw, state.modulus_len)?;
 
     match state.algo {

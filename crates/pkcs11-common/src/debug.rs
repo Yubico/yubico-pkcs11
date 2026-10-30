@@ -15,9 +15,9 @@
  */
 
 
-//! Debug output matching both modules' format:
-//!   ykcs11:      "DBG: file:line (func): message"
-//!   yubihsm:     "[P11 - INF HH:MM:SS.UUUUUU] file:line (func): message"
+// Debug output matching both ykcs11 and yubihsm-pkcs11 modules' format:
+//   ykcs11:      "DBG: file:line (func): message"
+//   yubihsm:     "[P11 - INF HH:MM:SS.UUUUUU] file:line (func): message"
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -31,16 +31,11 @@ pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed) > 0
 }
 
-/// The raw verbosity tier (`YKCS11_DBG`'s value) — `0` is silent, `1` is the
-/// usual `yk_dbg!`/debug-log tier, `2+` additionally enables trace-level
-/// output (e.g. `yubikit`'s raw APDU traffic logging).
+/// The raw verbosity tier
 pub fn verbose_level() -> u8 {
     VERBOSE.load(Ordering::Relaxed)
 }
 
-/// Whether trace-tier output (`YKCS11_DBG>=2`) should be shown — distinct
-/// from `is_verbose()`'s `YKCS11_DBG>=1` threshold since trace output (raw
-/// APDU hex dumps) is far noisier than the regular debug messages.
 pub fn is_trace_verbose() -> bool {
     verbose_level() >= 2
 }

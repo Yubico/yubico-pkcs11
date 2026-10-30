@@ -256,39 +256,24 @@ pub fn mechanism_table() -> Vec<MechanismEntry> {
                 | CKF_EC_NAMEDCURVE as CK_FLAGS
                 | CKF_EC_UNCOMPRESS as CK_FLAGS,
         },
-        // No C reference entry to match (see generate.rs's own doc comment)
-        // — min/max key size are 0 like the digest mechanisms above, since
-        // ML-DSA has no bit-length key size concept (yubikit's own
-        // `KeyType::bit_len()` likewise returns 0 for it); the actual
-        // parameter set is selected via `CKA_PARAMETER_SET`, not this field.
         MechanismEntry {
             mechanism: CKM_ML_DSA_KEY_PAIR_GEN.into(),
             min_key_size: 0,
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
         },
-        // Same rationale as the ML-DSA entry above.
         MechanismEntry {
             mechanism: CKM_ML_KEM_KEY_PAIR_GEN.into(),
             min_key_size: 0,
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_GENERATE_KEY_PAIR as CK_FLAGS,
         },
-        // `CKM_ML_KEM` itself -- `C_EncapsulateKey`/`C_DecapsulateKey`
-        // (PKCS#11 3.2, see encapsulate.rs's own doc comment). No C
-        // reference; `CKF_ENCAPSULATE`/`CKF_DECAPSULATE` (not
-        // `CKF_GENERATE_KEY_PAIR`) are this mechanism's actual capability
-        // flags per the spec.
         MechanismEntry {
             mechanism: CKM_ML_KEM.into(),
             min_key_size: 0,
             max_key_size: 0,
             flags: CKF_HW as CK_FLAGS | CKF_ENCAPSULATE as CK_FLAGS | CKF_DECAPSULATE as CK_FLAGS,
         },
-        // No C reference entry to match (see sign.rs's own doc comment) —
-        // same "no bit-length key size concept" rationale as the keygen
-        // entries above. Only "pure" CKM_ML_DSA is supported, not the
-        // CKM_HASH_ML_DSA_* prehash family.
         MechanismEntry {
             mechanism: CKM_ML_DSA.into(),
             min_key_size: 0,

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use crate::session::{LoginState, compute_state};
 use crate::str_pad;
@@ -49,9 +48,6 @@ pub struct TokenInfo {
     pub max_pin_len: CK_ULONG,
     pub hardware_version: (u8, u8),
     pub firmware_version: (u8, u8),
-    /// Extra CKF_* bits ORed onto the flags the engine already sets
-    /// (CKF_RNG | CKF_LOGIN_REQUIRED | CKF_TOKEN_INITIALIZED |
-    /// CKF_USER_PIN_INITIALIZED) — e.g. CKF_USER_PIN_LOCKED.
     pub extra_flags: CK_FLAGS,
 }
 
@@ -62,11 +58,7 @@ pub struct MechanismInfo {
     pub flags: CK_FLAGS,
 }
 
-/// `C_FindObjectsInit`/`C_FindObjects`/`C_FindObjectsFinal` state for one
-/// session. Generic (not part of `Backend::SessionData`) since the
-/// find-object protocol itself — one active search at a time, a fixed
-/// result list handed out incrementally — is identical regardless of what
-/// a backend's objects actually are.
+/// `C_FindObjectsInit`/`C_FindObjects`/`C_FindObjectsFinal` state for one session.
 #[derive(Default)]
 pub struct FindOp {
     pub active: bool,
@@ -75,51 +67,26 @@ pub struct FindOp {
 }
 
 /// `C_SignInit`/`C_Sign`/`C_SignUpdate`/`C_SignFinal` state for one session
-/// — just enough for the engine's own generic bookkeeping (is a signing
-/// operation active, and how many bytes will it produce, needed to answer a
-/// length-only query without asking the backend again). Everything
-/// mechanism/key-specific (hash state, which key, which padding) lives in
-/// `Backend::SessionData`, set by `Backend::sign_init` and read back by
-/// `Backend::sign_update`/`Backend::sign_final` — the engine itself never
-/// looks at it.
 #[derive(Default)]
 pub struct SignOp {
     pub active: bool,
     pub out_len: CK_ULONG,
 }
 
-/// `C_VerifyInit`/`C_Verify`/`C_VerifyUpdate`/`C_VerifyFinal` state for one
-/// session — just whether a verify operation is active. Unlike `SignOp`,
-/// there's no `out_len` to pre-compute: verification never produces output
-/// bytes, so there's no length-query (`pSignature == NULL`) convention to
-/// support in the first place — the caller already knows the signature
-/// length (it made the signature, or received it from someone who did).
+/// `C_VerifyInit`/`C_Verify`/`C_VerifyUpdate`/`C_VerifyFinal` state for one session
 #[derive(Default)]
 pub struct VerifyOp {
     pub active: bool,
 }
 
-/// `C_EncryptInit`/`C_Encrypt`/`C_EncryptUpdate`/`C_EncryptFinal` state for
-/// one session — same shape as `SignOp`: unlike decryption, encryption's
-/// output length (`modulus_len`, for every RSA mechanism implemented so far)
-/// is always known from the key alone, before any padding/crypto work runs.
+/// `C_EncryptInit`/`C_Encrypt`/`C_EncryptUpdate`/`C_EncryptFinal` state for one session
 #[derive(Default)]
 pub struct EncryptOp {
     pub active: bool,
     pub out_len: CK_ULONG,
 }
 
-/// `C_DecryptInit`/`C_Decrypt`/`C_DecryptUpdate`/`C_DecryptFinal` state for
-/// one session. Unlike `SignOp`, the output length can't be known upfront
-/// from the key alone (removing PKCS#1/OAEP padding shrinks the plaintext by
-/// a variable amount only known after actually doing the device round-trip
-/// and the unpadding) — so `pending` caches the one-time result of that work
-/// the first time it's needed (whether that's a length-query call or the
-/// real one), and every subsequent call for this same operation (serving a
-/// `CKR_BUFFER_TOO_SMALL` retry, or the matching real call after a length
-/// query) is served from the cache instead of re-touching the device. This
-/// relies on PKCS#11's own documented idiom of passing identical input
-/// across the length-query and real calls of a one-shot function.
+/// `C_DecryptInit`/`C_Decrypt`/`C_DecryptUpdate`/`C_DecryptFinal` state for one session.
 #[derive(Default)]
 pub struct DecryptOp {
     pub active: bool,
@@ -131,12 +98,6 @@ pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
     pub flags: CK_FLAGS,
     pub find_op: FindOp,
-    /// `C_DigestInit`/`C_Digest`/`C_DigestUpdate`/`C_DigestFinal` state —
-    /// `None` when no digest operation is active. Tracked independently of
-    /// `find_op`, matching both C references treating "object search" and
-    /// "active crypto operation" as separate state machines (ykcs11.c's
-    /// `session->find_obj` vs `session->op_info`; yubihsm_pkcs11.c's
-    /// per-session search state vs `session->operation`).
     pub digest_op: Option<DigestOp>,
     pub sign_op: SignOp,
     pub verify_op: VerifyOp,
@@ -145,9 +106,7 @@ pub struct Session<S> {
     pub data: S,
 }
 
-/// One slot: backend-specific slot data plus whatever sessions are open on
-/// it. Login state is tracked per-slot (shared by every session on that
-/// slot), matching the Cryptoki model of one token per slot.
+/// Backend-specific slot data including its open sessions
 pub struct Slot<B: Backend> {
     pub login_state: LoginState,
     pub sessions: HashMap<CK_SESSION_HANDLE, Session<B::SessionData>>,
@@ -173,10 +132,6 @@ pub struct ModuleState<B: Backend> {
 }
 
 /// Backend-specific policy plugged into the shared Cryptoki engine.
-///
-/// A `Backend` never touches `CK_*` dispatch bookkeeping — the engine owns
-/// that. It only answers "what does this slot/token look like" and "how do
-/// I talk to the real device".
 pub trait Backend: Sized + 'static {
     /// Extra per-slot state (e.g. the live PC/SC connection or HSM handle).
     type SlotData: Send;
@@ -187,13 +142,13 @@ pub trait Backend: Sized + 'static {
 
     fn library_info() -> LibraryInfo;
 
-    /// Parse the (already-extracted) `pReserved` string from
+    /// Parse the already-extracted `pReserved` string from
     /// `C_Initialize` and build the initial module/slot state.
     fn initialize(reserved: Option<&str>)
     -> Result<(Self::ModuleData, Vec<Self::SlotData>), CK_RV>;
 
     /// Backend-specific cleanup run during `C_Finalize`, before the module
-    /// state is dropped. Default: nothing.
+    /// state is dropped
     fn finalize(_data: &mut Self::ModuleData) {}
 
     /// Re-scan for slots/tokens. Called at the start of every
@@ -204,22 +159,21 @@ pub trait Backend: Sized + 'static {
     }
 
     fn is_present(data: &Self::SlotData) -> bool;
+
     fn slot_info(slot_id: CK_SLOT_ID, data: &Self::SlotData) -> SlotInfo;
-    /// `None` means no token present (translated to `CKR_TOKEN_NOT_PRESENT`).
+
+    /// Returns `None` if no token present (translates to `CKR_TOKEN_NOT_PRESENT`).
     fn token_info(data: &mut Self::SlotData) -> Option<TokenInfo>;
 
-    /// The `CKM_*` mechanisms this token supports, in the order they should
-    /// be reported. Called with the token already confirmed present.
+    /// The `CKM_*` mechanisms this token supports
     fn mechanism_list(data: &Self::SlotData) -> Vec<CK_MECHANISM_TYPE>;
 
-    /// Details for one mechanism. `None` means the mechanism isn't
-    /// supported (translated to `CKR_MECHANISM_INVALID`). Called with the
-    /// token already confirmed present.
+    /// Details for one mechanism.
+    /// Returns `None` if the mechanism is not supported (translates to `CKR_MECHANISM_INVALID`)
     fn mechanism_info(data: &Self::SlotData, mechanism: CK_MECHANISM_TYPE)
     -> Option<MechanismInfo>;
 
-    /// Maximum concurrent sessions per slot, or `None` for unbounded
-    /// (`CK_EFFECTIVELY_INFINITE`).
+    /// Maximum concurrent sessions per slot, or `None` for unbounded (`CK_EFFECTIVELY_INFINITE`).
     fn max_sessions(_data: &Self::SlotData) -> Option<usize> {
         None
     }
@@ -233,9 +187,6 @@ pub trait Backend: Sized + 'static {
     /// `username` is the PKCS#11 3.0 `C_LoginUser` identity string, empty
     /// when called from the base `C_Login` (which has no such concept) —
     /// backends that don't distinguish users (e.g. ykcs11) can ignore it.
-    /// `h_session` identifies the calling session, needed by backends that
-    /// support `CKU_CONTEXT_SPECIFIC` (legal only while a sign/decrypt
-    /// operation is active on that exact session).
     fn login(
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
@@ -245,48 +196,30 @@ pub trait Backend: Sized + 'static {
     ) -> Result<(), CK_RV>;
     fn logout(slot: &mut Slot<Self>) -> Result<(), CK_RV>;
 
-    /// Fill `buf` with random bytes. The engine has already resolved and
-    /// locked `slot`; backends needing an authenticated session (e.g.
-    /// yubihsm-pkcs11, which draws randomness from the HSM itself) check
-    /// `slot.login_state` themselves — the two C reference modules differ
-    /// here (ykcs11 needs no login at all).
+    /// Fill `buf` with random bytes.
     fn generate_random(slot: &Slot<Self>, buf: &mut [u8]) -> Result<(), CK_RV>;
 
-    /// Seed the token's RNG. Default: not supported, matching
-    /// yubihsm_pkcs11.c's `C_SeedRandom`, which unconditionally returns
-    /// `CKR_RANDOM_SEED_NOT_SUPPORTED`.
+    /// Seed the token's RNG
     fn seed_random(_slot: &Slot<Self>, _seed: &[u8]) -> Result<(), CK_RV> {
         Err(CKR_RANDOM_SEED_NOT_SUPPORTED.into())
     }
 
-    /// Every object handle currently visible on this token, already
+    /// Every object handle currently visible on this token,
     /// filtered for login state (e.g. private-key objects omitted while
-    /// `slot.login_state == LoginState::Public`) — matches
-    /// `C_FindObjectsInit`'s `is_private_object` filter in ykcs11.c.
+    /// `slot.login_state == LoginState::Public`)
     fn object_handles(slot: &Slot<Self>) -> Vec<CK_OBJECT_HANDLE>;
 
-    /// One attribute's raw value for a given object handle. `None` means
-    /// the attribute doesn't apply to this object (→
-    /// `CKR_ATTRIBUTE_TYPE_INVALID` at the caller) — object-handle validity
-    /// itself is checked separately, against `object_handles`.
+    /// One attribute's raw value for a given object handle.
+    /// Returns `None` if the attribute does not apply to this object (translates to
+    /// `CKR_ATTRIBUTE_TYPE_INVALID`)
+    /// Object-handle validity itself is checked separately, against `object_handles`.
     fn get_one_attribute_value(
         data: &Self::SlotData,
         handle: CK_OBJECT_HANDLE,
         attr_type: CK_ATTRIBUTE_TYPE,
     ) -> Option<Vec<u8>>;
 
-    /// Begin a signing operation: validate the mechanism against `key_handle`
-    /// (wrong key type/class → `CKR_KEY_TYPE_INCONSISTENT`/
-    /// `CKR_KEY_HANDLE_INVALID`, unsupported mechanism →
-    /// `CKR_MECHANISM_INVALID`), and stash whatever per-operation state is
-    /// needed (hash state, which key, which padding) in this session's
-    /// `Backend::SessionData` — opaque to the engine, which only tracks
-    /// whether *some* sign operation is active and how long its output will
-    /// be. Default: not supported, matching a backend that hasn't
-    /// implemented signing yet.
-    /// `parameter` is the mechanism's raw `pParameter` bytes (e.g. a
-    /// `CK_RSA_PKCS_PSS_PARAMS` for a PSS mechanism), empty if the caller
-    /// didn't supply one.
+    /// Begin a signing operation
     fn sign_init(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -306,24 +239,12 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Finalize the signing operation started by `sign_init`, consuming
-    /// whatever per-operation state was stashed in `Backend::SessionData`
-    /// and returning the raw signature bytes.
+    /// Finalize the signing operation started by `sign_init`
     fn sign_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Begin a verify operation: validate the mechanism against `key_handle`
-    /// (wrong key type/class → `CKR_KEY_TYPE_INCONSISTENT`/
-    /// `CKR_KEY_HANDLE_INVALID`, unsupported mechanism →
-    /// `CKR_MECHANISM_INVALID`), and stash whatever per-operation state is
-    /// needed (hash state, which key's public material, which padding) in
-    /// this session's `Backend::SessionData` — opaque to the engine, which
-    /// only tracks whether *some* verify operation is active. Unlike
-    /// `sign_init`, there's no device round-trip and (for ykcs11 at least) no
-    /// login requirement — verification only ever needs public key material.
-    /// `parameter` is the mechanism's raw `pParameter` bytes, empty if the
-    /// caller didn't supply one. Default: not supported.
+    /// Begin a verify operation. Not performed on the token
     fn verify_init(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -343,11 +264,7 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Finalize the verify operation started by `verify_init`, consuming
-    /// whatever per-operation state was stashed in `Backend::SessionData` and
-    /// checking `signature` against it. `Ok(())` means the signature is
-    /// valid; a well-formed but non-matching signature is a normal `Err`
-    /// return (`CKR_SIGNATURE_INVALID`/`CKR_SIGNATURE_LEN_RANGE`), not a bug.
+    /// Finalize the verify operation started by `verify_init`
     fn verify_final(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -356,16 +273,7 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Begin an encrypt operation: validate the mechanism against
-    /// `key_handle` (wrong key type/class → `CKR_KEY_TYPE_INCONSISTENT`/
-    /// `CKR_KEY_HANDLE_INVALID`, unsupported mechanism →
-    /// `CKR_MECHANISM_INVALID`), and stash whatever per-operation state is
-    /// needed in this session's `Backend::SessionData` — opaque to the
-    /// engine, which only tracks whether *some* encrypt operation is active
-    /// and how long its output will be (always computable from the key
-    /// alone for RSA, unlike decrypt). `parameter` is the mechanism's raw
-    /// `pParameter` bytes, empty if the caller didn't supply one. Default:
-    /// not supported.
+    /// Begin an encrypt operation
     fn encrypt_init(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -386,18 +294,12 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Finalize the encrypt operation started by `encrypt_init`, consuming
-    /// whatever per-operation state was stashed in `Backend::SessionData`
-    /// and returning the ciphertext.
+    /// Finalize the encrypt operation started by `encrypt_init`
     fn encrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Begin a decrypt operation: validate the mechanism against
-    /// `key_handle`, and stash whatever per-operation state is needed in
-    /// this session's `Backend::SessionData`. `parameter` is the
-    /// mechanism's raw `pParameter` bytes (e.g. a `CK_RSA_PKCS_OAEP_PARAMS`),
-    /// empty if the caller didn't supply one. Default: not supported.
+    /// Begin a decrypt operation
     fn decrypt_init(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -409,12 +311,7 @@ pub trait Backend: Sized + 'static {
     }
 
     /// Feed more ciphertext into the decrypt operation started by
-    /// `decrypt_init`. Unlike `sign_update`, PKCS#11 allows `C_DecryptUpdate`
-    /// to produce incremental plaintext output for streaming mechanisms —
-    /// the engine handles that convention generically (always reporting zero
-    /// output bytes for now, since every mechanism implemented so far is a
-    /// single-block RSA operation with nothing to stream); this only ever
-    /// needs to buffer input.
+    /// `decrypt_init`
     fn decrypt_update(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -423,22 +320,12 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Finalize the decrypt operation started by `decrypt_init`, consuming
-    /// whatever per-operation state was stashed in `Backend::SessionData`
-    /// and returning the plaintext. Called at most once per operation by the
-    /// engine (see `DecryptOp::pending`) — safe to do the real device
-    /// round-trip and unpadding unconditionally here.
+    /// Finalize the decrypt operation started by `decrypt_init`
     fn decrypt_final(_slot: &mut Slot<Self>, _h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Generate a key pair, validating both templates and the mechanism,
-    /// and returning `(public_key_handle, private_key_handle)`. Unlike
-    /// sign/verify/encrypt/decrypt this is a single atomic call — no
-    /// `Init`/`Update`/`Final` split, no per-session operation state for the
-    /// engine to track. `public_key_template`/`private_key_template` are
-    /// each `(attribute type, raw value bytes)` pairs, already extracted
-    /// from the caller's `CK_ATTRIBUTE` arrays. Default: not supported.
+    /// Generate a key pair and returning `(public_key_handle, private_key_handle)`
     fn generate_key_pair(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -450,10 +337,7 @@ pub trait Backend: Sized + 'static {
     }
 
     /// Create (import) an object from a single template, returning its
-    /// handle. `template` is `(attribute type, raw value bytes)` pairs,
-    /// already extracted from the caller's `CK_ATTRIBUTE` array. Same
-    /// single-atomic-call shape as `generate_key_pair` — no engine-tracked
-    /// operation state. Default: not supported.
+    /// handle
     fn create_object(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -462,14 +346,7 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Derive a new key from `base_key_handle`, returning the new object's
-    /// handle. Same single-atomic-call shape as `generate_key_pair`/
-    /// `create_object` — no engine-tracked operation state. `parameter` is
-    /// the mechanism's raw `pParameter` bytes (e.g. a
-    /// `CK_ECDH1_DERIVE_PARAMS`), empty if the caller didn't supply one;
-    /// `template` is `(attribute type, raw value bytes)` pairs, already
-    /// extracted from the caller's `CK_ATTRIBUTE` array. Default: not
-    /// supported.
+    /// Derive ECDH key
     fn derive_key(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -481,9 +358,7 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Destroy an object, given its handle. Single atomic call, same as
-    /// `create_object`/`derive_key` — no engine-tracked operation state.
-    /// Default: not supported.
+    /// Destroy an object
     fn destroy_object(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -492,10 +367,7 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Change the PIN/PUK/management key, per whatever convention the
-    /// backend uses to pack that into two byte strings (PKCS#11's
-    /// `C_SetPIN` itself only ever supplies old/new byte strings — no
-    /// explicit "which secret" parameter). Default: not supported.
+    /// Change the PIN/PUK/management key
     fn set_pin(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -505,23 +377,13 @@ pub trait Backend: Sized + 'static {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// Re-initialize a token: wipe it back to factory defaults and restore
-    /// `pin` as the SO credential (a PIV management key, for `ykcs11`).
-    /// Slot-level, not session-level — `Engine::init_token` already checked
-    /// the slot has zero open sessions before calling this. Default: not
-    /// supported.
+    /// Re-initialize a token by performing a factory reset
     fn init_token(_slot: &mut Slot<Self>, _pin: &[u8]) -> Result<(), CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
     }
 
-    /// The ciphertext length `encapsulate_key` will produce for this public
-    /// key, without actually performing the (randomized) encapsulation --
-    /// `Engine::encapsulate_key`'s length-query call (`pCiphertext == NULL`)
-    /// needs this to answer PKCS#11's usual two-call buffer-size convention
-    /// without side effects or consuming fresh randomness on a call that's
-    /// only asking "how big a buffer do I need." For ML-KEM this is fully
-    /// determined by the public key's own parameter set. Default: not
-    /// supported.
+    /// Return the ciphertext length `encapsulate_key` will produce for this public
+    /// key without actually performing the (randomized) encapsulation
     fn encapsulate_key_len(
         _slot: &mut Slot<Self>,
         _h_public_key: CK_OBJECT_HANDLE,
@@ -530,13 +392,7 @@ pub trait Backend: Sized + 'static {
     }
 
     /// Encapsulate a fresh shared secret against `h_public_key`, returning
-    /// `(ciphertext, new secret-key object handle)`. Single atomic call,
-    /// same shape as `derive_key` plus a ciphertext output. `parameter` is
-    /// the mechanism's raw `pParameter` bytes (empty if the caller didn't
-    /// supply one — PKCS#11 3.2 defines no parameter struct for
-    /// `CKM_ML_KEM`). Only called once `Engine::encapsulate_key` has already
-    /// confirmed the caller's ciphertext buffer is large enough via
-    /// `encapsulate_key_len`. Default: not supported.
+    /// `(ciphertext, new secret-key object handle)`
     fn encapsulate_key(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -549,11 +405,7 @@ pub trait Backend: Sized + 'static {
     }
 
     /// Decapsulate `ciphertext` with `h_private_key`, returning the new
-    /// secret-key object's handle. Single atomic call, same shape as
-    /// `derive_key` (its ECDH counterpart) -- no engine-tracked operation
-    /// state, no separate length-query step (unlike `encapsulate_key`,
-    /// decapsulate's only variable-length parameter, `ciphertext`, is an
-    /// input, not an output). Default: not supported.
+    /// secret-key object's handle
     fn decapsulate_key(
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
@@ -567,10 +419,7 @@ pub trait Backend: Sized + 'static {
     }
 }
 
-/// Extracts a `CK_ATTRIBUTE` array into owned `(type, value bytes)` pairs —
-/// shared by `Engine::generate_key_pair` (two templates) and
-/// `Engine::create_object` (one), both of which hand their `Backend` impl
-/// already-safe owned data rather than raw pointers.
+/// Parse  a `CK_ATTRIBUTE` array into `(type, value bytes)` pair
 unsafe fn extract_attribute_template(
     p: CK_ATTRIBUTE_PTR,
     count: CK_ULONG,
@@ -595,7 +444,7 @@ unsafe fn extract_attribute_template(
 }
 
 /// The shared Cryptoki engine. One `static` instance per module, generic
-/// over that module's [`Backend`] impl.
+/// over a module's [`Backend`] impl.
 pub struct Engine<B: Backend> {
     state: Mutex<Option<ModuleState<B>>>,
 }
@@ -607,8 +456,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// Extract the `pReserved` C string from a (possibly null)
-    /// `CK_C_INITIALIZE_ARGS*`, shared by every module's `C_Initialize`.
+    /// Extract the `pReserved` C string from `CK_C_INITIALIZE_ARGS*`,
+    /// shared by every module's `C_Initialize`.
     unsafe fn extract_reserved(p_init_args: CK_VOID_PTR) -> Option<String> {
         unsafe {
             if p_init_args.is_null() {
@@ -679,15 +528,7 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Same as [`Engine::get_info`], but reports `cryptoki_version` instead
-    /// of whatever [`Backend::library_info`] specifies. A module that
-    /// exposes more than one PKCS#11 interface version (e.g. `ykcs11`'s
-    /// legacy `CK_FUNCTION_LIST` alongside its newer `CK_FUNCTION_LIST_3_2`,
-    /// reachable via `C_GetInterface`) needs `C_GetInfo` to report a
-    /// different `cryptokiVersion` depending on which function-list table
-    /// it was reached through, which a single `Backend::library_info()`
-    /// return value can't express -- the caller picks the right version by
-    /// wiring this into a distinct `C_GetInfo`-shaped fn per table (see
-    /// `ykcs11::dispatch`'s `get_info_3_2`).
+    /// of what [`Backend::library_info`] specifies.
     pub unsafe fn get_info_with_cryptoki_version(
         &self,
         p_info: CK_INFO_PTR,
@@ -716,7 +557,7 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// Shared body for `C_GetFunctionList`: every module just points at its
+    /// Shared body for `C_GetFunctionList`: every module points at its
     /// own `static CK_FUNCTION_LIST`.
     pub unsafe fn get_function_list(
         &self,
@@ -732,11 +573,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// PKCS#11 3.0's `C_GetInterfaceList` — generic over whatever fixed set
-    /// of interfaces a module exposes (today, at most one: "PKCS 11" at
-    /// 3.2). Doesn't require `C_Initialize` to have run first, matching
-    /// `get_function_list` above (interface discovery is meant to work
-    /// before initialization too).
+    /// PKCS#11 3.0's `C_GetInterfaceList` — generic over the fixed set
+    /// of interfaces a module exposes
     pub unsafe fn get_interface_list(
         &self,
         p_interfaces_list: CK_INTERFACE_PTR,
@@ -765,13 +603,7 @@ impl<B: Backend> Engine<B> {
     }
 
     /// PKCS#11 3.0's `C_GetInterface` — finds the first entry in
-    /// `interfaces` matching `p_interface_name` (if given; NUL-terminated,
-    /// compared as a C string) and `p_version` (if given). Every
-    /// `CK_FUNCTION_LIST*` variant starts with a `version: CK_VERSION` field
-    /// at the same offset (by construction -- see pkcs11.h's own
-    /// `CK_FUNCTION_LIST_3_2`/`_3_0`/legacy triple-`#include`), so the
-    /// version is read generically through the type-erased `pFunctionList`
-    /// pointer rather than tracked separately per interface entry.
+    /// `interfaces` matching `p_interface_name`
     pub unsafe fn get_interface(
         &self,
         p_interface_name: CK_UTF8CHAR_PTR,
@@ -1239,9 +1071,6 @@ impl<B: Backend> Engine<B> {
             let slot = state.slots[slot_id as usize].clone();
             let slot_guard = slot.lock();
 
-            // Both C modules special-case a zero-length request to succeed
-            // without even looking at the pointer (needed by the OpenSC test
-            // suite, per their own comments) — matches here too.
             if ul_random_len == 0 {
                 return CKR_OK.into();
             }
@@ -1488,32 +1317,12 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// Matches `get_data_len` (objects.c:1599-1602): reports the byte
-    /// length of this object's underlying raw storage. Generic over every
-    /// `Backend` -- no per-backend logic needed, since `object_handles`/
-    /// `get_one_attribute_value` already answer this.
+    /// Returns the byte length of this object's underlying raw storage,
+    /// equivalent to `get_data_len`
     ///
-    /// For data/certificate/secret-key objects this keys off `CKA_VALUE`,
-    /// which exactly matches the C reference (those are the object classes
-    /// whose `CKA_VALUE` is the same raw bytes `s->data[]` caches). Key
-    /// objects (public *and* private) have no `CKA_VALUE` in this object
-    /// model, so this falls back to whichever attribute carries their
-    /// natural public key material instead -- `CKA_MODULUS` for RSA,
-    /// `CKA_EC_POINT` for EC/Ed25519/X25519 -- which both public and
-    /// private key objects already serve (a private key object exposes its
-    /// own public counterpart's modulus/point, never the private
-    /// scalar/exponent itself).
-    ///
-    /// This deliberately does *not* replicate ykcs11.c's own behavior for
-    /// private key handles: `get_sub_id` only resolves a per-slot sub_id for
-    /// DATA/CERT/PUBK-range ids and silently defaults to sub_id 0 for
-    /// anything outside that range (private keys), which means the C
-    /// reference's `C_GetObjectSize` on a private key handle actually
-    /// reports the byte length of whatever `C_DeriveKey` last cached at
-    /// sub_id 0 (or 0 if nothing has been derived yet) -- coincidental
-    /// aliasing from its internal array layout, not meaningful protocol
-    /// behavior.
-    pub unsafe fn get_object_size(
+    /// No per-backend logic needed, since it calls `object_handles`/
+    /// `get_one_attribute_value` which are implemented in the backend
+      pub unsafe fn get_object_size(
         &self,
         h_session: CK_SESSION_HANDLE,
         h_object: CK_OBJECT_HANDLE,
@@ -1596,12 +1405,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// One-shot digest: equivalent to `C_DigestUpdate` (if any data is
-    /// passed) immediately followed by `C_DigestFinal`. Matches
-    /// `C_Digest`'s own length-query/buffer-too-small short-circuits — both
-    /// leave the operation active rather than terminating it, so a caller
-    /// that first probes the required length with `pDigest == NULL` can
-    /// still follow up with the real call.
+    /// Performs digest, equivalent to `C_DigestUpdate` immediately followed by
+    /// `C_DigestFinal`
     pub unsafe fn digest(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -1776,11 +1581,6 @@ impl<B: Backend> Engine<B> {
             if p_mechanism.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
-            // ykcs11.c checks the key handle before the login state
-            // (ykcs11.c:2872-2891) — that ordering only matters when both
-            // are simultaneously wrong, but it's cheap to match exactly, so
-            // the login check happens inside `B::sign_init` itself (after
-            // its own key-handle lookup) rather than generically here.
 
             let mechanism = (*p_mechanism).mechanism;
             let parameter: &[u8] = if (*p_mechanism).pParameter.is_null()
@@ -1807,13 +1607,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// One-shot sign: equivalent to `C_SignUpdate` (with whatever data is
-    /// passed) immediately followed by `C_SignFinal`. Matches `C_Sign`'s own
-    /// length-query/buffer-too-small short-circuits — both leave the
-    /// operation active rather than terminating it; every other path
-    /// (success or any other error) terminates it, matching ykcs11.c's
-    /// unconditional `session->op_info.type = YKCS11_NOOP` once past those
-    /// two early returns (ykcs11.c:2907-2908).
+    /// Performs signing, equivalent to `C_SignUpdate` immediately followed
+    /// by `C_SignFinal`
     pub unsafe fn sign(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -2042,13 +1837,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// One-shot verify: equivalent to `C_VerifyUpdate` (with whatever data is
-    /// passed) immediately followed by `C_VerifyFinal`. Unlike `C_Sign`,
-    /// there's no length-query/buffer-too-small short-circuit to preserve —
-    /// every path (a valid signature, an invalid one, or any other error)
-    /// terminates the operation, matching both C references (a failed
-    /// verify is a normal, operation-terminating outcome, not a retryable
-    /// one).
+    /// Performs signature verification, equivalent to `C_VerifyUpdate` immediately
+    /// followed by `C_VerifyFinal`
     pub unsafe fn verify(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -2247,11 +2037,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// One-shot encrypt: equivalent to `C_EncryptUpdate` (with whatever data
-    /// is passed) immediately followed by `C_EncryptFinal`. Matches
-    /// `C_Sign`'s own length-query/buffer-too-small short-circuits — no
-    /// login check anywhere (encryption only ever needs public key
-    /// material).
+    /// Performs RSA encryption, equivalent to `C_EncryptUpdate` immediately
+    /// followed by `C_EncryptFinal`.
     pub unsafe fn encrypt(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -2318,9 +2105,6 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// `C_EncryptUpdate` never produces incremental output for any
-    /// mechanism implemented so far (same reasoning as `decrypt_update`) —
-    /// this only buffers `part` and always reports zero output bytes.
     pub unsafe fn encrypt_update(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -2484,15 +2268,8 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// One-shot decrypt: equivalent to `C_DecryptUpdate` (with whatever data
-    /// is passed) immediately followed by `C_DecryptFinal`. Unlike
-    /// `C_Sign`'s out_len (known from the key alone, before any crypto
-    /// runs), decrypt's output length is only known after actually removing
-    /// the padding — so the first call here (whether it's a length query or
-    /// the real thing) does the real device round-trip and unpadding once,
-    /// caching the result in `DecryptOp::pending`; a subsequent matching
-    /// call (buffer-too-small retry, or the real call after a length query)
-    /// is served from that cache instead of touching the device again.
+    /// Performs RSA decryption, equivalent to `C_DecryptUpdate` immediately
+    /// followed by `C_DecryptFinal`.
     pub unsafe fn decrypt(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -2599,10 +2376,6 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// `C_DecryptUpdate` never produces incremental output for any mechanism
-    /// implemented so far (a bare RSA private-key operation has nothing to
-    /// stream) — this only buffers `encrypted_part` and always reports zero
-    /// output bytes, regardless of whether `p_part` is a length query.
     pub unsafe fn decrypt_update(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -2891,11 +2664,9 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// PKCS#11 3.2's `C_EncapsulateKey`. `p_ciphertext == NULL` is the usual
-    /// two-call buffer-size query (`B::encapsulate_key_len`, side-effect-free);
-    /// only once the caller's buffer is confirmed large enough does this
-    /// call into `B::encapsulate_key`, which actually performs the
-    /// (randomized) encapsulation and creates the new secret-key object --
+    /// PKCS#11 3.2's `C_EncapsulateKey`.
+    ///
+    /// Calls `B::encapsulate_key` after the input has been validated,
     /// deliberately not run twice just to answer a length query.
     pub unsafe fn encapsulate_key(
         &self,
@@ -2970,10 +2741,7 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// PKCS#11 3.2's `C_DecapsulateKey`. Unlike `encapsulate_key`, the only
-    /// variable-length parameter (`ciphertext`) is an input here, so there's
-    /// no two-call buffer convention to handle -- single pass, same shape as
-    /// `derive_key`.
+    /// PKCS#11 3.2's `C_DecapsulateKey`.
     pub unsafe fn decapsulate_key(
         &self,
         h_session: CK_SESSION_HANDLE,
@@ -3108,11 +2876,7 @@ impl<B: Backend> Engine<B> {
         }
     }
 
-    /// `C_InitToken` is slot-level, not session-level — it takes a
-    /// `CK_SLOT_ID` directly, no session handle, and requires zero open
-    /// sessions on that slot (matches ykcs11.c:773-779's `CKR_SESSION_EXISTS`
-    /// check — pure session bookkeeping the engine already owns, not
-    /// `Backend`-specific).
+    /// `C_InitToken` on slot-level, not session-level
     pub unsafe fn init_token(
         &self,
         slot_id: CK_SLOT_ID,
