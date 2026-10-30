@@ -1,6 +1,6 @@
 [package]
 name = "yubihsm-pkcs11"
-version = "2.9.0"
+version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
 description = "YubiHSM 2 PKCS#11 module"
