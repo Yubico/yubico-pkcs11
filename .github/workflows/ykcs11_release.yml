@@ -65,6 +65,8 @@ jobs:
           cache: true
           cache-save-if: ${{ github.event_name == 'push' }}
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-about
         run: cargo install cargo-about --locked --version 0.9.1 --features cli
 
