@@ -15,12 +15,24 @@
  */
 
 use crate::digest::DigestOp;
+use crate::ffi::{OutBuf, in_slice, in_slice_or_empty, inout_slice, out_bytes_zeroed};
 use crate::session::{LoginState, compute_state};
 use crate::str_pad;
 use parking_lot::Mutex;
 use pkcs11_sys::*;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Unwraps a `Result<T, CK_RV>`, returning the error from the enclosing
+/// `CK_RV` function.
+macro_rules! try_rv {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(rv) => return rv,
+        }
+    };
+}
 
 /// Fixed library identity reported by `C_GetInfo`.
 pub struct LibraryInfo {
@@ -426,27 +438,38 @@ pub trait Backend: Sized + 'static {
 }
 
 /// Parse  a `CK_ATTRIBUTE` array into `(type, value bytes)` pair
+///
+/// # Safety
+///
+/// `p` and every non-null `pValue` must satisfy [`in_slice`]'s contract for
+/// their respective lengths.
 unsafe fn extract_attribute_template(
     p: CK_ATTRIBUTE_PTR,
     count: CK_ULONG,
-) -> Vec<(CK_ATTRIBUTE_TYPE, Vec<u8>)> {
+) -> Result<Vec<(CK_ATTRIBUTE_TYPE, Vec<u8>)>, CK_RV> {
     unsafe {
-        if count == 0 {
-            return Vec::new();
-        }
-        let attrs = std::slice::from_raw_parts(p, count as usize);
-        attrs
+        in_slice(p, count)?
             .iter()
             .map(|a| {
-                let value = if a.pValue.is_null() || a.ulValueLen == 0 {
-                    Vec::new()
-                } else {
-                    std::slice::from_raw_parts(a.pValue as *const u8, a.ulValueLen as usize)
-                        .to_vec()
-                };
-                (a.type_, value)
+                let value = in_slice_or_empty(a.pValue as *const u8, a.ulValueLen)?;
+                Ok((a.type_, value.to_vec()))
             })
             .collect()
+    }
+}
+
+/// Borrows a mechanism's `pParameter` bytes; a null parameter is empty.
+///
+/// # Safety
+///
+/// `p_mechanism` must be non-null and point to a readable `CK_MECHANISM`
+/// whose parameter satisfies [`in_slice`]'s contract.
+unsafe fn mechanism_parameter<'a>(p_mechanism: CK_MECHANISM_PTR) -> Result<&'a [u8], CK_RV> {
+    unsafe {
+        in_slice_or_empty(
+            (*p_mechanism).pParameter as *const u8,
+            (*p_mechanism).ulParameterLen,
+        )
     }
 }
 
@@ -589,23 +612,8 @@ impl<B: Backend> Engine<B> {
         interfaces: &'static [CK_INTERFACE],
     ) -> CK_RV {
         unsafe {
-            if pul_count.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-            let count = interfaces.len() as CK_ULONG;
-            if p_interfaces_list.is_null() {
-                *pul_count = count;
-                return CKR_OK.into();
-            }
-            if *pul_count < count {
-                *pul_count = count;
-                return CKR_BUFFER_TOO_SMALL.into();
-            }
-            for (i, iface) in interfaces.iter().enumerate() {
-                *p_interfaces_list.add(i) = *iface;
-            }
-            *pul_count = count;
-            CKR_OK.into()
+            let out = try_rv!(OutBuf::new(p_interfaces_list, pul_count));
+            out.write(interfaces)
         }
     }
 
@@ -677,20 +685,8 @@ impl<B: Backend> Engine<B> {
                 slot_ids.push(i as CK_SLOT_ID);
             }
 
-            let count = slot_ids.len() as CK_ULONG;
-            if p_slot_list.is_null() {
-                *pul_count = count;
-                return CKR_OK.into();
-            }
-            if *pul_count < count {
-                *pul_count = count;
-                return CKR_BUFFER_TOO_SMALL.into();
-            }
-            for (i, id) in slot_ids.iter().enumerate() {
-                *p_slot_list.add(i) = *id;
-            }
-            *pul_count = count;
-            CKR_OK.into()
+            let out = try_rv!(OutBuf::new(p_slot_list, pul_count));
+            out.write(&slot_ids)
         }
     }
 
@@ -751,20 +747,8 @@ impl<B: Backend> Engine<B> {
             }
             let mechanisms = B::mechanism_list(&slot.data);
 
-            let count = mechanisms.len() as CK_ULONG;
-            if p_mechanism_list.is_null() {
-                *pul_count = count;
-                return CKR_OK.into();
-            }
-            if *pul_count < count {
-                *pul_count = count;
-                return CKR_BUFFER_TOO_SMALL.into();
-            }
-            for (i, m) in mechanisms.iter().enumerate() {
-                *p_mechanism_list.add(i) = *m;
-            }
-            *pul_count = count;
-            CKR_OK.into()
+            let out = try_rv!(OutBuf::new(p_mechanism_list, pul_count));
+            out.write(&mechanisms)
         }
     }
 
@@ -1022,16 +1006,8 @@ impl<B: Backend> Engine<B> {
                 return CKR_TOKEN_NOT_PRESENT.into();
             }
 
-            let pin: &[u8] = if p_pin.is_null() || ul_pin_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_pin as *const u8, ul_pin_len as usize)
-            };
-            let username: &[u8] = if p_username.is_null() || ul_username_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_username as *const u8, ul_username_len as usize)
-            };
+            let pin = try_rv!(in_slice_or_empty(p_pin as *const u8, ul_pin_len));
+            let username = try_rv!(in_slice_or_empty(p_username as *const u8, ul_username_len));
 
             match B::login(&mut slot_guard, h_session, user_type, pin, username) {
                 Ok(()) => CKR_OK.into(),
@@ -1083,11 +1059,7 @@ impl<B: Backend> Engine<B> {
             if ul_random_len == 0 {
                 return CKR_OK.into();
             }
-            if p_random_data.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-            let buf =
-                std::slice::from_raw_parts_mut(p_random_data as *mut u8, ul_random_len as usize);
+            let buf = try_rv!(out_bytes_zeroed(p_random_data, ul_random_len));
 
             match B::generate_random(&slot_guard, buf) {
                 Ok(()) => CKR_OK.into(),
@@ -1115,14 +1087,7 @@ impl<B: Backend> Engine<B> {
             let slot = state.slots[slot_id as usize].clone();
             let slot_guard = slot.lock();
 
-            if p_seed.is_null() && ul_seed_len != 0 {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-            let seed: &[u8] = if p_seed.is_null() || ul_seed_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_seed as *const u8, ul_seed_len as usize)
-            };
+            let seed = try_rv!(in_slice(p_seed as *const u8, ul_seed_len));
 
             match B::seed_random(&slot_guard, seed) {
                 Ok(()) => CKR_OK.into(),
@@ -1155,30 +1120,20 @@ impl<B: Backend> Engine<B> {
             if slot_guard.sessions[&h_session].find_op.active {
                 return CKR_OPERATION_ACTIVE.into();
             }
-            if ul_count > 0 && p_template.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
+            let template = try_rv!(in_slice(p_template as *const CK_ATTRIBUTE, ul_count));
+            let mut values = Vec::with_capacity(template.len());
+            for attr in template {
+                values.push((
+                    attr.type_,
+                    try_rv!(in_slice_or_empty(attr.pValue as *const u8, attr.ulValueLen)),
+                ));
             }
-
-            let template: &[CK_ATTRIBUTE] = if ul_count == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_template, ul_count as usize)
-            };
 
             let handles = B::object_handles(&slot_guard);
             let mut matches = Vec::new();
             'outer: for h in handles {
-                for attr in template {
-                    let value: &[u8] = if attr.pValue.is_null() || attr.ulValueLen == 0 {
-                        &[]
-                    } else {
-                        std::slice::from_raw_parts(
-                            attr.pValue as *const u8,
-                            attr.ulValueLen as usize,
-                        )
-                    };
-
-                    match B::get_one_attribute_value(&slot_guard.data, h, attr.type_) {
+                for &(attr_type, value) in &values {
+                    match B::get_one_attribute_value(&slot_guard.data, h, attr_type) {
                         Some(actual) if actual == value => {}
                         _ => continue 'outer,
                     }
@@ -1289,7 +1244,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_OBJECT_HANDLE_INVALID.into();
             }
 
-            let template = std::slice::from_raw_parts_mut(p_template, ul_count as usize);
+            let template = try_rv!(inout_slice(p_template, ul_count));
             let mut any_invalid = false;
             let mut any_too_small = false;
             for attr in template.iter_mut() {
@@ -1299,10 +1254,13 @@ impl<B: Backend> Engine<B> {
                         any_invalid = true;
                     }
                     Some(value) => {
+                        // Per-attribute results differ from `OutBuf`: an
+                        // undersized buffer reports CK_UNAVAILABLE_INFORMATION
+                        // rather than the required length.
                         if attr.pValue.is_null() {
                             attr.ulValueLen = value.len() as CK_ULONG;
                         } else if (attr.ulValueLen as usize) < value.len() {
-                            attr.ulValueLen = CKR_BUFFER_TOO_SMALL as CK_ULONG;
+                            attr.ulValueLen = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
                             any_too_small = true;
                         } else {
                             std::ptr::copy_nonoverlapping(
@@ -1449,35 +1407,15 @@ impl<B: Backend> Engine<B> {
             if session.digest_op.is_none() {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if pul_digest_len.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
+            let mut out = try_rv!(OutBuf::new(p_digest, pul_digest_len));
+            if let Some(rv) = out.check(session.digest_op.as_ref().unwrap().output_len()) {
+                return rv;
             }
+            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
 
-            let out_len = session.digest_op.as_ref().unwrap().output_len();
-
-            if p_digest.is_null() {
-                *pul_digest_len = out_len as CK_ULONG;
-                return CKR_OK.into();
-            }
-            if (*pul_digest_len as usize) < out_len {
-                *pul_digest_len = out_len as CK_ULONG;
-                return CKR_BUFFER_TOO_SMALL.into();
-            }
-            if ul_data_len > 0 && p_data.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-
-            let data: &[u8] = if ul_data_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
-            };
             let mut op = session.digest_op.take().unwrap();
             op.update(data);
-            let digest = op.finalize();
-            std::ptr::copy_nonoverlapping(digest.as_ptr(), p_digest, digest.len());
-            *pul_digest_len = digest.len() as CK_ULONG;
-            CKR_OK.into()
+            out.write(&op.finalize())
         }
     }
 
@@ -1510,11 +1448,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data: &[u8] = if ul_part_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
-            };
+            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
             digest_op.update(data);
             CKR_OK.into()
         }
@@ -1545,26 +1479,13 @@ impl<B: Backend> Engine<B> {
             if session.digest_op.is_none() {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if pul_digest_len.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-
-            let out_len = session.digest_op.as_ref().unwrap().output_len();
-
-            if p_digest.is_null() {
-                *pul_digest_len = out_len as CK_ULONG;
-                return CKR_OK.into();
-            }
-            if (*pul_digest_len as usize) < out_len {
-                *pul_digest_len = out_len as CK_ULONG;
-                return CKR_BUFFER_TOO_SMALL.into();
+            let mut out = try_rv!(OutBuf::new(p_digest, pul_digest_len));
+            if let Some(rv) = out.check(session.digest_op.as_ref().unwrap().output_len()) {
+                return rv;
             }
 
             let op = session.digest_op.take().unwrap();
-            let digest = op.finalize();
-            std::ptr::copy_nonoverlapping(digest.as_ptr(), p_digest, digest.len());
-            *pul_digest_len = digest.len() as CK_ULONG;
-            CKR_OK.into()
+            out.write(&op.finalize())
         }
     }
 
@@ -1598,15 +1519,7 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
             match B::sign_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -1650,40 +1563,26 @@ impl<B: Backend> Engine<B> {
             if !session.sign_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if p_data.is_null() || pul_signature_len.is_null() {
+            if p_data.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
+            let mut out = try_rv!(OutBuf::new(p_signature, pul_signature_len));
+            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
 
-            let out_len = session.sign_op.out_len;
-
-            if p_signature.is_null() {
-                *pul_signature_len = out_len;
-                return CKR_OK.into();
-            }
-            if *pul_signature_len < out_len {
-                *pul_signature_len = out_len;
-                return CKR_BUFFER_TOO_SMALL.into();
+            if let Some(rv) = out.check(session.sign_op.out_len as usize) {
+                return rv;
             }
             if slot_guard.login_state == LoginState::Public {
                 slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
                 return CKR_USER_NOT_LOGGED_IN.into();
             }
 
-            let data: &[u8] = if ul_data_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
-            };
             let result = B::sign_update(&mut slot_guard, h_session, data)
                 .and_then(|()| B::sign_final(&mut slot_guard, h_session));
             slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
 
             match result {
-                Ok(signature) => {
-                    std::ptr::copy_nonoverlapping(signature.as_ptr(), p_signature, signature.len());
-                    *pul_signature_len = signature.len() as CK_ULONG;
-                    CKR_OK.into()
-                }
+                Ok(signature) => out.write(&signature),
                 Err(rv) => rv,
             }
         }
@@ -1719,11 +1618,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data: &[u8] = if ul_part_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
-            };
+            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
             match B::sign_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
@@ -1759,19 +1654,9 @@ impl<B: Backend> Engine<B> {
             if !session.sign_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if pul_signature_len.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-
-            let out_len = session.sign_op.out_len;
-
-            if p_signature.is_null() {
-                *pul_signature_len = out_len;
-                return CKR_OK.into();
-            }
-            if *pul_signature_len < out_len {
-                *pul_signature_len = out_len;
-                return CKR_BUFFER_TOO_SMALL.into();
+            let mut out = try_rv!(OutBuf::new(p_signature, pul_signature_len));
+            if let Some(rv) = out.check(session.sign_op.out_len as usize) {
+                return rv;
             }
             if slot_guard.login_state == LoginState::Public {
                 slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
@@ -1782,11 +1667,7 @@ impl<B: Backend> Engine<B> {
             slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
 
             match result {
-                Ok(signature) => {
-                    std::ptr::copy_nonoverlapping(signature.as_ptr(), p_signature, signature.len());
-                    *pul_signature_len = signature.len() as CK_ULONG;
-                    CKR_OK.into()
-                }
+                Ok(signature) => out.write(&signature),
                 Err(rv) => rv,
             }
         }
@@ -1822,15 +1703,7 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
             match B::verify_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -1878,16 +1751,8 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data: &[u8] = if ul_data_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
-            };
-            let signature: &[u8] = if ul_signature_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_signature as *const u8, ul_signature_len as usize)
-            };
+            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
+            let signature = try_rv!(in_slice(p_signature as *const u8, ul_signature_len));
             let result = B::verify_update(&mut slot_guard, h_session, data)
                 .and_then(|()| B::verify_final(&mut slot_guard, h_session, signature));
             slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
@@ -1929,11 +1794,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data: &[u8] = if ul_part_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
-            };
+            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
             match B::verify_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
@@ -1975,11 +1836,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let signature: &[u8] = if ul_signature_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_signature as *const u8, ul_signature_len as usize)
-            };
+            let signature = try_rv!(in_slice(p_signature as *const u8, ul_signature_len));
             let result = B::verify_final(&mut slot_guard, h_session, signature);
             slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
 
@@ -2020,15 +1877,7 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
             match B::encrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -2072,40 +1921,21 @@ impl<B: Backend> Engine<B> {
             if !session.encrypt_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if p_data.is_null() || pul_encrypted_data_len.is_null() {
+            if p_data.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
-
-            let out_len = session.encrypt_op.out_len;
-
-            if p_encrypted_data.is_null() {
-                *pul_encrypted_data_len = out_len;
-                return CKR_OK.into();
-            }
-            if *pul_encrypted_data_len < out_len {
-                *pul_encrypted_data_len = out_len;
-                return CKR_BUFFER_TOO_SMALL.into();
+            let mut out = try_rv!(OutBuf::new(p_encrypted_data, pul_encrypted_data_len));
+            if let Some(rv) = out.check(session.encrypt_op.out_len as usize) {
+                return rv;
             }
 
-            let data: &[u8] = if ul_data_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_data as *const u8, ul_data_len as usize)
-            };
+            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
             let result = B::encrypt_update(&mut slot_guard, h_session, data)
                 .and_then(|()| B::encrypt_final(&mut slot_guard, h_session));
             slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
 
             match result {
-                Ok(ciphertext) => {
-                    std::ptr::copy_nonoverlapping(
-                        ciphertext.as_ptr(),
-                        p_encrypted_data,
-                        ciphertext.len(),
-                    );
-                    *pul_encrypted_data_len = ciphertext.len() as CK_ULONG;
-                    CKR_OK.into()
-                }
+                Ok(ciphertext) => out.write(&ciphertext),
                 Err(rv) => rv,
             }
         }
@@ -2147,11 +1977,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data: &[u8] = if ul_part_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_part as *const u8, ul_part_len as usize)
-            };
+            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
             match B::encrypt_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
@@ -2188,34 +2014,19 @@ impl<B: Backend> Engine<B> {
             if !session.encrypt_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if pul_last_encrypted_part_len.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
-
-            let out_len = session.encrypt_op.out_len;
-
-            if p_last_encrypted_part.is_null() {
-                *pul_last_encrypted_part_len = out_len;
-                return CKR_OK.into();
-            }
-            if *pul_last_encrypted_part_len < out_len {
-                *pul_last_encrypted_part_len = out_len;
-                return CKR_BUFFER_TOO_SMALL.into();
+            let mut out = try_rv!(OutBuf::new(
+                p_last_encrypted_part,
+                pul_last_encrypted_part_len
+            ));
+            if let Some(rv) = out.check(session.encrypt_op.out_len as usize) {
+                return rv;
             }
 
             let result = B::encrypt_final(&mut slot_guard, h_session);
             slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
 
             match result {
-                Ok(ciphertext) => {
-                    std::ptr::copy_nonoverlapping(
-                        ciphertext.as_ptr(),
-                        p_last_encrypted_part,
-                        ciphertext.len(),
-                    );
-                    *pul_last_encrypted_part_len = ciphertext.len() as CK_ULONG;
-                    CKR_OK.into()
-                }
+                Ok(ciphertext) => out.write(&ciphertext),
                 Err(rv) => rv,
             }
         }
@@ -2251,15 +2062,7 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
             match B::decrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
@@ -2303,9 +2106,7 @@ impl<B: Backend> Engine<B> {
             if !session.decrypt_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if pul_data_len.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
+            let mut out = try_rv!(OutBuf::new(p_data, pul_data_len));
 
             if slot_guard
                 .sessions
@@ -2326,14 +2127,10 @@ impl<B: Backend> Engine<B> {
                     return CKR_USER_NOT_LOGGED_IN.into();
                 }
 
-                let data: &[u8] = if ul_encrypted_data_len == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        p_encrypted_data as *const u8,
-                        ul_encrypted_data_len as usize,
-                    )
-                };
+                let data = try_rv!(in_slice(
+                    p_encrypted_data as *const u8,
+                    ul_encrypted_data_len
+                ));
                 let result = B::decrypt_update(&mut slot_guard, h_session, data)
                     .and_then(|()| B::decrypt_final(&mut slot_guard, h_session));
                 match result {
@@ -2358,15 +2155,9 @@ impl<B: Backend> Engine<B> {
                 .pending
                 .as_ref()
                 .unwrap()
-                .len() as CK_ULONG;
-
-            if p_data.is_null() {
-                *pul_data_len = out_len;
-                return CKR_OK.into();
-            }
-            if *pul_data_len < out_len {
-                *pul_data_len = out_len;
-                return CKR_BUFFER_TOO_SMALL.into();
+                .len();
+            if let Some(rv) = out.check(out_len) {
+                return rv;
             }
 
             let plaintext = slot_guard
@@ -2378,9 +2169,7 @@ impl<B: Backend> Engine<B> {
                 .take()
                 .unwrap();
             slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
-            std::ptr::copy_nonoverlapping(plaintext.as_ptr(), p_data, plaintext.len());
-            *pul_data_len = plaintext.len() as CK_ULONG;
-            CKR_OK.into()
+            out.write(&plaintext)
         }
     }
 
@@ -2420,14 +2209,10 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data: &[u8] = if ul_encrypted_part_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(
-                    p_encrypted_part as *const u8,
-                    ul_encrypted_part_len as usize,
-                )
-            };
+            let data = try_rv!(in_slice(
+                p_encrypted_part as *const u8,
+                ul_encrypted_part_len
+            ));
             match B::decrypt_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
@@ -2464,9 +2249,7 @@ impl<B: Backend> Engine<B> {
             if !session.decrypt_op.active {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
-            if pul_last_part_len.is_null() {
-                return CKR_ARGUMENTS_BAD.into();
-            }
+            let mut out = try_rv!(OutBuf::new(p_last_part, pul_last_part_len));
 
             if slot_guard
                 .sessions
@@ -2503,15 +2286,9 @@ impl<B: Backend> Engine<B> {
                 .pending
                 .as_ref()
                 .unwrap()
-                .len() as CK_ULONG;
-
-            if p_last_part.is_null() {
-                *pul_last_part_len = out_len;
-                return CKR_OK.into();
-            }
-            if *pul_last_part_len < out_len {
-                *pul_last_part_len = out_len;
-                return CKR_BUFFER_TOO_SMALL.into();
+                .len();
+            if let Some(rv) = out.check(out_len) {
+                return rv;
             }
 
             let plaintext = slot_guard
@@ -2523,9 +2300,7 @@ impl<B: Backend> Engine<B> {
                 .take()
                 .unwrap();
             slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
-            std::ptr::copy_nonoverlapping(plaintext.as_ptr(), p_last_part, plaintext.len());
-            *pul_last_part_len = plaintext.len() as CK_ULONG;
-            CKR_OK.into()
+            out.write(&plaintext)
         }
     }
 
@@ -2565,10 +2340,14 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let public_key_template =
-                extract_attribute_template(p_public_key_template, ul_public_key_attribute_count);
-            let private_key_template =
-                extract_attribute_template(p_private_key_template, ul_private_key_attribute_count);
+            let public_key_template = try_rv!(extract_attribute_template(
+                p_public_key_template,
+                ul_public_key_attribute_count
+            ));
+            let private_key_template = try_rv!(extract_attribute_template(
+                p_private_key_template,
+                ul_private_key_attribute_count
+            ));
 
             match B::generate_key_pair(
                 &mut slot_guard,
@@ -2613,7 +2392,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let template = extract_attribute_template(p_template, ul_count);
+            let template = try_rv!(extract_attribute_template(p_template, ul_count));
 
             match B::create_object(&mut slot_guard, h_session, &template) {
                 Ok(handle) => {
@@ -2657,16 +2436,8 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
-            let template = extract_attribute_template(p_template, ul_attribute_count);
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
+            let template = try_rv!(extract_attribute_template(p_template, ul_attribute_count));
 
             match B::derive_key(
                 &mut slot_guard,
@@ -2716,34 +2487,23 @@ impl<B: Backend> Engine<B> {
                 return CKR_SESSION_HANDLE_INVALID.into();
             }
             if p_mechanism.is_null()
-                || pul_ciphertext_len.is_null()
                 || ph_key.is_null()
                 || (ul_attribute_count > 0 && p_template.is_null())
             {
                 return CKR_ARGUMENTS_BAD.into();
             }
+            let mut out = try_rv!(OutBuf::new(p_ciphertext, pul_ciphertext_len));
 
-            if p_ciphertext.is_null() {
+            if out.is_query() {
                 return match B::encapsulate_key_len(&mut slot_guard, h_public_key) {
-                    Ok(len) => {
-                        *pul_ciphertext_len = len as CK_ULONG;
-                        CKR_OK.into()
-                    }
+                    Ok(len) => out.check(len).unwrap_or_else(|| CKR_OK.into()),
                     Err(rv) => rv,
                 };
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
-            let template = extract_attribute_template(p_template, ul_attribute_count);
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
+            let template = try_rv!(extract_attribute_template(p_template, ul_attribute_count));
 
             match B::encapsulate_key(
                 &mut slot_guard,
@@ -2754,18 +2514,11 @@ impl<B: Backend> Engine<B> {
                 &template,
             ) {
                 Ok((ciphertext, handle)) => {
-                    if (*pul_ciphertext_len as usize) < ciphertext.len() {
-                        *pul_ciphertext_len = ciphertext.len() as CK_ULONG;
-                        return CKR_BUFFER_TOO_SMALL.into();
+                    let rv = out.write(&ciphertext);
+                    if rv == CK_RV::from(CKR_OK) {
+                        *ph_key = handle;
                     }
-                    std::ptr::copy_nonoverlapping(
-                        ciphertext.as_ptr(),
-                        p_ciphertext,
-                        ciphertext.len(),
-                    );
-                    *pul_ciphertext_len = ciphertext.len() as CK_ULONG;
-                    *ph_key = handle;
-                    CKR_OK.into()
+                    rv
                 }
                 Err(rv) => rv,
             }
@@ -2808,21 +2561,9 @@ impl<B: Backend> Engine<B> {
             }
 
             let mechanism = (*p_mechanism).mechanism;
-            let parameter: &[u8] =
-                if (*p_mechanism).pParameter.is_null() || (*p_mechanism).ulParameterLen == 0 {
-                    &[]
-                } else {
-                    std::slice::from_raw_parts(
-                        (*p_mechanism).pParameter as *const u8,
-                        (*p_mechanism).ulParameterLen as usize,
-                    )
-                };
-            let ciphertext: &[u8] = if ul_ciphertext_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_ciphertext, ul_ciphertext_len as usize)
-            };
-            let template = extract_attribute_template(p_template, ul_attribute_count);
+            let parameter = try_rv!(mechanism_parameter(p_mechanism));
+            let ciphertext = try_rv!(in_slice(p_ciphertext as *const u8, ul_ciphertext_len));
+            let template = try_rv!(extract_attribute_template(p_template, ul_attribute_count));
 
             match B::decapsulate_key(
                 &mut slot_guard,
@@ -2892,16 +2633,8 @@ impl<B: Backend> Engine<B> {
                 return CKR_SESSION_HANDLE_INVALID.into();
             }
 
-            let old_pin: &[u8] = if p_old_pin.is_null() || ul_old_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_old_pin as *const u8, ul_old_len as usize)
-            };
-            let new_pin: &[u8] = if p_new_pin.is_null() || ul_new_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_new_pin as *const u8, ul_new_len as usize)
-            };
+            let old_pin = try_rv!(in_slice_or_empty(p_old_pin as *const u8, ul_old_len));
+            let new_pin = try_rv!(in_slice_or_empty(p_new_pin as *const u8, ul_new_len));
 
             match B::set_pin(&mut slot_guard, h_session, old_pin, new_pin) {
                 Ok(()) => CKR_OK.into(),
@@ -2938,11 +2671,7 @@ impl<B: Backend> Engine<B> {
             if p_pin.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
-            let pin: &[u8] = if ul_pin_len == 0 {
-                &[]
-            } else {
-                std::slice::from_raw_parts(p_pin as *const u8, ul_pin_len as usize)
-            };
+            let pin = try_rv!(in_slice(p_pin as *const u8, ul_pin_len));
 
             match B::init_token(&mut slot_guard, pin) {
                 Ok(()) => CKR_OK.into(),
