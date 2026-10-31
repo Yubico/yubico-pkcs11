@@ -16,7 +16,9 @@
 
 use pkcs11_common::backend::Slot;
 use pkcs11_common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
-use pkcs11_common::mechanism::{CryptMechanismKind, classify_crypt_mechanism, resolve_oaep_params};
+use pkcs11_common::mechanism::{
+    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
+};
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 
@@ -44,7 +46,7 @@ pub fn encrypt_init(
     slot: &mut Slot<PivBackend>,
     h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<CK_ULONG, CK_RV> {
     let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle)

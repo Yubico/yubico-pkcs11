@@ -17,7 +17,9 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use pkcs11_common::backend::Slot;
 use pkcs11_common::decrypt::{eme_oaep_unpad, eme_pkcs1_v15_unpad};
-use pkcs11_common::mechanism::{CryptMechanismKind, classify_crypt_mechanism, resolve_oaep_params};
+use pkcs11_common::mechanism::{
+    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
+};
 use pkcs11_common::session::LoginState;
 use pkcs11_common::sign::zero_pad;
 use pkcs11_sys::*;
@@ -48,7 +50,7 @@ pub fn decrypt_init(
     slot: &mut Slot<PivBackend>,
     h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<(), CK_RV> {
     let Some((piv_slot, public_key)) =

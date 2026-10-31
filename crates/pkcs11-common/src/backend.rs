@@ -16,6 +16,7 @@
 
 use crate::digest::DigestOp;
 use crate::ffi::{OutBuf, in_slice, in_slice_or_empty, inout_slice, out_bytes_zeroed};
+use crate::mechanism::{MechanismParam, decode_mechanism_param};
 use crate::session::{LoginState, compute_state};
 use crate::str_pad;
 use parking_lot::Mutex;
@@ -236,7 +237,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _key_handle: CK_OBJECT_HANDLE,
     ) -> Result<CK_ULONG, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
@@ -261,7 +262,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _key_handle: CK_OBJECT_HANDLE,
     ) -> Result<(), CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
@@ -290,7 +291,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _key_handle: CK_OBJECT_HANDLE,
     ) -> Result<CK_ULONG, CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
@@ -319,7 +320,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _key_handle: CK_OBJECT_HANDLE,
     ) -> Result<(), CK_RV> {
         Err(CKR_FUNCTION_NOT_SUPPORTED.into())
@@ -369,7 +370,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _base_key_handle: CK_OBJECT_HANDLE,
         _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
@@ -415,7 +416,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _h_public_key: CK_OBJECT_HANDLE,
         _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<(Vec<u8>, CK_OBJECT_HANDLE), CK_RV> {
@@ -428,7 +429,7 @@ pub trait Backend: Sized + 'static {
         _slot: &mut Slot<Self>,
         _h_session: CK_SESSION_HANDLE,
         _mechanism: CK_MECHANISM_TYPE,
-        _parameter: &[u8],
+        _parameter: &MechanismParam,
         _h_private_key: CK_OBJECT_HANDLE,
         _ciphertext: &[u8],
         _template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
@@ -458,15 +459,16 @@ unsafe fn extract_attribute_template(
     }
 }
 
-/// Borrows a mechanism's `pParameter` bytes; a null parameter is empty.
+/// Decodes a mechanism's parameter into an owned [`MechanismParam`].
 ///
 /// # Safety
 ///
 /// `p_mechanism` must be non-null and point to a readable `CK_MECHANISM`
-/// whose parameter satisfies [`in_slice`]'s contract.
-unsafe fn mechanism_parameter<'a>(p_mechanism: CK_MECHANISM_PTR) -> Result<&'a [u8], CK_RV> {
+/// whose parameter satisfies [`decode_mechanism_param`]'s contract.
+unsafe fn mechanism_parameter(p_mechanism: CK_MECHANISM_PTR) -> Result<MechanismParam, CK_RV> {
     unsafe {
-        in_slice_or_empty(
+        decode_mechanism_param(
+            (*p_mechanism).mechanism,
             (*p_mechanism).pParameter as *const u8,
             (*p_mechanism).ulParameterLen,
         )
@@ -1520,7 +1522,7 @@ impl<B: Backend> Engine<B> {
 
             let mechanism = (*p_mechanism).mechanism;
             let parameter = try_rv!(mechanism_parameter(p_mechanism));
-            match B::sign_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+            match B::sign_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
                     session.sign_op = SignOp {
@@ -1704,7 +1706,7 @@ impl<B: Backend> Engine<B> {
 
             let mechanism = (*p_mechanism).mechanism;
             let parameter = try_rv!(mechanism_parameter(p_mechanism));
-            match B::verify_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+            match B::verify_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
                     session.verify_op = VerifyOp { active: true };
@@ -1878,7 +1880,7 @@ impl<B: Backend> Engine<B> {
 
             let mechanism = (*p_mechanism).mechanism;
             let parameter = try_rv!(mechanism_parameter(p_mechanism));
-            match B::encrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+            match B::encrypt_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
                     session.encrypt_op = EncryptOp {
@@ -2063,7 +2065,7 @@ impl<B: Backend> Engine<B> {
 
             let mechanism = (*p_mechanism).mechanism;
             let parameter = try_rv!(mechanism_parameter(p_mechanism));
-            match B::decrypt_init(&mut slot_guard, h_session, mechanism, parameter, h_key) {
+            match B::decrypt_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
                     session.decrypt_op = DecryptOp {
@@ -2443,7 +2445,7 @@ impl<B: Backend> Engine<B> {
                 &mut slot_guard,
                 h_session,
                 mechanism,
-                parameter,
+                &parameter,
                 h_base_key,
                 &template,
             ) {
@@ -2509,7 +2511,7 @@ impl<B: Backend> Engine<B> {
                 &mut slot_guard,
                 h_session,
                 mechanism,
-                parameter,
+                &parameter,
                 h_public_key,
                 &template,
             ) {
@@ -2569,7 +2571,7 @@ impl<B: Backend> Engine<B> {
                 &mut slot_guard,
                 h_session,
                 mechanism,
-                parameter,
+                &parameter,
                 h_private_key,
                 ciphertext,
                 &template,

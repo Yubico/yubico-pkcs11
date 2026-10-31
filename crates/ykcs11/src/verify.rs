@@ -18,7 +18,9 @@ use crate::backend::PivBackend;
 use crate::sign::{Accumulator, resolve_ml_dsa_context};
 use pkcs11_common::backend::Slot;
 use pkcs11_common::digest::DigestOp;
-use pkcs11_common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
+use pkcs11_common::mechanism::{
+    MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params,
+};
 use pkcs11_common::verify::{
     verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509,
 };
@@ -76,7 +78,7 @@ pub fn verify_init(
     slot: &mut Slot<PivBackend>,
     h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<(), CK_RV> {
     let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle)
