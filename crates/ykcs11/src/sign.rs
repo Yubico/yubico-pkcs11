@@ -17,7 +17,9 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use pkcs11_common::backend::Slot;
 use pkcs11_common::digest::DigestOp;
-use pkcs11_common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
+use pkcs11_common::mechanism::{
+    MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params,
+};
 use pkcs11_common::session::LoginState;
 use pkcs11_common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
@@ -84,35 +86,18 @@ enum SignAlgorithm {
     MlDsaExternalMu,
 }
 
-/// Validates `CK_SIGN_ADDITIONAL_CONTEXT` for `CKM_ML_DSA`
-pub(crate) fn resolve_ml_dsa_context(parameter: &[u8]) -> Result<Vec<u8>, CK_RV> {
-    if parameter.is_empty() {
-        return Ok(Vec::new());
+/// Validates the optional `CK_SIGN_ADDITIONAL_CONTEXT` for `CKM_ML_DSA`
+pub(crate) fn resolve_ml_dsa_context(parameter: &MechanismParam) -> Result<(), CK_RV> {
+    match parameter {
+        p if p.is_empty() => Ok(()),
+        MechanismParam::SignAdditionalContext(ctx)
+            if ctx.context.is_empty()
+                && ctx.hedge_variant != CKH_DETERMINISTIC_REQUIRED as CK_HEDGE_TYPE =>
+        {
+            Ok(())
+        }
+        _ => Err(CKR_MECHANISM_PARAM_INVALID.into()),
     }
-    if parameter.len() != std::mem::size_of::<CK_SIGN_ADDITIONAL_CONTEXT>() {
-        return Err(CKR_MECHANISM_PARAM_INVALID.into());
-    }
-    // SAFETY: length checked above; read_unaligned since PKCS#11 callers are not
-    // guaranteed to enter an aligned pointer).
-    let ctx: CK_SIGN_ADDITIONAL_CONTEXT = unsafe {
-        std::ptr::read_unaligned(parameter.as_ptr() as *const CK_SIGN_ADDITIONAL_CONTEXT)
-    };
-    if ctx.hedgeVariant == CKH_DETERMINISTIC_REQUIRED as CK_HEDGE_TYPE {
-        return Err(CKR_MECHANISM_PARAM_INVALID.into());
-    }
-    if ctx.ulContextLen == 0 {
-        return Ok(Vec::new());
-    }
-    if ctx.ulContextLen > 255 || ctx.pContext.is_null() {
-        return Err(CKR_MECHANISM_PARAM_INVALID.into());
-    }
-    // SAFETY: pContext/ulContextLen are a second caller-supplied
-    // pointer+length pair, out-of-line from `parameter` itself — same trust
-    // boundary as `parameter` (valid for the duration of this call), same
-    // pattern as `derive.rs`'s `resolve_ecdh1_derive_params`.
-    Ok(unsafe {
-        std::slice::from_raw_parts(ctx.pContext as *const u8, ctx.ulContextLen as usize).to_vec()
-    })
 }
 
 fn ml_dsa_signature_len(parameter_set: MlDsaParameterSet) -> Result<CK_ULONG, CK_RV> {
@@ -146,7 +131,7 @@ pub fn sign_init(
     slot: &mut Slot<PivBackend>,
     h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<CK_ULONG, CK_RV> {
     let Some((piv_slot, public_key)) =

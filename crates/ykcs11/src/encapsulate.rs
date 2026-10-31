@@ -18,6 +18,7 @@ use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::derive::validate_derive_template;
 use crate::objects::{find_private_key, find_public_key, store_secret_key};
 use pkcs11_common::backend::Slot;
+use pkcs11_common::mechanism::MechanismParam;
 use pkcs11_sys::*;
 use yubikit::keys::{MlKemParameterSet, PublicKey};
 use yubikit::piv::KeyType;
@@ -84,7 +85,7 @@ fn ml_kem_encapsulate(
     }
 }
 
-fn check_mechanism(mechanism: CK_MECHANISM_TYPE, parameter: &[u8]) -> Result<(), CK_RV> {
+fn check_mechanism(mechanism: CK_MECHANISM_TYPE, parameter: &MechanismParam) -> Result<(), CK_RV> {
     if mechanism as u32 != CKM_ML_KEM {
         return Err(CKR_MECHANISM_INVALID.into());
     }
@@ -114,7 +115,7 @@ pub fn encapsulate_key(
     slot: &mut Slot<PivBackend>,
     _h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     h_public_key: CK_OBJECT_HANDLE,
     template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<(Vec<u8>, CK_OBJECT_HANDLE), CK_RV> {
@@ -140,7 +141,7 @@ pub fn decapsulate_key(
     slot: &mut Slot<PivBackend>,
     _h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     h_private_key: CK_OBJECT_HANDLE,
     ciphertext: &[u8],
     template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
