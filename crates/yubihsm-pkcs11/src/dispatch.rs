@@ -179,8 +179,11 @@ pub unsafe extern "C" fn C_Login(
 ) -> CK_RV {
     unsafe {
         let mut username_len: CK_ULONG = 0;
-        if !pPin.is_null() && ulPinLen > 0 {
-            let pin_bytes = std::slice::from_raw_parts(pPin as *const u8, ulPinLen as usize);
+        let pin_bytes = match pkcs11_common::ffi::in_slice_or_empty(pPin as *const u8, ulPinLen) {
+            Ok(b) => b,
+            Err(rv) => return rv,
+        };
+        if !pin_bytes.is_empty() {
             if pin_bytes[0] == b'@' {
                 username_len += 1;
             } else if pin_bytes[0] == b'#' {
