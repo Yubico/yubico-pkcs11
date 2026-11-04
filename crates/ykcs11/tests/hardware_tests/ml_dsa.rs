@@ -3,7 +3,7 @@
 
 //! ML-DSA private-key import hardware coverage (`C_CreateObject`).
 
-use crate::common::*;
+use crate::util::*;
 use pkcs11_sys::*;
 use std::ptr;
 

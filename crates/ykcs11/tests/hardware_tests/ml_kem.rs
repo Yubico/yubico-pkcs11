@@ -7,7 +7,7 @@
 //! comment on `G_INTERFACES` for why those aren't reachable through
 //! `C_GetFunctionList`) hardware coverage.
 
-use crate::common::*;
+use crate::util::*;
 use pkcs11_sys::*;
 use std::ptr;
 

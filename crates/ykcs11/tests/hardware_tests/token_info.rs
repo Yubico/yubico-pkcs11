@@ -4,7 +4,7 @@
 //! `C_GetTokenInfo` hardware coverage -- the Rust equivalent of
 //! `ykcs11_tests.c`'s `test_token_info()`.
 
-use crate::common::*;
+use crate::util::*;
 use pkcs11_sys::*;
 use std::ptr;
 

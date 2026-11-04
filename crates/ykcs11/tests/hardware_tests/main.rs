@@ -53,7 +53,7 @@
 //! serializing all hardware access onto one thread at a time regardless of
 //! how `cargo test` schedules them.
 
-mod common;
+mod util;
 mod mechanisms;
 mod ml_dsa;
 mod ml_kem;

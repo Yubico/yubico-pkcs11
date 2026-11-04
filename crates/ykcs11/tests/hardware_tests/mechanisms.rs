@@ -4,7 +4,7 @@
 //! `C_GetMechanismList`/`C_GetMechanismInfo` hardware coverage -- the Rust
 //! equivalent of `ykcs11_tests.c`'s `test_mechanism_list_and_info()`.
 
-use crate::common::*;
+use crate::util::*;
 use pkcs11_sys::*;
 use std::ptr;
 
