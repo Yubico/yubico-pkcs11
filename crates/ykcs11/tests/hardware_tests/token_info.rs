@@ -113,23 +113,37 @@ fn test_token_info() {
     assert_prefix(&info.label, b"YubiKey PIV", "CK_TOKEN_INFO.label");
     assert_prefix(&info.model, b"YubiKey", "CK_TOKEN_INFO.model");
 
+    // CK_TOKEN_INFO is `#[repr(packed)]` on Windows so its
+    // multi-byte fields can't be referenced in place
+    let flags = info.flags;
+    let max_session_count = info.ulMaxSessionCount;
+    let session_count = info.ulSessionCount;
+    let max_rw_session_count = info.ulMaxRwSessionCount;
+    let rw_session_count = info.ulRwSessionCount;
+    let min_pin_len = info.ulMinPinLen;
+    let max_pin_len = info.ulMaxPinLen;
+    let total_public_memory = info.ulTotalPublicMemory;
+    let free_public_memory = info.ulFreePublicMemory;
+    let total_private_memory = info.ulTotalPrivateMemory;
+    let free_private_memory = info.ulFreePrivateMemory;
+
     let expected_flags = (CKF_RNG | CKF_LOGIN_REQUIRED | CKF_USER_PIN_INITIALIZED | CKF_TOKEN_INITIALIZED)
         as CK_FLAGS;
-    assert_eq!(info.flags, expected_flags, "CK_TOKEN_INFO.flags");
+    assert_eq!(flags, expected_flags, "CK_TOKEN_INFO.flags");
 
-    assert_eq!(info.ulMaxSessionCount, 16, "ulMaxSessionCount");
-    assert_eq!(info.ulSessionCount, 0, "ulSessionCount");
-    assert_eq!(info.ulMaxRwSessionCount, 16, "ulMaxRwSessionCount");
-    assert_eq!(info.ulRwSessionCount, 0, "ulRwSessionCount");
+    assert_eq!(max_session_count, 16, "ulMaxSessionCount");
+    assert_eq!(session_count, 0, "ulSessionCount");
+    assert_eq!(max_rw_session_count, 16, "ulMaxRwSessionCount");
+    assert_eq!(rw_session_count, 0, "ulRwSessionCount");
 
-    assert_eq!(info.ulMinPinLen, 6, "ulMinPinLen");
-    assert_eq!(info.ulMaxPinLen, 64, "ulMaxPinLen");
+    assert_eq!(min_pin_len, 6, "ulMinPinLen");
+    assert_eq!(max_pin_len, 64, "ulMaxPinLen");
 
     let unavailable = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
-    assert_eq!(info.ulTotalPublicMemory, unavailable, "ulTotalPublicMemory");
-    assert_eq!(info.ulFreePublicMemory, unavailable, "ulFreePublicMemory");
-    assert_eq!(info.ulTotalPrivateMemory, unavailable, "ulTotalPrivateMemory");
-    assert_eq!(info.ulFreePrivateMemory, unavailable, "ulFreePrivateMemory");
+    assert_eq!(total_public_memory, unavailable, "ulTotalPublicMemory");
+    assert_eq!(free_public_memory, unavailable, "ulFreePublicMemory");
+    assert_eq!(total_private_memory, unavailable, "ulTotalPrivateMemory");
+    assert_eq!(free_private_memory, unavailable, "ulFreePrivateMemory");
 
     assert_eq!(info.hardwareVersion.major, 1, "hardwareVersion.major");
     assert_eq!(info.hardwareVersion.minor, 0, "hardwareVersion.minor");
@@ -182,8 +196,12 @@ fn test_mechanism_list() {
         let mut mech_info: CK_MECHANISM_INFO = unsafe { std::mem::zeroed() };
         let rv = unsafe { ykcs11::C_GetMechanismInfo(slot_id, mechanism, &mut mech_info) };
         assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_GetMechanismInfo(0x{mechanism:x})"));
-        assert_eq!(mech_info.ulMinKeySize, min, "0x{mechanism:x}: ulMinKeySize");
-        assert_eq!(mech_info.ulMaxKeySize, max, "0x{mechanism:x}: ulMaxKeySize");
-        assert_eq!(mech_info.flags, flags, "0x{mechanism:x}: flags");
+
+        let min_key_size = mech_info.ulMinKeySize;
+        let max_key_size = mech_info.ulMaxKeySize;
+        let mech_flags = mech_info.flags;
+        assert_eq!(min_key_size, min, "0x{mechanism:x}: ulMinKeySize");
+        assert_eq!(max_key_size, max, "0x{mechanism:x}: ulMaxKeySize");
+        assert_eq!(mech_flags, flags, "0x{mechanism:x}: flags");
     }
 }

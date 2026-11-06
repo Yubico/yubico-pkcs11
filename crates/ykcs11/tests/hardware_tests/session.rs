@@ -26,6 +26,12 @@ fn session_info(session: CK_SESSION_HANDLE) -> CK_SESSION_INFO {
     info
 }
 
+/// Needed for Windows. `CK_SESSION_INFO` is `#[repr(packed)]` on Windows so
+/// its multi-byte fields can't be referenced in place
+fn session_state(session: CK_SESSION_HANDLE) -> CK_STATE {
+    session_info(session).state
+}
+
 #[test]
 fn test_session() {
     if !hardware_tests_enabled() {
@@ -40,17 +46,17 @@ fn test_session() {
 
     let session = open_session(slot_id);
     let mut info: CK_SESSION_INFO = session_info(session);
+    // Copied into locals first to build on Windows
+    let state = info.state;
+    let flags = info.flags;
+    let device_error = info.ulDeviceError;
+    assert_eq!(state, CKS_RW_PUBLIC_SESSION as CK_STATE, "CK_SESSION_INFO.state");
     assert_eq!(
-        info.state,
-        CKS_RW_PUBLIC_SESSION as CK_STATE,
-        "CK_SESSION_INFO.state"
-    );
-    assert_eq!(
-        info.flags,
+        flags,
         (CKF_SERIAL_SESSION | CKF_RW_SESSION) as CK_FLAGS,
         "CK_SESSION_INFO.flags"
     );
-    assert_eq!(info.ulDeviceError, 0, "CK_SESSION_INFO.ulDeviceError");
+    assert_eq!(device_error, 0, "CK_SESSION_INFO.ulDeviceError");
 
     let rv = unsafe { ykcs11::C_CloseSession(session) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_CloseSession");
@@ -92,22 +98,19 @@ fn test_login() {
     // Open a second session and confirm it sees the same slot-wide SO login
     // state the first session set up.
     let session2: CK_SESSION_HANDLE = open_session(slot_id);
-    let info: CK_SESSION_INFO = session_info(session2);
-    assert_eq!(info.state, CKS_RW_SO_FUNCTIONS as CK_STATE, "session2 state");
+    assert_eq!(session_state(session2), CKS_RW_SO_FUNCTIONS as CK_STATE, "session2 state");
 
     let rv = unsafe { ykcs11::C_Logout(session1) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO) session1");
 
-    let info: CK_SESSION_INFO = session_info(session1);
     assert_eq!(
-        info.state,
+        session_state(session1),
         CKS_RW_PUBLIC_SESSION as CK_STATE,
         "session1 state after logout"
     );
 
-    let info: CK_SESSION_INFO = session_info(session2);
     assert_eq!(
-        info.state,
+        session_state(session2),
         CKS_RW_PUBLIC_SESSION as CK_STATE,
         "session2 state after logout"
     );
@@ -181,22 +184,19 @@ fn test_multiple_sessions() {
 
     // Open the first session as a public session (no logging in).
     let session1 = open_session(slot_id);
-    let info: CK_SESSION_INFO = session_info(session1);
-    assert_eq!(info.state, CKS_RW_PUBLIC_SESSION as CK_STATE, "session1 state");
+    assert_eq!(session_state(session1), CKS_RW_PUBLIC_SESSION as CK_STATE, "session1 state");
 
     // Open a second session and log in as USER on it. Both sessions
     // should then report CKS_RW_USER_FUNCTIONS
     let session2 = open_session(slot_id);
     login_user(session2, CKR_OK as CK_RV);
-    let info: CK_SESSION_INFO = session_info(session2);
     assert_eq!(
-        info.state,
+        session_state(session2),
         CKS_RW_USER_FUNCTIONS as CK_STATE,
         "session2 state after USER login"
     );
-    let info: CK_SESSION_INFO = session_info(session1);
     assert_eq!(
-        info.state,
+        session_state(session1),
         CKS_RW_USER_FUNCTIONS as CK_STATE,
         "session1 state after USER login on session2"
     );
@@ -204,15 +204,13 @@ fn test_multiple_sessions() {
     // Logout from session2 => both sessions go back to public.
     let rv = unsafe { ykcs11::C_Logout(session2) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER) session2");
-    let info: CK_SESSION_INFO = session_info(session2);
     assert_eq!(
-        info.state,
+        session_state(session2),
         CKS_RW_PUBLIC_SESSION as CK_STATE,
         "session2 state after logout"
     );
-    let info: CK_SESSION_INFO = session_info(session1);
     assert_eq!(
-        info.state,
+        session_state(session1),
         CKS_RW_PUBLIC_SESSION as CK_STATE,
         "session1 state after logout"
     );
@@ -222,8 +220,7 @@ fn test_multiple_sessions() {
     let session3 = open_session(slot_id);
     login_so(session3, CKR_OK as CK_RV);
     for (session, name) in [(session3, "session3"), (session2, "session2"), (session1, "session1")] {
-        let info: CK_SESSION_INFO = session_info(session);
-        assert_eq!(info.state, CKS_RW_SO_FUNCTIONS as CK_STATE, "{name} state after SO login");
+        assert_eq!(session_state(session), CKS_RW_SO_FUNCTIONS as CK_STATE, "{name} state after SO login");
     }
 
     // Close session2. Its handle becomes invalid.
@@ -241,13 +238,11 @@ fn test_multiple_sessions() {
     // state session1/session3 set up, even though it was opened after
     // session2 was closed.
     let session4 = open_session(slot_id);
-    let info: CK_SESSION_INFO = session_info(session4);
-    assert_eq!(info.state, CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state");
+    assert_eq!(session_state(session4), CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state");
 
     // A USER login attempt on the slot still fails while SO is logged in
     login_user(session4, CKR_USER_ANOTHER_ALREADY_LOGGED_IN as CK_RV);
-    let info: CK_SESSION_INFO = session_info(session4);
-    assert_eq!(info.state, CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state unchanged");
+    assert_eq!(session_state(session4), CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state unchanged");
 
     let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
