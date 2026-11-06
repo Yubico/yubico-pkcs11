@@ -32,6 +32,10 @@ pub(crate) const DEFAULT_USER_PIN: &[u8] = b"123456";
 pub(crate) const DEFAULT_MGMT_KEY_HEX: &[u8] = b"010203040506070801020304050607080102030405060708";
 
 pub(crate) const P256_EC_PARAMS: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+pub(crate) const P384_EC_PARAMS: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
+
+pub(crate) const SLOT_LIST_EXTENDED: &[u8] = &[1, 2, 3, 4, 5, 24];
+pub(crate) const SLOT_LIST: &[u8] = &[1, 2, 3, 4];
 
 pub(crate) fn hardware_tests_enabled() -> bool {
     std::env::var(RUN_ENV_VAR).as_deref() == Ok("1")
@@ -172,6 +176,21 @@ pub(crate) fn login_so(session: CK_SESSION_HANDLE, expected: CK_RV) {
     assert_eq!(rv, expected, "C_Login(CKU_SO). Expected {expected:#x}. Found {rv:#x}");
 }
 
+pub(crate) fn login_context_specific(session: CK_SESSION_HANDLE, expected: CK_RV) {
+    let rv = unsafe {
+        ykcs11::C_Login(
+            session,
+            CKU_CONTEXT_SPECIFIC as CK_USER_TYPE,
+            DEFAULT_USER_PIN.as_ptr() as CK_UTF8CHAR_PTR,
+            DEFAULT_USER_PIN.len() as CK_ULONG,
+        )
+    };
+    assert_eq!(
+        rv, expected,
+        "C_Login(CKU_CONTEXT_SPECIFIC). Expected {expected:#x}. Found {rv:#x}"
+    );
+}
+
 
 
 // /// Logs out of whatever role `h_session` currently holds (expected to be
@@ -225,34 +244,28 @@ pub(crate) fn get_attribute(
     buf
 }
 
-// /// Finds the one object matching `class`/`id` via
-// /// `C_FindObjectsInit`/`C_FindObjects`/`C_FindObjectsFinal` -- e.g. the
-// /// `CKO_PUBLIC_KEY` object a `C_CreateObject`/`C_GenerateKeyPair` call also
-// /// populates alongside the private key it was actually asked for, at the
-// /// same `CKA_ID` but a different (and otherwise unpredictable from the
-// /// caller's side) handle.
-// pub(crate) fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &str) -> CK_OBJECT_HANDLE {
-//     let class_bytes = ulong_bytes(class);
-//     let id_bytes = [id];
-//     let mut template = [attr(CKA_CLASS, &class_bytes), attr(CKA_ID, &id_bytes)];
-//     let rv = unsafe {
-//         ykcs11::C_FindObjectsInit(h_session, template.as_mut_ptr(), template.len() as CK_ULONG)
-//     };
-//     assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsInit ({what})"));
-//
-//     let mut handles = [0 as CK_OBJECT_HANDLE; 1];
-//     let mut count: CK_ULONG = 0;
-//     let rv = unsafe {
-//         ykcs11::C_FindObjects(h_session, handles.as_mut_ptr(), handles.len() as CK_ULONG, &mut count)
-//     };
-//     assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjects ({what})"));
-//     assert_eq!(count, 1, "{what}: expected exactly one matching object, found {count}");
-//
-//     let rv = unsafe { ykcs11::C_FindObjectsFinal(h_session) };
-//     assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsFinal ({what})"));
-//
-//     handles[0]
-// }
+pub(crate) fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &str) -> CK_OBJECT_HANDLE {
+    let class_bytes = ulong_bytes(class);
+    let id_bytes = [id];
+    let mut template = [attr(CKA_CLASS, &class_bytes), attr(CKA_ID, &id_bytes)];
+    let rv = unsafe {
+        ykcs11::C_FindObjectsInit(h_session, template.as_mut_ptr(), template.len() as CK_ULONG)
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsInit ({what})"));
+
+    let mut handles = [0 as CK_OBJECT_HANDLE; 1];
+    let mut count: CK_ULONG = 0;
+    let rv = unsafe {
+        ykcs11::C_FindObjects(h_session, handles.as_mut_ptr(), handles.len() as CK_ULONG, &mut count)
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjects ({what})"));
+    assert_eq!(count, 1, "{what}: expected exactly one matching object, found {count}");
+
+    let rv = unsafe { ykcs11::C_FindObjectsFinal(h_session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsFinal ({what})"));
+
+    handles[0]
+}
 
 // /// A `CK_MECHANISM` with no parameter -- every mechanism these tests use
 // /// (`CKM_ML_KEM`) takes none. Named `no_param_mechanism` rather than
@@ -339,63 +352,3 @@ pub(crate) fn get_attribute(
 //     h_object
 // }
 
-pub(crate) fn generate_ec_keys(h_session: CK_SESSION_HANDLE, number_of_keys: u8, ec_params: &[u8]) -> Vec<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE)>{
-    let rv = unsafe {
-        ykcs11::C_Login(
-            h_session,
-            CKU_SO as CK_USER_TYPE,
-            DEFAULT_MGMT_KEY_HEX.as_ptr() as CK_UTF8CHAR_PTR,
-            DEFAULT_MGMT_KEY_HEX.len() as CK_ULONG,
-        )
-    };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Login(CKU_SO)");
-
-    let class_priv = ulong_bytes(CKO_PRIVATE_KEY);
-    let class_pub = ulong_bytes(CKO_PUBLIC_KEY);
-    let key_type = ulong_bytes(CKK_EC);
-    let mut mechanism = CK_MECHANISM {
-        mechanism: CKM_EC_KEY_PAIR_GEN as CK_MECHANISM_TYPE,
-        pParameter: ptr::null_mut(),
-        ulParameterLen: 0,
-    };
-
-    let mut generated = Vec::new();
-
-    for id in 1..=number_of_keys {
-        let id_bytes = [id];
-        let mut private_key_template = [
-            attr(CKA_CLASS, &class_priv),
-            attr(CKA_KEY_TYPE, &key_type),
-            attr(CKA_ID, &id_bytes),
-        ];
-        let mut public_key_template = [
-            attr(CKA_CLASS, &class_pub),
-            attr(CKA_ID, &id_bytes),
-            attr(CKA_EC_PARAMS, ec_params),
-        ];
-
-        let mut h_public_key: CK_OBJECT_HANDLE = 0;
-        let mut h_private_key: CK_OBJECT_HANDLE = 0;
-        let rv = unsafe {
-            ykcs11::C_GenerateKeyPair(
-                h_session,
-                &mut mechanism,
-                public_key_template.as_mut_ptr(),
-                public_key_template.len() as CK_ULONG,
-                private_key_template.as_mut_ptr(),
-                private_key_template.len() as CK_ULONG,
-                &mut h_public_key,
-                &mut h_private_key,
-            )
-        };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_GenerateKeyPair (id {id})");
-        assert_ne!(h_private_key, 0, "C_GenerateKeyPair returned a null private key handle");
-        assert_ne!(h_public_key, 0, "C_GenerateKeyPair returned a null public key handle");
-        generated.push((h_private_key, h_public_key));
-    }
-
-    let rv = unsafe { ykcs11::C_Logout(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
-
-    generated
-}

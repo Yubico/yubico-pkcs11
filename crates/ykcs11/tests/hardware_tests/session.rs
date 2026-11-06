@@ -16,6 +16,7 @@
 
 use crate::util::*;
 use pkcs11_sys::*;
+use crate::ec::{generate_ec_keys, ecdsa_sign};
 use std::ptr;
 
 fn session_info(session: CK_SESSION_HANDLE) -> CK_SESSION_INFO {
@@ -136,48 +137,17 @@ fn test_login_order() {
 
     let h_session1: CK_SESSION_HANDLE = open_session(slot_id.clone());
 
-    // let private_keys = generate_p256_keys(h_session1, &[1, 2]);
-    let keys = generate_ec_keys(h_session1, 2, P256_EC_PARAMS);
+    let keys = generate_ec_keys(h_session1, &[1, 2], P256_EC_PARAMS);
 
-    let data = [0u8; 32];
     let mut leaked_sessions = Vec::new();
 
-    for key in keys.clone() {
-        login_user(h_session1, CKR_OK as CK_RV);
-
+    for (privkey, _) in keys.clone() {
         // A second session is opened on every iteration purely to confirm its mere presence
         // doesn't interfere with the sign operation on session1
         let h_session2: CK_SESSION_HANDLE = open_session(slot_id.clone());
         leaked_sessions.push(h_session2);
 
-        let mut mechanism = CK_MECHANISM {
-            mechanism: CKM_ECDSA as CK_MECHANISM_TYPE,
-            pParameter: ptr::null_mut(),
-            ulParameterLen: 0,
-        };
-        let rv = unsafe { ykcs11::C_SignInit(h_session1, &mut mechanism, key.0) };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit");
-
-        let mut signature = vec![0u8; 64]; // P-256: r || s, 32 bytes each
-        let mut signature_len = signature.len() as CK_ULONG;
-        let rv = unsafe {
-            ykcs11::C_Sign(
-                h_session1,
-                data.as_ptr() as CK_BYTE_PTR,
-                data.len() as CK_ULONG,
-                signature.as_mut_ptr(),
-                &mut signature_len,
-            )
-        };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_Sign");
-        assert_eq!(
-            signature_len as usize,
-            signature.len(),
-            "unexpected ECDSA signature length"
-        );
-
-        let rv = unsafe { ykcs11::C_Logout(h_session1) };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+        ecdsa_sign(h_session1, privkey, None, 32);
     }
 
     // Clean up the generated keys under a fresh CKU_SO login.
@@ -302,7 +272,7 @@ fn test_max_multiple_sessions() {
     let mut sessions = Vec::with_capacity(MAX_SESSIONS);
     for _ in 0..MAX_SESSIONS {
         let session = open_session(slot_id);
-        let info: CK_SESSION_INFO = session_info(session);
+        session_info(session);
         sessions.push(session);
     }
 

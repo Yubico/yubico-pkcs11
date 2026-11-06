@@ -48,7 +48,10 @@ fn hex_decode(hex: &str) -> Vec<u8> {
 /// No `token_init` or login -- digesting touches no PIV application state.
 #[test]
 fn test_digest() {
-
+    if !hardware_tests_enabled() {
+        eprintln!("skipping test_digest: set {RUN_ENV_VAR}=1 to run");
+        return;
+    }
     let _guard = HARDWARE_LOCK.lock().unwrap();
 
     ensure_initialized();
