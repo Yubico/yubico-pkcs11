@@ -44,5 +44,6 @@
 mod util;
 // mod ml_dsa;
 // mod ml_kem;
+mod digest;
 mod session;
 mod token_info;

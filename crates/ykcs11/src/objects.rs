@@ -1955,7 +1955,33 @@ mod tests {
     }
 
     #[test]
-    fn destroy_object_always_rejects_a_private_key_handle() {
+    fn destroy_object_requires_so_login_for_a_private_key_handle() {
+        // A private-key handle now goes through the same deletion path as a
+        // Certificate/PublicKey/AttestationCertificate handle for the same
+        // PIV slot (see destroy_object.rs's own doc comment: PIV has no APDU
+        // to erase just the private key material, so destroying any of a
+        // slot's object classes just deletes the slot's stored certificate).
+        // Mirrors destroy_object_requires_so_login_for_a_certificate_handle.
+        let obj = test_object(
+            PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
+            ObjectClass::PrivateKey,
+            Slot::Authentication,
+        );
+        let handle = obj.id as CK_OBJECT_HANDLE;
+        let mut slot = test_slot(vec![obj], LoginState::User);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, handle),
+            Err(CKR_USER_TYPE_INVALID.into())
+        );
+    }
+
+    #[test]
+    fn destroy_object_treats_a_private_key_handle_like_its_slots_certificate() {
+        // With SO logged in but no live PIV session (this test fixture never
+        // connects to real hardware), a private-key handle now reaches the
+        // same "no device connected" failure a Certificate/PublicKey handle
+        // would -- not the unconditional CKR_OBJECT_HANDLE_INVALID this
+        // crate used to hardcode for private keys specifically.
         let obj = test_object(
             PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
             ObjectClass::PrivateKey,
@@ -1965,7 +1991,7 @@ mod tests {
         let mut slot = test_slot(vec![obj], LoginState::SO);
         assert_eq!(
             crate::destroy_object::destroy_object(&mut slot, 1, handle),
-            Err(CKR_OBJECT_HANDLE_INVALID.into())
+            Err(CKR_TOKEN_NOT_PRESENT.into())
         );
     }
 
