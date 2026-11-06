@@ -239,6 +239,23 @@ impl Backend for PivBackend {
         if slot.login_state == LoginState::Public {
             return Err(CKR_USER_NOT_LOGGED_IN.into());
         }
+
+        // Force a real PC/SC card reset to deauthenticate and authenticated state
+        if let Some(piv) = slot.data.piv_session.take() {
+            let mut conn = piv.into_connection();
+            if conn.reconnect(false).is_err() {
+                slot.data.disconnect();
+                return Err(CKR_DEVICE_ERROR.into());
+            }
+            match ActivePivSession::new(conn) {
+                Ok(fresh) => slot.data.piv_session = Some(fresh),
+                Err((e, _conn)) => {
+                    slot.data.disconnect();
+                    return Err(piv_error_to_rv(e));
+                }
+            }
+        }
+
         slot.login_state = LoginState::Public;
         Ok(())
     }

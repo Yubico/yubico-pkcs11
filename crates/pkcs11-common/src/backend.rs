@@ -936,6 +936,7 @@ impl<B: Backend> Engine<B> {
         let mut slot_guard = slot.lock();
         slot_guard.sessions.remove(&h_session);
         if slot_guard.sessions.is_empty() {
+            let _ = B::logout(&mut slot_guard);
             slot_guard.login_state = LoginState::Public;
         }
         CKR_OK.into()
@@ -957,6 +958,9 @@ impl<B: Backend> Engine<B> {
             state.session_to_slot.remove(h);
         }
         slot_guard.sessions.clear();
+        // See close_session's own comment on why this ignores B::logout's
+        // result but still unconditionally lands on `Public`.
+        let _ = B::logout(&mut slot_guard);
         slot_guard.login_state = LoginState::Public;
         CKR_OK.into()
     }
