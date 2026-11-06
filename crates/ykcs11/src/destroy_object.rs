@@ -20,6 +20,14 @@ use crate::template::require_so_login;
 use pkcs11_common::backend::Slot;
 use pkcs11_sys::*;
 
+/// A `PrivateKey` handle is deleted the same way as a `Certificate`/
+/// `PublicKey`/`AttestationCertificate` handle for the same PIV slot: PIV has
+/// no APDU to erase just the private key material (it's only ever replaced
+/// by generating/importing a new key into the slot), so -- matching
+/// `ykcs11.c`'s `C_DestroyObject` (`get_sub_id` maps all four object classes
+/// for a slot to the same PIV slot number, and `token_delete_cert` acts on
+/// that slot regardless of which handle was passed) -- destroying any of
+/// them just deletes the slot's stored certificate and returns `CKR_OK`.
 pub fn destroy_object(
     slot: &mut Slot<PivBackend>,
     _h_session: CK_SESSION_HANDLE,
@@ -34,9 +42,11 @@ pub fn destroy_object(
             slot.data.objects.retain(|o| o.class != ObjectClass::SecretKey);
             Ok(())
         }
-        ObjectClass::PrivateKey => Err(CKR_OBJECT_HANDLE_INVALID.into()),
         ObjectClass::Data => Err(CKR_ACTION_PROHIBITED.into()),
-        ObjectClass::Certificate | ObjectClass::PublicKey | ObjectClass::AttestationCertificate => {
+        ObjectClass::PrivateKey
+        | ObjectClass::Certificate
+        | ObjectClass::PublicKey
+        | ObjectClass::AttestationCertificate => {
             require_so_login(slot.login_state)?;
             let piv_slot = obj.slot;
 

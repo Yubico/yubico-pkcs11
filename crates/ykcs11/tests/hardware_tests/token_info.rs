@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-//! `C_GetTokenInfo` hardware coverage
-
 use crate::util::*;
 use pkcs11_sys::*;
 use std::ptr;
@@ -105,8 +103,7 @@ fn test_token_info() {
     }
     let _guard = HARDWARE_LOCK.lock().unwrap();
 
-    let rv = unsafe { ykcs11::C_Initialize(ptr::null_mut()) };
-    assert_ok(rv, "C_Initialize");
+    ensure_initialized();
 
     let slot_id = first_populated_slot();
 
@@ -143,9 +140,6 @@ fn test_token_info() {
         "detected firmware {}.{}",
         info.firmwareVersion.major, info.firmwareVersion.minor
     );
-
-    let rv = unsafe { ykcs11::C_Finalize(ptr::null_mut()) };
-    assert_ok(rv, "C_Finalize");
 }
 
 #[test]
@@ -156,8 +150,7 @@ fn test_mechanism_list() {
     }
     let _guard = HARDWARE_LOCK.lock().unwrap();
 
-    let rv = unsafe { ykcs11::C_Initialize(ptr::null_mut()) };
-    assert_ok(rv, "C_Initialize");
+    ensure_initialized();
 
     let slot_id = first_populated_slot();
 
@@ -169,12 +162,12 @@ fn test_mechanism_list() {
 
     let mut count: CK_ULONG = 0;
     let rv = unsafe { ykcs11::C_GetMechanismList(slot_id, ptr::null_mut(), &mut count) };
-    assert_ok(rv, "C_GetMechanismList (count)");
+    assert_eq!(rv, CKR_OK as CK_RV, "C_GetMechanismList (count)");
     assert_eq!(count as usize, expected.len(), "unexpected mechanism count");
 
     let mut mechs = vec![0 as CK_MECHANISM_TYPE; count as usize];
     let rv = unsafe { ykcs11::C_GetMechanismList(slot_id, mechs.as_mut_ptr(), &mut count) };
-    assert_ok(rv, "C_GetMechanismList (fill)");
+    assert_eq!(rv, CKR_OK as CK_RV, "C_GetMechanismList (fill)");
 
     // Order isn't part of the PKCS#11 contract for C_GetMechanismList --
     // unlike ykcs11_tests.c's memcmp (which only works because it controls
@@ -188,12 +181,9 @@ fn test_mechanism_list() {
     for (mechanism, min, max, flags) in expected {
         let mut mech_info: CK_MECHANISM_INFO = unsafe { std::mem::zeroed() };
         let rv = unsafe { ykcs11::C_GetMechanismInfo(slot_id, mechanism, &mut mech_info) };
-        assert_ok(rv, &format!("C_GetMechanismInfo(0x{mechanism:x})"));
+        assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_GetMechanismInfo(0x{mechanism:x})"));
         assert_eq!(mech_info.ulMinKeySize, min, "0x{mechanism:x}: ulMinKeySize");
         assert_eq!(mech_info.ulMaxKeySize, max, "0x{mechanism:x}: ulMaxKeySize");
         assert_eq!(mech_info.flags, flags, "0x{mechanism:x}: flags");
     }
-
-    let rv = unsafe { ykcs11::C_Finalize(ptr::null_mut()) };
-    assert_ok(rv, "C_Finalize");
 }

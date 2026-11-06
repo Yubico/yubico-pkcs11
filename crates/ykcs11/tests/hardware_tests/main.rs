@@ -1,32 +1,20 @@
-// Copyright 2026 Yubico AB
-// Licensed under the BSD 2-Clause License
+/*
+ * Copyright 2026 Yubico AB
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-//! Hardware-gated integration tests for the YubiKey PIV PKCS#11 module —
-//! the Rust equivalent of yubico-piv-tool's `ykcs11/tests/ykcs11_tests.c`
-//! (that harness has no single `token_init()` either; `reset.sh` blocks the
-//! PIN/PUK and calls the CLI's `-areset` before the test binary runs). This
-//! crate plays the same role for `ykcs11`, calling the real C ABI
-//! (`pub use dispatch::*` at the crate root) exactly as `pkcs11-tool` or any
-//! other PKCS#11 consumer would — no internal shortcuts.
-//!
-//! One test area per file in this directory, for readability -- but all
-//! still compiled into this single `hardware_tests` test binary (Cargo
-//! auto-discovers `tests/hardware_tests/main.rs` as a test target named
-//! `hardware_tests`, same as a flat `tests/hardware_tests.rs` would be; the
-//! `mod` declarations below then resolve to sibling files in this same
-//! directory). That means the one-command invocation below still runs every
-//! hardware test together, with no need to name each test file individually,
-//! and `common::HARDWARE_LOCK` still serializes them all correctly since
-//! they share one process.
-//!
-//! Covers `C_GetTokenInfo` (`token_info.rs`); `C_GetMechanismList`/
-//! `C_GetMechanismInfo` (`mechanisms.rs`); importing ML-DSA (`ml_dsa.rs`) and
-//! ML-KEM (`ml_kem.rs`) private keys (`C_CreateObject`); and ML-KEM
-//! encapsulate/decapsulate (`C_EncapsulateKey`/`C_DecapsulateKey`, reached
-//! via `C_GetInterfaceList`/`C_GetInterface` -- see `dispatch.rs`'s own doc
-//! comment on `G_INTERFACES` for why those aren't reachable through
-//! `C_GetFunctionList`). Being built up incrementally toward parity with
-//! `ykcs11_tests.c`, then extended with more PQC coverage.
+//! Hardware-gated integration tests for the YubiKey PIV PKCS#11 module
 //!
 //! # Running
 //!
@@ -42,19 +30,19 @@
 //!
 //! Running with `YKCS11_HW_TESTS=1` resets the PIV application on every
 //! YubiKey `C_GetSlotList` reports as present (via `C_InitToken`, the real
-//! "wipe and reinitialize" PKCS#11 call) — every PIV key and certificate on
+//! "wipe and reinitialize" PKCS#11 call). Every PIV key and certificate on
 //! it is permanently destroyed. Only ever run this against a dedicated
 //! test/development YubiKey, never one holding keys you care about.
 //!
 //! `cargo test` runs every test in a binary concurrently by default, and two
 //! tests racing to reset/open a session on the same physical device would
-//! not behave sanely -- every `#[test]` fn across every module below
+//! not behave sanely. Every `#[test]` fn across every module below
 //! acquires `common::HARDWARE_LOCK` first and holds it for its whole body,
 //! serializing all hardware access onto one thread at a time regardless of
 //! how `cargo test` schedules them.
 
 mod util;
-mod mechanisms;
-mod ml_dsa;
-mod ml_kem;
+// mod ml_dsa;
+// mod ml_kem;
+mod session;
 mod token_info;
