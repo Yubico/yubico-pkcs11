@@ -299,20 +299,46 @@ pub(crate) fn import_ec_keys(
     imported
 }
 
+// CKM_ECDSA_SHA{1,256,384,512} hash an arbitrary-length message themselves
+// before signing, unlike bare CKM_ECDSA which expects raw, pre-hashed input
+// exactly curve_len bytes long
+const ECDSA_HASHED_MECHANISMS: [CK_MECHANISM_TYPE; 4] = [
+    CKM_ECDSA_SHA1 as CK_MECHANISM_TYPE,
+    CKM_ECDSA_SHA256 as CK_MECHANISM_TYPE,
+    CKM_ECDSA_SHA384 as CK_MECHANISM_TYPE,
+    CKM_ECDSA_SHA512 as CK_MECHANISM_TYPE,
+];
+
 pub(crate) fn ecdsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: Option<CK_OBJECT_HANDLE>, curve_len: usize) {
     login_user(session, CKR_OK as CK_RV);
 
+    _ecdsa_sign(session, privkey, pubkey, CKM_ECDSA as CK_MECHANISM_TYPE, &vec![0x5au8; curve_len], curve_len);
+    for mechanism in ECDSA_HASHED_MECHANISMS {
+        _ecdsa_sign(session, privkey, pubkey, mechanism, &vec![0x5au8; 32], curve_len);
+    }
+
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+}
+
+fn _ecdsa_sign(
+    session: CK_SESSION_HANDLE,
+    privkey: CK_OBJECT_HANDLE,
+    pubkey: Option<CK_OBJECT_HANDLE>,
+    mechanism_type: CK_MECHANISM_TYPE,
+    data: &Vec<u8>,
+    curve_len: usize,
+) {
     let mut sign_mechanism = CK_MECHANISM {
-        mechanism: CKM_ECDSA as CK_MECHANISM_TYPE,
+        mechanism: mechanism_type,
         pParameter: ptr::null_mut(),
         ulParameterLen: 0,
     };
     let rv = unsafe { ykcs11::C_SignInit(session, &mut sign_mechanism, privkey) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit");
+    assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (mechanism {mechanism_type:#x})");
 
     login_context_specific(session, CKR_OK as CK_RV);
 
-    let data = vec![0x5au8; 32];
     let mut signature = vec![0u8; curve_len * 2]; // r || s
     let mut signature_len = signature.len() as CK_ULONG;
     let rv = unsafe {
@@ -324,12 +350,16 @@ pub(crate) fn ecdsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, 
             &mut signature_len,
         )
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Sign");
-    assert_eq!(signature_len as usize, signature.len(), "unexpected ECDSA signature length");
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Sign (mechanism {mechanism_type:#x})");
+    assert_eq!(
+        signature_len as usize,
+        signature.len(),
+        "unexpected ECDSA signature length (mechanism {mechanism_type:#x})"
+    );
 
     if let Some(pk) = pubkey {
         let rv = unsafe { ykcs11::C_VerifyInit(session, &mut sign_mechanism, pk) };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit");
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (mechanism {mechanism_type:#x})");
         let rv = unsafe {
             ykcs11::C_Verify(
                 session,
@@ -339,10 +369,8 @@ pub(crate) fn ecdsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, 
                 signature_len,
             )
         };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_Verify");
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (mechanism {mechanism_type:#x})");
     }
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
 }
 
 fn derive_ecdh(
