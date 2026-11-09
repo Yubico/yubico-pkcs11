@@ -34,8 +34,8 @@ pub(crate) const DEFAULT_MGMT_KEY_HEX: &[u8] = b"0102030405060708010203040506070
 pub(crate) const P256_EC_PARAMS: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 pub(crate) const P384_EC_PARAMS: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
 
-pub(crate) const SLOT_LIST_EXTENDED: &[u8] = &[1, 2, 3, 4, 5, 24];
-pub(crate) const SLOT_LIST: &[u8] = &[1, 2, 3, 4];
+pub(crate) const SLOT_LIST_EXTENDED: &[u8] = &[1, 2, 4, 5, 24];
+pub(crate) const SLOT_LIST: &[u8] = &[1, 2, 4];
 
 pub(crate) fn hardware_tests_enabled() -> bool {
     std::env::var(RUN_ENV_VAR).as_deref() == Ok("1")

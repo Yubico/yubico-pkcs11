@@ -479,6 +479,66 @@ const RSA4096_SELFSIGNED_CERT_DER: &[u8] = &[
     0x73, 0x61, 0xdb, 0x47, 0xd0, 0x86, 0x32, 0x25, 0xa6, 0xaf, 0x3f, 0x90, 0xaa,
 ];
 
+
+const RSA_PSS_CASES: [(CK_MECHANISM_TYPE, CK_MECHANISM_TYPE, CK_RSA_PKCS_MGF_TYPE, CK_ULONG); 5] = [
+    (
+        CKM_RSA_PKCS_PSS as CK_MECHANISM_TYPE,
+        CKM_SHA256 as CK_MECHANISM_TYPE,
+        CKG_MGF1_SHA256 as CK_RSA_PKCS_MGF_TYPE,
+        32,
+    ),
+    (
+        CKM_SHA1_RSA_PKCS_PSS as CK_MECHANISM_TYPE,
+        CKM_SHA_1 as CK_MECHANISM_TYPE,
+        CKG_MGF1_SHA1 as CK_RSA_PKCS_MGF_TYPE,
+        20,
+    ),
+    (
+        CKM_SHA256_RSA_PKCS_PSS as CK_MECHANISM_TYPE,
+        CKM_SHA256 as CK_MECHANISM_TYPE,
+        CKG_MGF1_SHA256 as CK_RSA_PKCS_MGF_TYPE,
+        32,
+    ),
+    (
+        CKM_SHA384_RSA_PKCS_PSS as CK_MECHANISM_TYPE,
+        CKM_SHA384 as CK_MECHANISM_TYPE,
+        CKG_MGF1_SHA384 as CK_RSA_PKCS_MGF_TYPE,
+        48,
+    ),
+    (
+        CKM_SHA512_RSA_PKCS_PSS as CK_MECHANISM_TYPE,
+        CKM_SHA512 as CK_MECHANISM_TYPE,
+        CKG_MGF1_SHA512 as CK_RSA_PKCS_MGF_TYPE,
+        64,
+    ),
+];
+
+const RSA_PKCS_MECHANISMS: [CK_MECHANISM_TYPE; 5] = [
+    CKM_RSA_PKCS as CK_MECHANISM_TYPE,
+    CKM_SHA1_RSA_PKCS as CK_MECHANISM_TYPE,
+    CKM_SHA256_RSA_PKCS as CK_MECHANISM_TYPE,
+    CKM_SHA384_RSA_PKCS as CK_MECHANISM_TYPE,
+    CKM_SHA512_RSA_PKCS as CK_MECHANISM_TYPE,
+];
+
+// (hashAlg, mgf, hash output length). All four map the hash straight onto
+// its matching MGF1 variant, as both hashAlg and mgf for OAEP.
+const RSA_OAEP_CASES: [(CK_MECHANISM_TYPE, CK_RSA_PKCS_MGF_TYPE, usize); 4] = [
+    (CKM_SHA_1 as CK_MECHANISM_TYPE, CKG_MGF1_SHA1 as CK_RSA_PKCS_MGF_TYPE, 20),
+    (CKM_SHA256 as CK_MECHANISM_TYPE, CKG_MGF1_SHA256 as CK_RSA_PKCS_MGF_TYPE, 32),
+    (CKM_SHA384 as CK_MECHANISM_TYPE, CKG_MGF1_SHA384 as CK_RSA_PKCS_MGF_TYPE, 48),
+    (CKM_SHA512 as CK_MECHANISM_TYPE, CKG_MGF1_SHA512 as CK_RSA_PKCS_MGF_TYPE, 64),
+];
+
+const CKA_YUBICO_TOUCH_POLICY: u32 = 0xd9554201;
+const CKA_YUBICO_PIN_POLICY: u32 = 0xd9554202;
+const TOUCH_POLICY_ALWAYS: u8 = 2;
+const TOUCH_POLICY_CACHED: u8 = 3;
+const TOUCH_POLICY_NEVER: u8 = 1;
+const PIN_POLICY_ALWAYS: u8 = 3;
+const PIN_POLICY_ONCE: u8 = 2;
+const PIN_POLICY_NEVER: u8 = 1;
+
 fn generate_rsa_keys(h_session: CK_SESSION_HANDLE, slots: &[u8], key_size: u32) -> Vec<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE)> {
     login_so(h_session, CKR_OK as CK_RV);
 
@@ -608,15 +668,6 @@ fn import_rsa_keys(
     imported
 }
 
-const CKA_YUBICO_TOUCH_POLICY: u32 = 0xd9554201;
-const CKA_YUBICO_PIN_POLICY: u32 = 0xd9554202;
-const TOUCH_POLICY_ALWAYS: u8 = 2;
-const TOUCH_POLICY_CACHED: u8 = 3;
-const TOUCH_POLICY_NEVER: u8 = 1;
-const PIN_POLICY_ALWAYS: u8 = 3;
-const PIN_POLICY_ONCE: u8 = 2;
-const PIN_POLICY_NEVER: u8 = 1;
-
 fn import_rsa_key_with_policy(
     session: CK_SESSION_HANDLE,
     id: u8,
@@ -733,6 +784,585 @@ fn rsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OB
     assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
 }
 
+/// For every `CKM_RSA_PKCS`/`CKM_SHA{1,256,384,512}_RSA_PKCS` mechanism,
+/// signs and verifies both one-shot (`C_Sign`) and streaming
+/// (`C_SignUpdate`/`C_SignFinal`) and checks the two signatures are
+/// byte-identical
+fn rsa_sign_pkcs(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
+    login_user(session, CKR_OK as CK_RV);
+
+    for mechanism_type in RSA_PKCS_MECHANISMS {
+        let mut mechanism = CK_MECHANISM {
+            mechanism: mechanism_type,
+            pParameter: ptr::null_mut(),
+            ulParameterLen: 0,
+        };
+        let data = vec![0x5au8; 32];
+
+        let rv = unsafe { ykcs11::C_SignInit(session, &mut mechanism, privkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (mechanism {mechanism_type:#x})");
+        login_context_specific(session, CKR_OK as CK_RV);
+
+        let mut signature = vec![0u8; modulus_len];
+        let mut signature_len = signature.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_Sign(
+                session,
+                data.as_ptr() as CK_BYTE_PTR,
+                data.len() as CK_ULONG,
+                signature.as_mut_ptr(),
+                &mut signature_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Sign (mechanism {mechanism_type:#x})");
+        assert_eq!(
+            signature_len as usize,
+            signature.len(),
+            "unexpected RSA signature length (mechanism {mechanism_type:#x})"
+        );
+
+        let rv = unsafe { ykcs11::C_VerifyInit(session, &mut mechanism, pubkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (mechanism {mechanism_type:#x})");
+        let rv = unsafe {
+            ykcs11::C_Verify(
+                session,
+                data.as_ptr() as CK_BYTE_PTR,
+                data.len() as CK_ULONG,
+                signature.as_mut_ptr(),
+                signature_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (mechanism {mechanism_type:#x})");
+
+        let rv = unsafe { ykcs11::C_SignInit(session, &mut mechanism, privkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (streaming, mechanism {mechanism_type:#x})");
+        login_context_specific(session, CKR_OK as CK_RV);
+
+        let rv = unsafe { ykcs11::C_SignUpdate(session, data[..16].as_ptr() as CK_BYTE_PTR, 16) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignUpdate (mechanism {mechanism_type:#x})");
+        let rv = unsafe { ykcs11::C_SignUpdate(session, data[16..26].as_ptr() as CK_BYTE_PTR, 10) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignUpdate (mechanism {mechanism_type:#x})");
+        let rv = unsafe { ykcs11::C_SignUpdate(session, data[26..].as_ptr() as CK_BYTE_PTR, 6) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignUpdate (mechanism {mechanism_type:#x})");
+
+        let mut signature_update = vec![0u8; modulus_len];
+        let mut signature_update_len = signature_update.len() as CK_ULONG;
+        let rv = unsafe { ykcs11::C_SignFinal(session, signature_update.as_mut_ptr(), &mut signature_update_len) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignFinal (mechanism {mechanism_type:#x})");
+        assert_eq!(
+            signature_update, signature,
+            "streaming signature didn't match the one-shot signature (mechanism {mechanism_type:#x})"
+        );
+
+        let rv = unsafe { ykcs11::C_VerifyInit(session, &mut mechanism, pubkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (streaming, mechanism {mechanism_type:#x})");
+        let rv = unsafe { ykcs11::C_VerifyUpdate(session, data[..10].as_ptr() as CK_BYTE_PTR, 10) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyUpdate (mechanism {mechanism_type:#x})");
+        let rv = unsafe { ykcs11::C_VerifyUpdate(session, data[10..].as_ptr() as CK_BYTE_PTR, 22) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyUpdate (mechanism {mechanism_type:#x})");
+        let rv = unsafe { ykcs11::C_VerifyFinal(session, signature_update.as_mut_ptr(), signature_update_len) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyFinal (mechanism {mechanism_type:#x})");
+    }
+
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+}
+
+/// For bare `CKM_RSA_PKCS_PSS` and every `CKM_SHA{1,256,384,512}_RSA_PKCS_PSS`
+/// mechanism, signs and verifies both one-shot and streaming.
+fn rsa_sign_pss(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
+    login_user(session, CKR_OK as CK_RV);
+
+    for (mechanism_type, hash_alg, mgf, s_len) in RSA_PSS_CASES {
+        // EMSA-PSS-ENCODE (RFC 8017 9.1.1 step 3) requires
+        // emLen >= hLen + sLen + 2, where emLen is essentially modulus_len
+        // for our byte-aligned key sizes. With sLen set to the hash's own
+        // output length (hLen), that's modulus_len >= 2*hLen + 2 -- e.g.
+        // SHA-512 (hLen=64) needs a modulus of at least 130 bytes (1040
+        // bits), which a 1024-bit (128-byte) key can never satisfy. This
+        // isn't an implementation bug, it's the padding scheme's own math,
+        // so skip combinations that can't possibly fit this key.
+        let min_modulus_len = 2 * s_len as usize + 2;
+        if modulus_len < min_modulus_len {
+            eprintln!(
+                "skipping mechanism {mechanism_type:#x} (sLen={s_len}): needs a modulus of at least \
+                 {min_modulus_len} bytes, this key is only {modulus_len} bytes (RSA-{})",
+                modulus_len * 8
+            );
+            continue;
+        }
+
+        let pss_params = CK_RSA_PKCS_PSS_PARAMS {
+            hashAlg: hash_alg,
+            mgf,
+            sLen: s_len,
+        };
+        let mut mechanism = CK_MECHANISM {
+            mechanism: mechanism_type,
+            pParameter: &pss_params as *const CK_RSA_PKCS_PSS_PARAMS as CK_VOID_PTR,
+            ulParameterLen: std::mem::size_of::<CK_RSA_PKCS_PSS_PARAMS>() as CK_ULONG,
+        };
+
+        // Bare CKM_RSA_PKCS_PSS expects a pre-hashed digest of exactly
+        // sLen bytes, accumulated raw; the CKM_SHAx_RSA_PKCS_PSS variants
+        // hash an arbitrary-length message themselves before PSS-encoding,
+        // so this same fixed-length buffer works for both.
+        let data = vec![0x5au8; s_len as usize];
+
+        let rv = unsafe { ykcs11::C_SignInit(session, &mut mechanism, privkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (mechanism {mechanism_type:#x})");
+        login_context_specific(session, CKR_OK as CK_RV);
+
+        let mut signature = vec![0u8; modulus_len];
+        let mut signature_len = signature.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_Sign(
+                session,
+                data.as_ptr() as CK_BYTE_PTR,
+                data.len() as CK_ULONG,
+                signature.as_mut_ptr(),
+                &mut signature_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Sign (mechanism {mechanism_type:#x})");
+        assert_eq!(
+            signature_len as usize,
+            signature.len(),
+            "unexpected RSA-PSS signature length (mechanism {mechanism_type:#x})"
+        );
+
+        let rv = unsafe { ykcs11::C_VerifyInit(session, &mut mechanism, pubkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (mechanism {mechanism_type:#x})");
+        let rv = unsafe {
+            ykcs11::C_Verify(
+                session,
+                data.as_ptr() as CK_BYTE_PTR,
+                data.len() as CK_ULONG,
+                signature.as_mut_ptr(),
+                signature_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (mechanism {mechanism_type:#x})");
+
+        let rv = unsafe { ykcs11::C_SignInit(session, &mut mechanism, privkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (streaming, mechanism {mechanism_type:#x})");
+        login_context_specific(session, CKR_OK as CK_RV);
+
+        let half = data.len() / 2;
+        let rv = unsafe { ykcs11::C_SignUpdate(session, data[..half].as_ptr() as CK_BYTE_PTR, half as CK_ULONG) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignUpdate (mechanism {mechanism_type:#x})");
+        let rv = unsafe {
+            ykcs11::C_SignUpdate(session, data[half..].as_ptr() as CK_BYTE_PTR, (data.len() - half) as CK_ULONG)
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignUpdate (mechanism {mechanism_type:#x})");
+
+        let mut signature_update = vec![0u8; modulus_len];
+        let mut signature_update_len = signature_update.len() as CK_ULONG;
+        let rv = unsafe { ykcs11::C_SignFinal(session, signature_update.as_mut_ptr(), &mut signature_update_len) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_SignFinal (mechanism {mechanism_type:#x})");
+
+        let rv = unsafe { ykcs11::C_VerifyInit(session, &mut mechanism, pubkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (streaming, mechanism {mechanism_type:#x})");
+        let rv = unsafe {
+            ykcs11::C_Verify(
+                session,
+                data.as_ptr() as CK_BYTE_PTR,
+                data.len() as CK_ULONG,
+                signature_update.as_mut_ptr(),
+                signature_update_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (streaming, mechanism {mechanism_type:#x})");
+    }
+
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+}
+
+fn rsa_decrypt_pkcs1(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
+    login_user(session, CKR_OK as CK_RV);
+
+    let mut mechanism = CK_MECHANISM {
+        mechanism: CKM_RSA_PKCS as CK_MECHANISM_TYPE,
+        pParameter: ptr::null_mut(),
+        ulParameterLen: 0,
+    };
+    let data = vec![0x5au8; 32];
+
+    // One-shot
+    let rv = unsafe { ykcs11::C_EncryptInit(session, &mut mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptInit (CKM_RSA_PKCS)");
+    let mut ciphertext = vec![0u8; modulus_len];
+    let mut ciphertext_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_Encrypt(
+            session,
+            data.as_ptr() as CK_BYTE_PTR,
+            data.len() as CK_ULONG,
+            ciphertext.as_mut_ptr(),
+            &mut ciphertext_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Encrypt (CKM_RSA_PKCS)");
+    assert_eq!(ciphertext_len as usize, ciphertext.len(), "unexpected RSA-PKCS ciphertext length");
+    assert_ne!(&ciphertext[..ciphertext_len as usize], &data[..], "Encryption failed");
+
+    let rv = unsafe { ykcs11::C_DecryptInit(session, &mut mechanism, privkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptInit (CKM_RSA_PKCS)");
+    login_context_specific(session, CKR_OK as CK_RV);
+    let mut plaintext = vec![0u8; modulus_len];
+    let mut plaintext_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_Decrypt(
+            session,
+            ciphertext.as_ptr() as CK_BYTE_PTR,
+            ciphertext_len,
+            plaintext.as_mut_ptr(),
+            &mut plaintext_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Decrypt (CKM_RSA_PKCS)");
+    assert_eq!(
+        &plaintext[..plaintext_len as usize],
+        &data[..],
+        "RSA-PKCS round trip plaintext mismatch (one-shot)"
+    );
+
+    // Streaming
+    let rv = unsafe { ykcs11::C_EncryptInit(session, &mut mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptInit (streaming, CKM_RSA_PKCS)");
+    let mut ciphertext = vec![0u8; modulus_len];
+    let mut part_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_EncryptUpdate(session, data[..16].as_ptr() as CK_BYTE_PTR, 16, ciphertext.as_mut_ptr(), &mut part_len)
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptUpdate (CKM_RSA_PKCS)");
+    let mut part_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_EncryptUpdate(
+            session,
+            data[16..].as_ptr() as CK_BYTE_PTR,
+            (data.len() - 16) as CK_ULONG,
+            ciphertext.as_mut_ptr(),
+            &mut part_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptUpdate (CKM_RSA_PKCS)");
+    let mut ciphertext_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe { ykcs11::C_EncryptFinal(session, ciphertext.as_mut_ptr(), &mut ciphertext_len) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptFinal (CKM_RSA_PKCS)");
+    assert_eq!(
+        ciphertext_len as usize,
+        ciphertext.len(),
+        "unexpected RSA-PKCS streaming ciphertext length"
+    );
+    assert_ne!(&ciphertext[..ciphertext_len as usize], &data[..], "Encryption failed");
+
+    let rv = unsafe { ykcs11::C_DecryptInit(session, &mut mechanism, privkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptInit (streaming, CKM_RSA_PKCS)");
+    login_context_specific(session, CKR_OK as CK_RV);
+    let mut plaintext = vec![0u8; modulus_len];
+    let mut part_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_DecryptUpdate(
+            session,
+            ciphertext[..ciphertext.len() / 2].as_ptr() as CK_BYTE_PTR,
+            (ciphertext.len() / 2) as CK_ULONG,
+            plaintext.as_mut_ptr(),
+            &mut part_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptUpdate (CKM_RSA_PKCS)");
+    let mut part_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_DecryptUpdate(
+            session,
+            ciphertext[ciphertext.len() / 2..].as_ptr() as CK_BYTE_PTR,
+            (ciphertext.len() - ciphertext.len() / 2) as CK_ULONG,
+            plaintext.as_mut_ptr(),
+            &mut part_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptUpdate (CKM_RSA_PKCS)");
+    let mut plaintext_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe { ykcs11::C_DecryptFinal(session, plaintext.as_mut_ptr(), &mut plaintext_len) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptFinal (CKM_RSA_PKCS)");
+    assert_eq!(
+        &plaintext[..plaintext_len as usize],
+        &data[..],
+        "RSA-PKCS round trip plaintext mismatch (streaming)"
+    );
+
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+}
+
+/// For `CKM_RSA_X_509`, encrypts/decrypts the same way as
+/// `rsa_encrypt_decrypt_pkcs1` but with raw, unpadded RSA: the module only
+/// zero-left-pads the plaintext up to `modulus_len` on encrypt and returns
+/// that same full `modulus_len`-byte block unpadded on decrypt, so the
+/// round-trip check compares the trailing bytes against the original data
+/// and asserts the leading padding bytes are all zero.
+fn rsa_encrypt_decrypt_x509(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
+    login_user(session, CKR_OK as CK_RV);
+
+    let mut mechanism = CK_MECHANISM {
+        mechanism: CKM_RSA_X_509 as CK_MECHANISM_TYPE,
+        pParameter: ptr::null_mut(),
+        ulParameterLen: 0,
+    };
+    let data = vec![0x5au8; 32];
+
+    let rv = unsafe { ykcs11::C_EncryptInit(session, &mut mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptInit (CKM_RSA_X_509)");
+    let mut ciphertext = vec![0u8; modulus_len];
+    let mut ciphertext_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_Encrypt(
+            session,
+            data.as_ptr() as CK_BYTE_PTR,
+            data.len() as CK_ULONG,
+            ciphertext.as_mut_ptr(),
+            &mut ciphertext_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Encrypt (CKM_RSA_X_509)");
+    assert_eq!(ciphertext_len as usize, ciphertext.len(), "unexpected RSA-X.509 ciphertext length");
+    assert_ne!(&ciphertext[..ciphertext_len as usize], &data[..], "Encryption failed");
+
+    let rv = unsafe { ykcs11::C_DecryptInit(session, &mut mechanism, privkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptInit (CKM_RSA_X_509)");
+    login_context_specific(session, CKR_OK as CK_RV);
+    let mut plaintext = vec![0u8; modulus_len];
+    let mut plaintext_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_Decrypt(
+            session,
+            ciphertext.as_ptr() as CK_BYTE_PTR,
+            ciphertext_len,
+            plaintext.as_mut_ptr(),
+            &mut plaintext_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Decrypt (CKM_RSA_X_509)");
+    assert_eq!(plaintext_len as usize, modulus_len, "unexpected RSA-X.509 decrypted block length");
+    let (leading, trailing) = plaintext.split_at(modulus_len - data.len());
+    assert!(leading.iter().all(|&b| b == 0), "RSA-X.509 zero-padding wasn't all zero (one-shot)");
+    assert_eq!(trailing, &data[..], "RSA-X.509 round trip plaintext mismatch (one-shot)");
+
+    // Streaming
+    let rv = unsafe { ykcs11::C_EncryptInit(session, &mut mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptInit (streaming, CKM_RSA_X_509)");
+    let mut ciphertext = vec![0u8; modulus_len];
+    let mut part_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_EncryptUpdate(session, data[..16].as_ptr() as CK_BYTE_PTR, 16, ciphertext.as_mut_ptr(), &mut part_len)
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptUpdate (CKM_RSA_X_509)");
+    let mut part_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_EncryptUpdate(
+            session,
+            data[16..].as_ptr() as CK_BYTE_PTR,
+            (data.len() - 16) as CK_ULONG,
+            ciphertext.as_mut_ptr(),
+            &mut part_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptUpdate (CKM_RSA_X_509)");
+    let mut ciphertext_len = ciphertext.len() as CK_ULONG;
+    let rv = unsafe { ykcs11::C_EncryptFinal(session, ciphertext.as_mut_ptr(), &mut ciphertext_len) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptFinal (CKM_RSA_X_509)");
+    assert_eq!(
+        ciphertext_len as usize,
+        ciphertext.len(),
+        "unexpected RSA-X.509 streaming ciphertext length"
+    );
+    assert_ne!(&ciphertext[..ciphertext_len as usize], &data[..], "Encryption failed");
+
+    let rv = unsafe { ykcs11::C_DecryptInit(session, &mut mechanism, privkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptInit (streaming, CKM_RSA_X_509)");
+    login_context_specific(session, CKR_OK as CK_RV);
+    let mut plaintext = vec![0u8; modulus_len];
+    let mut part_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_DecryptUpdate(
+            session,
+            ciphertext[..ciphertext.len() / 2].as_ptr() as CK_BYTE_PTR,
+            (ciphertext.len() / 2) as CK_ULONG,
+            plaintext.as_mut_ptr(),
+            &mut part_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptUpdate (CKM_RSA_X_509)");
+    let mut part_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_DecryptUpdate(
+            session,
+            ciphertext[ciphertext.len() / 2..].as_ptr() as CK_BYTE_PTR,
+            (ciphertext.len() - ciphertext.len() / 2) as CK_ULONG,
+            plaintext.as_mut_ptr(),
+            &mut part_len,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptUpdate (CKM_RSA_X_509)");
+    let mut plaintext_len = plaintext.len() as CK_ULONG;
+    let rv = unsafe { ykcs11::C_DecryptFinal(session, plaintext.as_mut_ptr(), &mut plaintext_len) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptFinal (CKM_RSA_X_509)");
+    assert_eq!(plaintext_len as usize, modulus_len, "unexpected RSA-X.509 decrypted block length (streaming)");
+    let (leading, trailing) = plaintext.split_at(modulus_len - data.len());
+    assert!(leading.iter().all(|&b| b == 0), "RSA-X.509 zero-padding wasn't all zero (streaming)");
+    assert_eq!(trailing, &data[..], "RSA-X.509 round trip plaintext mismatch (streaming)");
+
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+}
+
+/// OAEP needs modulus_len >= 2*hLen + message_len + 2 (RFC 8017 7.1.1), so
+/// (like `rsa_sign_pss`'s analogous guard) combinations that can't fit this
+/// key's modulus are skipped rather than asserted on.
+fn rsa_encrypt_decrypt_oaep(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
+    login_user(session, CKR_OK as CK_RV);
+
+    let data = vec![0x5au8; 16];
+
+    for (hash_alg, mgf, h_len) in RSA_OAEP_CASES {
+        let min_modulus_len = 2 * h_len + data.len() + 2;
+        if modulus_len < min_modulus_len {
+            eprintln!(
+                "skipping OAEP hashAlg {hash_alg:#x} (hLen={h_len}): needs a modulus of at least {min_modulus_len} \
+                 bytes, this key is only {modulus_len} bytes (RSA-{})",
+                modulus_len * 8
+            );
+            continue;
+        }
+
+        let oaep_params = CK_RSA_PKCS_OAEP_PARAMS {
+            hashAlg: hash_alg,
+            mgf,
+            source: 0,
+            pSourceData: ptr::null_mut(),
+            ulSourceDataLen: 0,
+        };
+        let mut mechanism = CK_MECHANISM {
+            mechanism: CKM_RSA_PKCS_OAEP as CK_MECHANISM_TYPE,
+            pParameter: &oaep_params as *const CK_RSA_PKCS_OAEP_PARAMS as CK_VOID_PTR,
+            ulParameterLen: std::mem::size_of::<CK_RSA_PKCS_OAEP_PARAMS>() as CK_ULONG,
+        };
+
+        // One-shot
+        let rv = unsafe { ykcs11::C_EncryptInit(session, &mut mechanism, pubkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptInit (hashAlg {hash_alg:#x})");
+        let mut ciphertext = vec![0u8; modulus_len];
+        let mut ciphertext_len = ciphertext.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_Encrypt(
+                session,
+                data.as_ptr() as CK_BYTE_PTR,
+                data.len() as CK_ULONG,
+                ciphertext.as_mut_ptr(),
+                &mut ciphertext_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Encrypt (hashAlg {hash_alg:#x})");
+        assert_eq!(
+            ciphertext_len as usize,
+            ciphertext.len(),
+            "unexpected RSA-OAEP ciphertext length (hashAlg {hash_alg:#x})"
+        );
+        assert_ne!(&ciphertext[..ciphertext_len as usize], &data[..], "Encryption failed");
+
+        let rv = unsafe { ykcs11::C_DecryptInit(session, &mut mechanism, privkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptInit (hashAlg {hash_alg:#x})");
+        login_context_specific(session, CKR_OK as CK_RV);
+        let mut plaintext = vec![0u8; modulus_len];
+        let mut plaintext_len = plaintext.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_Decrypt(
+                session,
+                ciphertext.as_ptr() as CK_BYTE_PTR,
+                ciphertext_len,
+                plaintext.as_mut_ptr(),
+                &mut plaintext_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_Decrypt (hashAlg {hash_alg:#x})");
+        assert_eq!(
+            &plaintext[..plaintext_len as usize],
+            &data[..],
+            "RSA-OAEP round trip plaintext mismatch (one-shot, hashAlg {hash_alg:#x})"
+        );
+
+        // Streaming
+        let rv = unsafe { ykcs11::C_EncryptInit(session, &mut mechanism, pubkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptInit (streaming, hashAlg {hash_alg:#x})");
+        let mut ciphertext = vec![0u8; modulus_len];
+        let mut part_len = ciphertext.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_EncryptUpdate(session, data[..8].as_ptr() as CK_BYTE_PTR, 8, ciphertext.as_mut_ptr(), &mut part_len)
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptUpdate (hashAlg {hash_alg:#x})");
+        let mut part_len = ciphertext.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_EncryptUpdate(
+                session,
+                data[8..].as_ptr() as CK_BYTE_PTR,
+                (data.len() - 8) as CK_ULONG,
+                ciphertext.as_mut_ptr(),
+                &mut part_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptUpdate (hashAlg {hash_alg:#x})");
+        let mut ciphertext_len = ciphertext.len() as CK_ULONG;
+        let rv = unsafe { ykcs11::C_EncryptFinal(session, ciphertext.as_mut_ptr(), &mut ciphertext_len) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_EncryptFinal (hashAlg {hash_alg:#x})");
+        assert_eq!(
+            ciphertext_len as usize,
+            ciphertext.len(),
+            "unexpected RSA-OAEP streaming ciphertext length (hashAlg {hash_alg:#x})"
+        );
+        assert_ne!(&ciphertext[..ciphertext_len as usize], &data[..], "Encryption failed");
+
+        let rv = unsafe { ykcs11::C_DecryptInit(session, &mut mechanism, privkey) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptInit (streaming, hashAlg {hash_alg:#x})");
+        login_context_specific(session, CKR_OK as CK_RV);
+        let mut plaintext = vec![0u8; modulus_len];
+        let mut part_len = plaintext.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_DecryptUpdate(
+                session,
+                ciphertext[..ciphertext.len() / 2].as_ptr() as CK_BYTE_PTR,
+                (ciphertext.len() / 2) as CK_ULONG,
+                plaintext.as_mut_ptr(),
+                &mut part_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptUpdate (hashAlg {hash_alg:#x})");
+        let mut part_len = plaintext.len() as CK_ULONG;
+        let rv = unsafe {
+            ykcs11::C_DecryptUpdate(
+                session,
+                ciphertext[ciphertext.len() / 2..].as_ptr() as CK_BYTE_PTR,
+                (ciphertext.len() - ciphertext.len() / 2) as CK_ULONG,
+                plaintext.as_mut_ptr(),
+                &mut part_len,
+            )
+        };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptUpdate (hashAlg {hash_alg:#x})");
+        let mut plaintext_len = plaintext.len() as CK_ULONG;
+        let rv = unsafe { ykcs11::C_DecryptFinal(session, plaintext.as_mut_ptr(), &mut plaintext_len) };
+        assert_eq!(rv, CKR_OK as CK_RV, "C_DecryptFinal (hashAlg {hash_alg:#x})");
+        assert_eq!(
+            &plaintext[..plaintext_len as usize],
+            &data[..],
+            "RSA-OAEP round trip plaintext mismatch (streaming, hashAlg {hash_alg:#x})"
+        );
+    }
+
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+}
+
 #[test]
 fn test_generated_rsakeys() {
     if !hardware_tests_enabled() {
@@ -794,7 +1424,11 @@ fn test_imported_rsakeys() {
             RSA1024_SELFSIGNED_CERT_DER,
         );
         for (privkey, pubkey) in keys {
-            rsa_sign(session, privkey, pubkey, 128);
+            rsa_sign_pkcs(session, privkey, pubkey, 128);
+            rsa_sign_pss(session, privkey, pubkey, 128);
+            rsa_decrypt_pkcs1(session, privkey, pubkey, 128);
+            rsa_encrypt_decrypt_x509(session, privkey, pubkey, 128);
+            rsa_encrypt_decrypt_oaep(session, privkey, pubkey, 128);
         }
     }
 
@@ -809,7 +1443,11 @@ fn test_imported_rsakeys() {
         RSA2048_SELFSIGNED_CERT_DER,
     );
     for (privkey, pubkey) in keys {
-        rsa_sign(session, privkey, pubkey, 256);
+        rsa_sign_pkcs(session, privkey, pubkey, 256);
+        rsa_sign_pss(session, privkey, pubkey, 256);
+        rsa_decrypt_pkcs1(session, privkey, pubkey, 256);
+        rsa_encrypt_decrypt_x509(session, privkey, pubkey, 256);
+        rsa_encrypt_decrypt_oaep(session, privkey, pubkey, 256);
     }
 
     if firmware_at_least(&info, 5, 7) {
@@ -824,7 +1462,11 @@ fn test_imported_rsakeys() {
             RSA3072_SELFSIGNED_CERT_DER,
         );
         for (privkey, pubkey) in keys {
-            rsa_sign(session, privkey, pubkey, 384);
+            rsa_sign_pkcs(session, privkey, pubkey, 384);
+            rsa_sign_pss(session, privkey, pubkey, 384);
+            rsa_decrypt_pkcs1(session, privkey, pubkey, 384);
+            rsa_encrypt_decrypt_x509(session, privkey, pubkey, 384);
+            rsa_encrypt_decrypt_oaep(session, privkey, pubkey, 384);
         }
 
         let keys = import_rsa_keys(
@@ -838,7 +1480,11 @@ fn test_imported_rsakeys() {
             RSA4096_SELFSIGNED_CERT_DER,
         );
         for (privkey, pubkey) in keys {
-            rsa_sign(session, privkey, pubkey, 512);
+            rsa_sign_pkcs(session, privkey, pubkey, 512);
+            rsa_sign_pss(session, privkey, pubkey, 512);
+            rsa_decrypt_pkcs1(session, privkey, pubkey, 512);
+            rsa_encrypt_decrypt_x509(session, privkey, pubkey, 512);
+            rsa_encrypt_decrypt_oaep(session, privkey, pubkey, 512);
         }
     }
 
