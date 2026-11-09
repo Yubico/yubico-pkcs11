@@ -404,15 +404,15 @@ fn assert_policy(
     expected_pin: u8) {
     if let Some(expected_touch) = expected_touch {
         let touch = get_attribute(session, privkey, CKA_YUBICO_TOUCH_POLICY, 1, "CKA_YUBICO_TOUCH_POLICY");
-        assert_eq!(touch, vec![expected_touch], "CKA_YUBICO_TOUCH_POLICY readback");
+        assert_eq!(touch, vec![expected_touch], "CKA_YUBICO_TOUCH_POLICY");
     }
 
     let pin = get_attribute(session, privkey, CKA_YUBICO_PIN_POLICY, 1, "CKA_YUBICO_PIN_POLICY");
-    assert_eq!(pin, vec![expected_pin], "CKA_YUBICO_PIN_POLICY readback");
+    assert_eq!(pin, vec![expected_pin], "CKA_YUBICO_PIN_POLICY");
 
     let always_auth = get_attribute(session, privkey, CKA_ALWAYS_AUTHENTICATE, 1, "CKA_ALWAYS_AUTHENTICATE");
     let expected_always_auth = (expected_pin == PIN_POLICY_ALWAYS) as u8;
-    assert_eq!(always_auth, vec![expected_always_auth], "CKA_ALWAYS_AUTHENTICATE readback");
+    assert_eq!(always_auth, vec![expected_always_auth], "CKA_ALWAYS_AUTHENTICATE");
 }
 
 
