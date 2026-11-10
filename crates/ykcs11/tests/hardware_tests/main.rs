@@ -51,3 +51,4 @@ mod find_objects;
 mod rsa;
 mod session;
 mod token_info;
+mod x25519;
