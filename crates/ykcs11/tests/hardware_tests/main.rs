@@ -46,6 +46,7 @@ mod util;
 // mod ml_kem;
 mod digest;
 mod ec;
+mod find_objects;
 mod rsa;
 mod session;
 mod token_info;
