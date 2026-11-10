@@ -165,8 +165,7 @@ pub(crate) fn generate_ec_keys(h_session: CK_SESSION_HANDLE, slots: &[u8], ec_pa
         generated.push((h_private_key, h_public_key));
     }
 
-    let rv = unsafe { ykcs11::C_Logout(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(h_session, CKR_OK as CK_RV);
 
     generated
 }
@@ -293,8 +292,7 @@ pub(crate) fn import_ec_keys(
         imported.push((h_private_key, h_public_key));
     }
 
-    let rv = unsafe { ykcs11::C_Logout(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(h_session, CKR_OK as CK_RV);
 
     imported
 }
@@ -317,8 +315,7 @@ pub(crate) fn ecdsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, 
         _ecdsa_sign(session, privkey, pubkey, mechanism, &vec![0x5au8; 32], curve_len);
     }
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 fn _ecdsa_sign(
@@ -420,8 +417,7 @@ fn derive_ecdh(
     assert_ne!(h_secret, 0, "C_DeriveKey returned a null handle");
     let secret = get_attribute(session, h_secret, CKA_VALUE, secret_len, "derived secret");
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
     secret
 }
 
@@ -443,6 +439,102 @@ fn assert_policy(
     assert_eq!(always_auth, vec![expected_always_auth], "CKA_ALWAYS_AUTHENTICATE");
 }
 
+fn assert_ec_pubkey_attributes(session: CK_SESSION_HANDLE, pubkey: CK_OBJECT_HANDLE, ec_params: &[u8], ec_point_len: usize) {
+    let class = get_attribute(session, pubkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    assert_eq!(class, ulong_bytes(CKO_PUBLIC_KEY), "CKA_CLASS");
+
+    let token = get_attribute(session, pubkey, CKA_TOKEN, 1, "CKA_TOKEN");
+    assert_eq!(token, vec![1u8], "CKA_TOKEN");
+
+    let private = get_attribute(session, pubkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
+    assert_eq!(private, vec![0u8], "CKA_PRIVATE");
+
+    let key_type = get_attribute(session, pubkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    assert_eq!(key_type, ulong_bytes(CKK_EC), "CKA_KEY_TYPE");
+
+    let trusted = get_attribute(session, pubkey, CKA_TRUSTED, 1, "CKA_TRUSTED");
+    assert_eq!(trusted, vec![0u8], "CKA_TRUSTED");
+
+    let local = get_attribute(session, pubkey, CKA_LOCAL, 1, "CKA_LOCAL");
+    assert_eq!(local, vec![1u8], "CKA_LOCAL");
+
+    let encrypt = get_attribute(session, pubkey, CKA_ENCRYPT, 1, "CKA_ENCRYPT");
+    assert_eq!(encrypt, vec![1u8], "CKA_ENCRYPT");
+
+    let verify = get_attribute(session, pubkey, CKA_VERIFY, 1, "CKA_VERIFY");
+    assert_eq!(verify, vec![1u8], "CKA_VERIFY");
+
+    let wrap = get_attribute(session, pubkey, CKA_WRAP, 1, "CKA_WRAP");
+    assert_eq!(wrap, vec![0u8], "CKA_WRAP");
+
+    let derive = get_attribute(session, pubkey, CKA_DERIVE, 1, "CKA_DERIVE");
+    assert_eq!(derive, vec![1u8], "CKA_DERIVE");
+
+    let modifiable = get_attribute(session, pubkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
+    assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
+
+    let params = get_attribute(session, pubkey, CKA_EC_PARAMS, ec_params.len(), "CKA_EC_PARAMS");
+    assert_eq!(params, ec_params, "CKA_EC_PARAMS");
+
+    let point = get_attribute(session, pubkey, CKA_EC_POINT, ec_point_len, "CKA_EC_POINT");
+    assert_eq!(point.len(), ec_point_len, "CKA_EC_POINT length");
+}
+
+fn assert_ec_privkey_attributes(
+    session: CK_SESSION_HANDLE,
+    privkey: CK_OBJECT_HANDLE,
+    ec_params: &[u8],
+    ec_point_len: usize,
+    expected_always_auth: bool,
+) {
+    let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
+
+    let token = get_attribute(session, privkey, CKA_TOKEN, 1, "CKA_TOKEN");
+    assert_eq!(token, vec![1u8], "CKA_TOKEN");
+
+    let private = get_attribute(session, privkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
+    assert_eq!(private, vec![1u8], "CKA_PRIVATE");
+
+    let key_type = get_attribute(session, privkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    assert_eq!(key_type, ulong_bytes(CKK_EC), "CKA_KEY_TYPE");
+
+    let sensitive = get_attribute(session, privkey, CKA_SENSITIVE, 1, "CKA_SENSITIVE");
+    assert_eq!(sensitive, vec![1u8], "CKA_SENSITIVE");
+
+    let always_sensitive = get_attribute(session, privkey, CKA_ALWAYS_SENSITIVE, 1, "CKA_ALWAYS_SENSITIVE");
+    assert_eq!(always_sensitive, vec![1u8], "CKA_ALWAYS_SENSITIVE");
+
+    let extractable = get_attribute(session, privkey, CKA_EXTRACTABLE, 1, "CKA_EXTRACTABLE");
+    assert_eq!(extractable, vec![0u8], "CKA_EXTRACTABLE");
+
+    let never_extractable = get_attribute(session, privkey, CKA_NEVER_EXTRACTABLE, 1, "CKA_NEVER_EXTRACTABLE");
+    assert_eq!(never_extractable, vec![1u8], "CKA_NEVER_EXTRACTABLE");
+
+    let local = get_attribute(session, privkey, CKA_LOCAL, 1, "CKA_LOCAL");
+    assert_eq!(local, vec![1u8], "CKA_LOCAL");
+
+    let decrypt = get_attribute(session, privkey, CKA_DECRYPT, 1, "CKA_DECRYPT");
+    assert_eq!(decrypt, vec![1u8], "CKA_DECRYPT");
+
+    let sign = get_attribute(session, privkey, CKA_SIGN, 1, "CKA_SIGN");
+    assert_eq!(sign, vec![1u8], "CKA_SIGN");
+
+    let derive = get_attribute(session, privkey, CKA_DERIVE, 1, "CKA_DERIVE");
+    assert_eq!(derive, vec![0u8], "CKA_DERIVE");
+
+    let always_auth = get_attribute(session, privkey, CKA_ALWAYS_AUTHENTICATE, 1, "CKA_ALWAYS_AUTHENTICATE");
+    assert_eq!(always_auth, vec![expected_always_auth as u8], "CKA_ALWAYS_AUTHENTICATE");
+
+    let modifiable = get_attribute(session, privkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
+    assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
+
+    let params = get_attribute(session, privkey, CKA_EC_PARAMS, ec_params.len(), "CKA_EC_PARAMS");
+    assert_eq!(params, ec_params, "CKA_EC_PARAMS");
+
+    let point = get_attribute(session, privkey, CKA_EC_POINT, ec_point_len, "CKA_EC_POINT");
+    assert_eq!(point.len(), ec_point_len, "CKA_EC_POINT length");
+}
 
 #[test]
 fn test_generated_eccp256() {
@@ -460,6 +552,12 @@ fn test_generated_eccp256() {
     } else {
         generate_ec_keys(session, SLOT_LIST, P256_EC_PARAMS)
     };
+
+    let (privkey, pubkey) = keys[0];
+    assert_ec_pubkey_attributes(session, pubkey, P256_EC_PARAMS, 67);
+    login_so(session, CKR_OK as CK_RV);
+    assert_ec_privkey_attributes(session, privkey, P256_EC_PARAMS, 67, false);
+    logout(session, CKR_OK as CK_RV);
 
     for (privkey, pubkey) in keys {
         ecdsa_sign(session, privkey, Some(pubkey), 32);
@@ -488,6 +586,12 @@ fn test_generated_eccp384() {
     } else {
         generate_ec_keys(session, SLOT_LIST, P384_EC_PARAMS)
     };
+
+    let (privkey, pubkey) = keys[0];
+    assert_ec_pubkey_attributes(session, pubkey, P384_EC_PARAMS, 99);
+    login_so(session, CKR_OK as CK_RV);
+    assert_ec_privkey_attributes(session, privkey, P384_EC_PARAMS, 99, false);
+    logout(session, CKR_OK as CK_RV);
 
     for (privkey, pubkey) in keys {
         ecdsa_sign(session, privkey, Some(pubkey), 48);
@@ -591,10 +695,8 @@ fn test_generate_eccp256_with_policy() {
     let rv = unsafe { ykcs11::C_DestroyObject(session, privkey) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_DestroyObject");
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(session, CKR_OK as CK_RV);
 
     let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
 }
-

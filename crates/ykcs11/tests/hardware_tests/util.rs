@@ -191,6 +191,10 @@ pub(crate) fn login_context_specific(session: CK_SESSION_HANDLE, expected: CK_RV
     );
 }
 
+pub(crate) fn logout(session: CK_SESSION_HANDLE, expected: CK_RV) {
+    let rv = unsafe { ykcs11::C_Logout(session) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout. Expected {expected:#x}. Found {rv:#x}");
+}
 
 
 // /// Logs out of whatever role `h_session` currently holds (expected to be

@@ -589,8 +589,7 @@ fn generate_rsa_keys(h_session: CK_SESSION_HANDLE, slots: &[u8], key_size: u32) 
         generated.push((h_private_key, h_public_key));
     }
 
-    let rv = unsafe { ykcs11::C_Logout(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(h_session, CKR_OK as CK_RV);
 
     generated
 }
@@ -662,8 +661,7 @@ fn import_rsa_keys(
         imported.push((h_private_key, h_public_key));
     }
 
-    let rv = unsafe { ykcs11::C_Logout(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(h_session, CKR_OK as CK_RV);
 
     imported
 }
@@ -738,6 +736,113 @@ fn assert_policy(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, expected
     assert_eq!(always_auth, vec![expected_always_auth], "CKA_ALWAYS_AUTHENTICATE");
 }
 
+const PUBLIC_EXPONENT: [u8; 3] = [0x01, 0x00, 0x01]; // 65537
+
+fn assert_rsa_pubkey_attributes(session: CK_SESSION_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
+    let class = get_attribute(session, pubkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    assert_eq!(class, ulong_bytes(CKO_PUBLIC_KEY), "CKA_CLASS");
+
+    let token = get_attribute(session, pubkey, CKA_TOKEN, 1, "CKA_TOKEN");
+    assert_eq!(token, vec![1u8], "CKA_TOKEN");
+
+    let private = get_attribute(session, pubkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
+    assert_eq!(private, vec![0u8], "CKA_PRIVATE");
+
+    let key_type = get_attribute(session, pubkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    assert_eq!(key_type, ulong_bytes(CKK_RSA), "CKA_KEY_TYPE");
+
+    let trusted = get_attribute(session, pubkey, CKA_TRUSTED, 1, "CKA_TRUSTED");
+    assert_eq!(trusted, vec![0u8], "CKA_TRUSTED");
+
+    let local = get_attribute(session, pubkey, CKA_LOCAL, 1, "CKA_LOCAL");
+    assert_eq!(local, vec![0u8], "CKA_LOCAL");
+
+    let encrypt = get_attribute(session, pubkey, CKA_ENCRYPT, 1, "CKA_ENCRYPT");
+    assert_eq!(encrypt, vec![1u8], "CKA_ENCRYPT");
+
+    let verify = get_attribute(session, pubkey, CKA_VERIFY, 1, "CKA_VERIFY");
+    assert_eq!(verify, vec![1u8], "CKA_VERIFY");
+
+    let wrap = get_attribute(session, pubkey, CKA_WRAP, 1, "CKA_WRAP");
+    assert_eq!(wrap, vec![0u8], "CKA_WRAP");
+
+    let derive = get_attribute(session, pubkey, CKA_DERIVE, 1, "CKA_DERIVE");
+    assert_eq!(derive, vec![0u8], "CKA_DERIVE");
+
+    let modulus_bits = get_attribute(session, pubkey, CKA_MODULUS_BITS, std::mem::size_of::<CK_ULONG>(), "CKA_MODULUS_BITS");
+    assert_eq!(modulus_bits, ulong_bytes((modulus_len * 8) as u32), "CKA_MODULUS_BITS");
+
+    let modifiable = get_attribute(session, pubkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
+    assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
+
+    let modulus = get_attribute(session, pubkey, CKA_MODULUS, modulus_len, "CKA_MODULUS");
+    assert_eq!(modulus.len(), modulus_len, "CKA_MODULUS length");
+
+    let pubexp = get_attribute(session, pubkey, CKA_PUBLIC_EXPONENT, PUBLIC_EXPONENT.len(), "CKA_PUBLIC_EXPONENT");
+    assert_eq!(pubexp, PUBLIC_EXPONENT, "CKA_PUBLIC_EXPONENT");
+}
+
+fn assert_rsa_privkey_attributes(
+    session: CK_SESSION_HANDLE,
+    privkey: CK_OBJECT_HANDLE,
+    modulus_len: usize,
+    expected_always_auth: bool,
+) {
+    let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
+
+    let token = get_attribute(session, privkey, CKA_TOKEN, 1, "CKA_TOKEN");
+    assert_eq!(token, vec![1u8], "CKA_TOKEN");
+
+    let private = get_attribute(session, privkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
+    assert_eq!(private, vec![1u8], "CKA_PRIVATE");
+
+    let key_type = get_attribute(session, privkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    assert_eq!(key_type, ulong_bytes(CKK_RSA), "CKA_KEY_TYPE");
+
+    let sensitive = get_attribute(session, privkey, CKA_SENSITIVE, 1, "CKA_SENSITIVE");
+    assert_eq!(sensitive, vec![1u8], "CKA_SENSITIVE");
+
+    let always_sensitive = get_attribute(session, privkey, CKA_ALWAYS_SENSITIVE, 1, "CKA_ALWAYS_SENSITIVE");
+    assert_eq!(always_sensitive, vec![1u8], "CKA_ALWAYS_SENSITIVE");
+
+    let extractable = get_attribute(session, privkey, CKA_EXTRACTABLE, 1, "CKA_EXTRACTABLE");
+    assert_eq!(extractable, vec![0u8], "CKA_EXTRACTABLE");
+
+    let never_extractable = get_attribute(session, privkey, CKA_NEVER_EXTRACTABLE, 1, "CKA_NEVER_EXTRACTABLE");
+    assert_eq!(never_extractable, vec![1u8], "CKA_NEVER_EXTRACTABLE");
+
+    let local = get_attribute(session, privkey, CKA_LOCAL, 1, "CKA_LOCAL");
+    assert_eq!(local, vec![0u8], "CKA_LOCAL");
+
+    let decrypt = get_attribute(session, privkey, CKA_DECRYPT, 1, "CKA_DECRYPT");
+    assert_eq!(decrypt, vec![1u8], "CKA_DECRYPT");
+
+    let unwrap = get_attribute(session, privkey, CKA_UNWRAP, 1, "CKA_UNWRAP");
+    assert_eq!(unwrap, vec![0u8], "CKA_UNWRAP");
+
+    let sign = get_attribute(session, privkey, CKA_SIGN, 1, "CKA_SIGN");
+    assert_eq!(sign, vec![1u8], "CKA_SIGN");
+
+    let derive = get_attribute(session, privkey, CKA_DERIVE, 1, "CKA_DERIVE");
+    assert_eq!(derive, vec![0u8], "CKA_DERIVE");
+
+    let modulus_bits = get_attribute(session, privkey, CKA_MODULUS_BITS, std::mem::size_of::<CK_ULONG>(), "CKA_MODULUS_BITS");
+    assert_eq!(modulus_bits, ulong_bytes((modulus_len * 8) as u32), "CKA_MODULUS_BITS");
+
+    let always_auth = get_attribute(session, privkey, CKA_ALWAYS_AUTHENTICATE, 1, "CKA_ALWAYS_AUTHENTICATE");
+    assert_eq!(always_auth, vec![expected_always_auth as u8], "CKA_ALWAYS_AUTHENTICATE");
+
+    let modifiable = get_attribute(session, privkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
+    assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
+
+    let modulus = get_attribute(session, privkey, CKA_MODULUS, modulus_len, "CKA_MODULUS");
+    assert_eq!(modulus.len(), modulus_len, "CKA_MODULUS length");
+
+    let pubexp = get_attribute(session, privkey, CKA_PUBLIC_EXPONENT, PUBLIC_EXPONENT.len(), "CKA_PUBLIC_EXPONENT");
+    assert_eq!(pubexp, PUBLIC_EXPONENT, "CKA_PUBLIC_EXPONENT");
+}
+
 fn rsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
     login_user(session, CKR_OK as CK_RV);
 
@@ -780,8 +885,7 @@ fn rsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OB
     };
     assert_eq!(rv, CKR_OK as CK_RV, "C_Verify");
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 /// For every `CKM_RSA_PKCS`/`CKM_SHA{1,256,384,512}_RSA_PKCS` mechanism,
@@ -864,8 +968,7 @@ fn rsa_sign_pkcs(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: 
         assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyFinal (mechanism {mechanism_type:#x})");
     }
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 /// For bare `CKM_RSA_PKCS_PSS` and every `CKM_SHA{1,256,384,512}_RSA_PKCS_PSS`
@@ -975,8 +1078,7 @@ fn rsa_sign_pss(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: C
         assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (streaming, mechanism {mechanism_type:#x})");
     }
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 fn rsa_decrypt_pkcs1(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
@@ -1093,8 +1195,7 @@ fn rsa_decrypt_pkcs1(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubk
         "RSA-PKCS round trip plaintext mismatch (streaming)"
     );
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 /// For `CKM_RSA_X_509`, encrypts/decrypts the same way as
@@ -1214,8 +1315,7 @@ fn rsa_encrypt_decrypt_x509(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDL
     assert!(leading.iter().all(|&b| b == 0), "RSA-X.509 zero-padding wasn't all zero (streaming)");
     assert_eq!(trailing, &data[..], "RSA-X.509 round trip plaintext mismatch (streaming)");
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 /// OAEP needs modulus_len >= 2*hLen + message_len + 2 (RFC 8017 7.1.1), so
@@ -1359,8 +1459,7 @@ fn rsa_encrypt_decrypt_oaep(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDL
         );
     }
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
+    logout(session, CKR_OK as CK_RV);
 }
 
 #[test]
@@ -1423,6 +1522,12 @@ fn test_imported_rsakeys() {
             RSA1024_QINV,
             RSA1024_SELFSIGNED_CERT_DER,
         );
+        let (privkey, pubkey) = keys[0];
+        assert_rsa_pubkey_attributes(session, pubkey, 128);
+        login_so(session, CKR_OK as CK_RV);
+        assert_rsa_privkey_attributes(session, privkey, 128, false);
+        logout(session, CKR_OK as CK_RV);
+
         for (privkey, pubkey) in keys {
             rsa_sign_pkcs(session, privkey, pubkey, 128);
             rsa_sign_pss(session, privkey, pubkey, 128);
@@ -1442,6 +1547,12 @@ fn test_imported_rsakeys() {
         RSA2048_QINV,
         RSA2048_SELFSIGNED_CERT_DER,
     );
+    let (privkey, pubkey) = keys[0];
+    assert_rsa_pubkey_attributes(session, pubkey, 256);
+    login_so(session, CKR_OK as CK_RV);
+    assert_rsa_privkey_attributes(session, privkey, 256, false);
+    logout(session, CKR_OK as CK_RV);
+
     for (privkey, pubkey) in keys {
         rsa_sign_pkcs(session, privkey, pubkey, 256);
         rsa_sign_pss(session, privkey, pubkey, 256);
@@ -1461,6 +1572,12 @@ fn test_imported_rsakeys() {
             RSA3072_QINV,
             RSA3072_SELFSIGNED_CERT_DER,
         );
+        let (privkey, pubkey) = keys[0];
+        assert_rsa_pubkey_attributes(session, pubkey, 384);
+        login_so(session, CKR_OK as CK_RV);
+        assert_rsa_privkey_attributes(session, privkey, 384, false);
+        logout(session, CKR_OK as CK_RV);
+
         for (privkey, pubkey) in keys {
             rsa_sign_pkcs(session, privkey, pubkey, 384);
             rsa_sign_pss(session, privkey, pubkey, 384);
@@ -1479,6 +1596,12 @@ fn test_imported_rsakeys() {
             RSA4096_QINV,
             RSA4096_SELFSIGNED_CERT_DER,
         );
+        let (privkey, pubkey) = keys[0];
+        assert_rsa_pubkey_attributes(session, pubkey, 512);
+        login_so(session, CKR_OK as CK_RV);
+        assert_rsa_privkey_attributes(session, privkey, 512, false);
+        logout(session, CKR_OK as CK_RV);
+
         for (privkey, pubkey) in keys {
             rsa_sign_pkcs(session, privkey, pubkey, 512);
             rsa_sign_pss(session, privkey, pubkey, 512);
@@ -1556,8 +1679,7 @@ fn test_import_rsa_with_policy() {
     let rv = unsafe { ykcs11::C_DestroyObject(session, privkey) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_DestroyObject");
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(session, CKR_OK as CK_RV);
 
     let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
