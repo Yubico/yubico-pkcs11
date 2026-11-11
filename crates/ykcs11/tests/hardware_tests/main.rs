@@ -42,7 +42,7 @@
 //! how `cargo test` schedules them.
 
 mod util;
-// mod ml_dsa;
+mod ml_dsa;
 // mod ml_kem;
 mod digest;
 mod ec;
