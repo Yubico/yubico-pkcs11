@@ -18,6 +18,8 @@ use crate::util::*;
 use pkcs11_sys::*;
 use std::ptr;
 
+const INTERFACE_NAME: &[u8] = b"PKCS 11\0";
+
 fn expected_mechanisms(firmware: (u8, u8)) -> Vec<(CK_MECHANISM_TYPE, CK_ULONG, CK_ULONG, CK_FLAGS)> {
     let rsa_min = if firmware >= (6, 0) {
         2048
@@ -90,6 +92,70 @@ fn expected_mechanisms(firmware: (u8, u8)) -> Vec<(CK_MECHANISM_TYPE, CK_ULONG, 
         mechs.push((CKM_ML_DSA as CK_MECHANISM_TYPE, 0, 0, (CKF_HW | CKF_SIGN | CKF_VERIFY) as CK_FLAGS));
     }
     mechs
+}
+
+fn get_interface(label: &str, name: Option<&[u8]>, cyproki_version: Option<(CK_BYTE, CK_BYTE)>, expected_rv: CK_RV) -> CK_INTERFACE_PTR {
+    let name_ptr = name.map_or(ptr::null_mut(), |n| n.as_ptr() as CK_UTF8CHAR_PTR);
+
+    let mut version_storage = cyproki_version.map(|(major, minor)| CK_VERSION { major, minor });
+    let version_ptr = version_storage.as_mut().map_or(ptr::null_mut(), |v| v as *mut CK_VERSION);
+
+    let mut p_interface: CK_INTERFACE_PTR = ptr::null_mut();
+    let rv = unsafe { ykcs11::C_GetInterface(name_ptr, version_ptr, &mut p_interface, 0) };
+    assert_eq!(rv, expected_rv, "C_GetInterface ({label})");
+    if expected_rv == CKR_OK as CK_RV {
+        assert!(!p_interface.is_null(), "C_GetInterface ({label}) returned a null interface");
+    }
+    p_interface
+}
+
+fn assert_3_2_interface(p_interface: CK_INTERFACE_PTR) {
+    let function_list = unsafe { (*p_interface).pFunctionList as *const CK_FUNCTION_LIST_3_2 };
+    assert!(!function_list.is_null(), "C_GetInterface returned a null function list");
+    let cryptoki_version = unsafe { (*function_list).version };
+    assert_eq!((cryptoki_version.major, cryptoki_version.minor), (3, 2), "Interface version not 3.2");
+
+    let mut info: CK_INFO = unsafe { std::mem::zeroed() };
+    let c_get_info = unsafe { (*function_list).C_GetInfo }.expect("C_GetInfo not wired into the 3.2 interface");
+    let rv = unsafe { c_get_info(&mut info) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_GetInfo (3.2)");
+    assert_lib_info(&info, 3, 2);
+
+    // C_SignMessage (a PKCS#11 3.x message-based function) only exists on
+    // the 3.2 function list. Explicitly returns CKR_FUNCTION_NOT_SUPPORTED as opposed
+    // to unrecognized function
+    let c_sign_message = unsafe { (*function_list).C_SignMessage }.expect("C_SignMessage not wired into the 3.2 interface");
+    let rv = unsafe {
+        c_sign_message(
+            0,
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert_eq!(rv, CKR_FUNCTION_NOT_SUPPORTED as CK_RV, "C_SignMessage");
+}
+
+
+/// `CK_INFO.manufacturerID`/`libraryDescription` are blank-padded fixed
+/// buffers, and `libraryVersion` is hardcoded in `ykcs11`'s own
+/// `PivBackend::library_info()` regardless of which interface version
+/// reported it -- only `cryptokiVersion` varies by call path.
+fn assert_lib_info(info: &CK_INFO, cryptoki_major: u8, cryptoki_minor: u8) {
+    assert_prefix(&info.manufacturerID, b"Yubico (www.yubico.com)", "CK_INFO.manufacturerID");
+    assert_prefix(&info.libraryDescription, b"PKCS#11 PIV Library (SP-800-73)", "CK_INFO.libraryDescription");
+
+    let cryptoki_version = info.cryptokiVersion;
+    let library_version = info.libraryVersion;
+    assert_eq!(
+        (cryptoki_version.major, cryptoki_version.minor),
+        (cryptoki_major, cryptoki_minor),
+        "CK_INFO.cryptokiVersion"
+    );
+    assert_eq!((library_version.major, library_version.minor), (1, 0), "CK_INFO.libraryVersion");
 }
 
 #[test]
@@ -204,4 +270,47 @@ fn test_mechanism_list() {
         assert_eq!(max_key_size, max, "0x{mechanism:x}: ulMaxKeySize");
         assert_eq!(mech_flags, flags, "0x{mechanism:x}: flags");
     }
+}
+
+#[test]
+fn test_interfaces() {
+
+    let _guard = HARDWARE_LOCK.lock().unwrap();
+    ensure_initialized();
+
+    // No name, no Cryptoki version interface (Default)
+    let p_interface: CK_INTERFACE_PTR = get_interface("Default, no name no version", None, None, CKR_OK as CK_RV);
+    assert_3_2_interface(p_interface);
+
+    // Name, no Cryptoki version interface
+    let p_interface: CK_INTERFACE_PTR = get_interface("Named, no version", Some(INTERFACE_NAME), None, CKR_OK as CK_RV);
+    assert_3_2_interface(p_interface);
+
+    // Cryptoki version: 3.2
+    let p_interface: CK_INTERFACE_PTR = get_interface("versioned 3.2", None, Some((3, 2)), CKR_OK as CK_RV);
+    assert_3_2_interface(p_interface);
+
+    // Cryptoki version: 3.0
+    get_interface("versioned 3.0", None, Some((3, 0)), CKR_ARGUMENTS_BAD as CK_RV);
+
+    // Cryptoki version: 2.4
+    get_interface("versioned 3.2", None, Some((2, 4)), CKR_ARGUMENTS_BAD as CK_RV);
+
+
+    // The legacy 2.40-shaped function list is reachable only via the
+    // original C_GetFunctionList entry point in this backend, not via
+    // C_GetInterface
+    let mut legacy_functions: CK_FUNCTION_LIST_PTR = ptr::null_mut();
+    let rv = unsafe { ykcs11::C_GetFunctionList(&mut legacy_functions) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_GetFunctionList");
+    assert!(!legacy_functions.is_null(), "C_GetFunctionList returned a null function list");
+    let legacy_version = unsafe { (*legacy_functions).version };
+    assert_eq!((legacy_version.major, legacy_version.minor), (2, 40), "C_GetFunctionList version");
+
+    let mut legacy_info: CK_INFO = unsafe { std::mem::zeroed() };
+    let c_get_info = unsafe { (*legacy_functions).C_GetInfo }.expect("C_GetInfo not wired into the legacy function list");
+    let rv = unsafe { c_get_info(&mut legacy_info) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_GetInfo (legacy)");
+    assert_lib_info(&legacy_info, 2, 40);
+
 }

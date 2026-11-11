@@ -100,6 +100,16 @@ const P384_SELFSIGNED_CERT_DER: &[u8] = &[
     0xa4, 0x35, 0x53,
 ];
 
+// CKM_ECDSA_SHA{1,256,384,512} hash an arbitrary-length message themselves
+// before signing, unlike bare CKM_ECDSA which expects raw, pre-hashed input
+// exactly curve_len bytes long
+const ECDSA_HASHED_MECHANISMS: [CK_MECHANISM_TYPE; 4] = [
+    CKM_ECDSA_SHA1 as CK_MECHANISM_TYPE,
+    CKM_ECDSA_SHA256 as CK_MECHANISM_TYPE,
+    CKM_ECDSA_SHA384 as CK_MECHANISM_TYPE,
+    CKM_ECDSA_SHA512 as CK_MECHANISM_TYPE,
+];
+
 
 const CKA_YUBICO_TOUCH_POLICY: u32 = 0xd9554201;
 const CKA_YUBICO_PIN_POLICY: u32 = 0xd9554202;
@@ -296,16 +306,6 @@ pub(crate) fn import_ec_keys(
 
     imported
 }
-
-// CKM_ECDSA_SHA{1,256,384,512} hash an arbitrary-length message themselves
-// before signing, unlike bare CKM_ECDSA which expects raw, pre-hashed input
-// exactly curve_len bytes long
-const ECDSA_HASHED_MECHANISMS: [CK_MECHANISM_TYPE; 4] = [
-    CKM_ECDSA_SHA1 as CK_MECHANISM_TYPE,
-    CKM_ECDSA_SHA256 as CK_MECHANISM_TYPE,
-    CKM_ECDSA_SHA384 as CK_MECHANISM_TYPE,
-    CKM_ECDSA_SHA512 as CK_MECHANISM_TYPE,
-];
 
 pub(crate) fn ecdsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: Option<CK_OBJECT_HANDLE>, curve_len: usize) {
     login_user(session, CKR_OK as CK_RV);
