@@ -43,7 +43,7 @@
 
 mod util;
 mod ml_dsa;
-// mod ml_kem;
+mod ml_kem;
 mod digest;
 mod ec;
 mod ed25519;
