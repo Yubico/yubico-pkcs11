@@ -121,15 +121,8 @@ const PIN_POLICY_ONCE: u8 = 2;
 const PIN_POLICY_NEVER: u8 = 1;
 
 pub(crate) fn generate_ec_keys(h_session: CK_SESSION_HANDLE, slots: &[u8], ec_params: &[u8]) -> Vec<(CK_OBJECT_HANDLE, CK_OBJECT_HANDLE)>{
-    let rv = unsafe {
-        ykcs11::C_Login(
-            h_session,
-            CKU_SO as CK_USER_TYPE,
-            DEFAULT_MGMT_KEY_HEX.as_ptr() as CK_UTF8CHAR_PTR,
-            DEFAULT_MGMT_KEY_HEX.len() as CK_ULONG,
-        )
-    };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Login(CKU_SO)");
+
+    login_so(h_session, CKR_OK as CK_RV);
 
     let class_priv = ulong_bytes(CKO_PRIVATE_KEY);
     let class_pub = ulong_bytes(CKO_PUBLIC_KEY);
@@ -487,6 +480,8 @@ fn assert_ec_privkey_attributes(
     ec_point_len: usize,
     expected_always_auth: bool,
 ) {
+    login_user(session, CKR_OK as CK_RV);
+
     let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
@@ -534,6 +529,8 @@ fn assert_ec_privkey_attributes(
 
     let point = get_attribute(session, privkey, CKA_EC_POINT, ec_point_len, "CKA_EC_POINT");
     assert_eq!(point.len(), ec_point_len, "CKA_EC_POINT length");
+
+    logout(session, CKR_OK as CK_RV);
 }
 
 #[test]
@@ -555,9 +552,7 @@ fn test_generated_eccp256() {
 
     let (privkey, pubkey) = keys[0];
     assert_ec_pubkey_attributes(session, pubkey, P256_EC_PARAMS, 67);
-    login_so(session, CKR_OK as CK_RV);
     assert_ec_privkey_attributes(session, privkey, P256_EC_PARAMS, 67, false);
-    logout(session, CKR_OK as CK_RV);
 
     for (privkey, pubkey) in keys {
         ecdsa_sign(session, privkey, Some(pubkey), 32);
@@ -589,9 +584,7 @@ fn test_generated_eccp384() {
 
     let (privkey, pubkey) = keys[0];
     assert_ec_pubkey_attributes(session, pubkey, P384_EC_PARAMS, 99);
-    login_so(session, CKR_OK as CK_RV);
     assert_ec_privkey_attributes(session, privkey, P384_EC_PARAMS, 99, false);
-    logout(session, CKR_OK as CK_RV);
 
     for (privkey, pubkey) in keys {
         ecdsa_sign(session, privkey, Some(pubkey), 48);
@@ -600,8 +593,7 @@ fn test_generated_eccp384() {
         assert_eq!(secret_a, secret_b, "CKM_ECDH1_DERIVE wasn't deterministic for the same peer point");
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -628,8 +620,7 @@ fn test_imported_eccp256() {
         assert_eq!(secret_a, secret_b, "CKM_ECDH1_DERIVE wasn't deterministic for the same peer point");
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -656,8 +647,7 @@ fn test_imported_eccp384() {
         assert_eq!(secret_a, secret_b, "CKM_ECDH1_DERIVE wasn't deterministic for the same peer point");
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -697,6 +687,5 @@ fn test_generate_eccp256_with_policy() {
 
     logout(session, CKR_OK as CK_RV);
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }

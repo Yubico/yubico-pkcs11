@@ -239,6 +239,8 @@ fn assert_x25519_pubkey_attributes(session: CK_SESSION_HANDLE, pubkey: CK_OBJECT
 }
 
 fn assert_x25519_privkey_attributes(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE) {
+    login_user(session, CKR_OK as CK_RV);
+
     let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
@@ -256,6 +258,8 @@ fn assert_x25519_privkey_attributes(session: CK_SESSION_HANDLE, privkey: CK_OBJE
 
     let derive = get_attribute(session, privkey, CKA_DERIVE, 1, "CKA_DERIVE");
     assert_eq!(derive, vec![0u8], "CKA_DERIVE");
+
+    logout(session, CKR_OK as CK_RV);
 }
 
 #[test]
@@ -286,8 +290,7 @@ fn test_generated_x25519() {
         assert_eq!(secret_a, secret_b, "CKM_ECDH1_DERIVE wasn't deterministic for the same peer point");
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -318,8 +321,7 @@ fn test_imported_x25519() {
         assert_eq!(secret_a, secret_b, "CKM_ECDH1_DERIVE wasn't deterministic for the same peer point");
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -348,10 +350,7 @@ fn test_key_attributes_x25519() {
     let (privkey, pubkey) = keys[0];
 
     assert_x25519_pubkey_attributes(session, pubkey);
-    login_so(session, CKR_OK as CK_RV);
     assert_x25519_privkey_attributes(session, privkey);
-    logout(session, CKR_OK as CK_RV);
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }

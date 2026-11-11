@@ -115,9 +115,6 @@ fn test_find_objects() {
     let data_objs = find_objects(session, &mut data_template, 10, "data objects by class+id");
     assert!(!data_objs.is_empty(), "expected at least one data object (class+id search)");
 
-    let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER)");
-
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    logout(session, CKR_OK as CK_RV);
+    close_session(session);
 }

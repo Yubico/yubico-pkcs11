@@ -244,6 +244,8 @@ fn assert_mldsa_privkey_attributes(
     expected_always_auth: bool,
     label: &str,
 ) {
+    login_user(session, CKR_OK as CK_RV);
+
     let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
@@ -288,6 +290,8 @@ fn assert_mldsa_privkey_attributes(
 
     let got_label = get_attribute(session, privkey, CKA_LABEL, label.len(), "CKA_LABEL");
     assert_eq!(got_label, label.as_bytes(), "CKA_LABEL");
+
+    logout(session, CKR_OK as CK_RV);
 }
 
 #[test]
@@ -326,7 +330,6 @@ fn test_generated_mldsa() {
             true,
             "Public key for PIV Authentication",
         );
-        login_so(session, CKR_OK as CK_RV);
         assert_mldsa_privkey_attributes(
             session,
             privkey,
@@ -335,15 +338,13 @@ fn test_generated_mldsa() {
             false,
             "Private key for PIV Authentication",
         );
-        logout(session, CKR_OK as CK_RV);
 
         for (privkey, pubkey) in keys {
             mldsa_sign(session, privkey, pubkey, signature_len);
         }
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -388,7 +389,6 @@ fn test_imported_mldsa() {
             false,
             "Public key for PIV Authentication",
         );
-        login_so(session, CKR_OK as CK_RV);
         assert_mldsa_privkey_attributes(
             session,
             privkey,
@@ -397,13 +397,11 @@ fn test_imported_mldsa() {
             false,
             "Private key for PIV Authentication",
         );
-        logout(session, CKR_OK as CK_RV);
 
         for (privkey, pubkey) in keys {
             mldsa_sign(session, privkey, pubkey, signature_len);
         }
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }

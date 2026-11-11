@@ -44,34 +44,15 @@ pub(crate) fn hardware_tests_enabled() -> bool {
 /// Calls `C_Initialize` exactly once for this test binary's whole process,
 /// no matter how many `#[test]` fns call this. The live PC/SC connection
 /// and PIV session inside `ykcs11`'s own process-wide state then survive
-/// across every test (nothing calls `C_Finalize` anymore), so only the
-/// first test to actually need a connection pays for it. `HARDWARE_LOCK` is
-/// already held by the caller before this runs, so whichever test gets
-/// there first performs the real call and every other test's call is a
+/// across every test, so only the first test to actually need a connection
+/// pays for it. `HARDWARE_LOCK` is already held by the caller before this runs,
+/// so whichever test gets there first performs the real call and every other test's call is a
 /// no-op.
 pub(crate) fn ensure_initialized() {
     INIT.call_once(|| {
         let rv = unsafe { ykcs11::C_Initialize(ptr::null_mut()) };
         assert_eq!(rv, CKR_OK as CK_RV, "C_Initialize");
     });
-}
-
-// pub(crate) fn assert_ok(rv: CK_RV, what: &str) {
-//     assert_eq!(rv, CKR_OK as CK_RV, "{what} failed: rv={rv:#x}");
-// }
-
-pub(crate) fn assert_prefix(field: &[CK_CHAR], expected: &[u8], what: &str) {
-    assert!(
-        field.len() >= expected.len(),
-        "{what}: field shorter than expected prefix"
-    );
-    assert_eq!(
-        &field[..expected.len()],
-        expected,
-        "{what}: expected prefix {:?}, got {:?}",
-        String::from_utf8_lossy(expected),
-        String::from_utf8_lossy(&field[..expected.len()])
-    );
 }
 
 pub(crate) fn token_info(slot_id: CK_SLOT_ID) -> CK_TOKEN_INFO {
@@ -196,30 +177,9 @@ pub(crate) fn logout(session: CK_SESSION_HANDLE, expected: CK_RV) {
     assert_eq!(rv, CKR_OK as CK_RV, "C_Logout. Expected {expected:#x}. Found {rv:#x}");
 }
 
-
-// /// Logs out of whatever role `h_session` currently holds (expected to be
-// /// `CKU_SO`, from `open_so_session`) and logs back in as `CKU_USER` with the
-// /// factory-default PIN -- the login state is mutually exclusive between the
-// /// two roles on a given slot (`PivBackend::login`), so this can't just be
-// /// layered on top of the existing SO session.
-// pub(crate) fn switch_to_user_login(h_session: CK_SESSION_HANDLE) {
-//     let rv = unsafe { ykcs11::C_Logout(h_session) };
-//     assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
-//
-//     let rv = unsafe {
-//         ykcs11::C_Login(
-//             h_session,
-//             CKU_USER as CK_USER_TYPE,
-//             DEFAULT_USER_PIN.as_ptr() as CK_UTF8CHAR_PTR,
-//             DEFAULT_USER_PIN.len() as CK_ULONG,
-//         )
-//     };
-//     assert_eq!(rv, CKR_OK as CK_RV, "C_Login(CKU_USER)");
-// }
-
 pub(crate) fn close_session(h_session: CK_SESSION_HANDLE) {
-    let rv = unsafe { ykcs11::C_Logout(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout");
+    // let rv = unsafe { ykcs11::C_Logout(h_session) };
+    // assert_eq!(rv, CKR_OK as CK_RV, "C_Logout");
     let rv = unsafe { ykcs11::C_CloseSession(h_session) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_CloseSession");
 }
@@ -270,89 +230,3 @@ pub(crate) fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u
 
     handles[0]
 }
-
-// /// A `CK_MECHANISM` with no parameter -- every mechanism these tests use
-// /// (`CKM_ML_KEM`) takes none. Named `no_param_mechanism` rather than
-// /// `mechanism` so call sites can freely use `mechanism` as a local variable
-// /// name for the result without shadowing this function.
-// pub(crate) fn no_param_mechanism(ty: u32) -> CK_MECHANISM {
-//     CK_MECHANISM {
-//         mechanism: ty as CK_MECHANISM_TYPE,
-//         pParameter: ptr::null_mut(),
-//         ulParameterLen: 0,
-//     }
-// }
-
-// /// Calls `C_GetInterface("PKCS 11", NULL, ...)` and returns the full 3.2
-// /// function table it points at. `C_EncapsulateKey`/`C_DecapsulateKey` are
-// /// only reachable this way -- they aren't part of the legacy
-// /// `CK_FUNCTION_LIST` `C_GetFunctionList` returns (see `crate`'s own module
-// /// doc comment, and `dispatch.rs`'s own doc comment on `G_INTERFACES`) --
-// /// so this exercises the actual interface-discovery mechanism those two
-// /// functions need, rather than calling `ykcs11::C_EncapsulateKey` directly
-// /// the way every other function here reaches `ykcs11`'s C ABI.
-// pub(crate) fn get_3_2_function_list() -> &'static CK_FUNCTION_LIST_3_2 {
-//     const INTERFACE_NAME: &[u8] = b"PKCS 11\0";
-//     let mut p_interface: CK_INTERFACE_PTR = ptr::null_mut();
-//     let rv = unsafe {
-//         ykcs11::C_GetInterface(
-//             INTERFACE_NAME.as_ptr() as CK_UTF8CHAR_PTR,
-//             ptr::null_mut(),
-//             &mut p_interface,
-//             0,
-//         )
-//     };
-//     assert_eq!(rv, CKR_OK as CK_RV, "C_GetInterface");
-//     assert!(!p_interface.is_null(), "C_GetInterface returned a null interface");
-//
-//     let function_list = unsafe { (*p_interface).pFunctionList as *const CK_FUNCTION_LIST_3_2 };
-//     assert!(!function_list.is_null(), "C_GetInterface returned a null function list");
-//     unsafe { &*function_list }
-// }
-
-// /// Imports a private key via `C_CreateObject`, confirms the slot reports
-// /// the expected `CKA_KEY_TYPE` back afterward (not just that the call
-// /// returned `CKR_OK`, but that the import actually stuck on the device),
-// /// and returns the new private-key object's handle.
-// pub(crate) fn import_and_verify(
-//     h_session: CK_SESSION_HANDLE,
-//     id: u8,
-//     key_type: u32,
-//     parameter_set: u32,
-//     seed: &[u8],
-//     what: &str,
-// ) -> CK_OBJECT_HANDLE {
-//     let class = ulong_bytes(CKO_PRIVATE_KEY);
-//     let key_type_bytes = ulong_bytes(key_type);
-//     let id_bytes = [id];
-//     let param_set_bytes = ulong_bytes(parameter_set);
-//
-//     let mut template = [
-//         attr(CKA_CLASS, &class),
-//         attr(CKA_KEY_TYPE, &key_type_bytes),
-//         attr(CKA_ID, &id_bytes),
-//         attr(CKA_PARAMETER_SET, &param_set_bytes),
-//         attr(CKA_SEED, seed),
-//     ];
-//
-//     let mut h_object: CK_OBJECT_HANDLE = 0;
-//     let rv = unsafe {
-//         ykcs11::C_CreateObject(
-//             h_session,
-//             template.as_mut_ptr(),
-//             template.len() as CK_ULONG,
-//             &mut h_object,
-//         )
-//     };
-//     assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_CreateObject ({what})"));
-//     assert_ne!(h_object, 0, "{what}: C_CreateObject returned a null handle");
-//
-//     let got_key_type = get_attribute(h_session, h_object, CKA_KEY_TYPE, key_type_bytes.len(), what);
-//     assert_eq!(
-//         got_key_type, key_type_bytes,
-//         "{what}: CKA_KEY_TYPE readback mismatch after import"
-//     );
-//
-//     h_object
-// }
-

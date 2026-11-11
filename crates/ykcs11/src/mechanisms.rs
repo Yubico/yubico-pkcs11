@@ -15,19 +15,26 @@
  */
 use pkcs11_sys::*;
 
+const MIN_RSA_KEY_SIZE: CK_ULONG = 1024;
+const MIN_RSA_KEY_SIZE_6_0: CK_ULONG = 2048;
+const MAX_RSA_KEY_SIZE: CK_ULONG = 2048;
+const MAX_RSA_KEY_SIZE_5_7: CK_ULONG = 4096;
+const MIN_ECC_KEY_SIZE: CK_ULONG = 256;
+const MAX_ECC_KEY_SIZE: CK_ULONG = 384;
+
 fn min_rsa_key_size(fw: (u8, u8)) -> CK_ULONG {
     if fw >= (6, 0) {
-        2048
+        MIN_RSA_KEY_SIZE_6_0
     } else {
-        1024
+        MIN_RSA_KEY_SIZE
     }
 }
 
 fn max_rsa_key_size(fw: (u8, u8)) -> CK_ULONG {
     if fw >= (5, 7) {
-        4096
+        MAX_RSA_KEY_SIZE_5_7
     } else {
-        2048
+        MAX_RSA_KEY_SIZE
     }
 }
 
@@ -132,8 +139,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_EC_KEY_PAIR_GEN.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_GENERATE_KEY_PAIR as CK_FLAGS
                 | CKF_EC_F_P as CK_FLAGS
@@ -142,8 +149,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDSA.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_SIGN as CK_FLAGS
                 | CKF_VERIFY as CK_FLAGS
@@ -153,8 +160,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDSA_SHA1.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_SIGN as CK_FLAGS
                 | CKF_VERIFY as CK_FLAGS
@@ -164,8 +171,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDSA_SHA224.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_SIGN as CK_FLAGS
                 | CKF_VERIFY as CK_FLAGS
@@ -175,8 +182,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDSA_SHA256.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_SIGN as CK_FLAGS
                 | CKF_VERIFY as CK_FLAGS
@@ -186,8 +193,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDSA_SHA384.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_SIGN as CK_FLAGS
                 | CKF_VERIFY as CK_FLAGS
@@ -197,8 +204,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDSA_SHA512.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_SIGN as CK_FLAGS
                 | CKF_VERIFY as CK_FLAGS
@@ -208,8 +215,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
         },
         MechanismEntry {
             mechanism: CKM_ECDH1_DERIVE.into(),
-            min_key_size: 256,
-            max_key_size: 384,
+            min_key_size: MIN_ECC_KEY_SIZE,
+            max_key_size: MAX_ECC_KEY_SIZE,
             flags: CKF_HW as CK_FLAGS
                 | CKF_DERIVE as CK_FLAGS
                 | CKF_EC_F_P as CK_FLAGS

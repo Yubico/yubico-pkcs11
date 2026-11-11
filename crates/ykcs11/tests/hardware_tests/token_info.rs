@@ -109,6 +109,20 @@ fn get_interface(label: &str, name: Option<&[u8]>, cyproki_version: Option<(CK_B
     p_interface
 }
 
+fn assert_prefix(field: &[CK_CHAR], expected: &[u8], what: &str) {
+    assert!(
+        field.len() >= expected.len(),
+        "{what}: field shorter than expected prefix"
+    );
+    assert_eq!(
+        &field[..expected.len()],
+        expected,
+        "{what}: expected prefix {:?}, got {:?}",
+        String::from_utf8_lossy(expected),
+        String::from_utf8_lossy(&field[..expected.len()])
+    );
+}
+
 fn assert_3_2_interface(p_interface: CK_INTERFACE_PTR) {
     let function_list = unsafe { (*p_interface).pFunctionList as *const CK_FUNCTION_LIST_3_2 };
     assert!(!function_list.is_null(), "C_GetInterface returned a null function list");

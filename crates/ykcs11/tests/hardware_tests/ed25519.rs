@@ -228,6 +228,8 @@ fn assert_ed25519_pubkey_attributes(session: CK_SESSION_HANDLE, pubkey: CK_OBJEC
 }
 
 fn assert_ed25519_privkey_attributes(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE) {
+    login_user(session, CKR_OK as CK_RV);
+
     let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
@@ -239,6 +241,8 @@ fn assert_ed25519_privkey_attributes(session: CK_SESSION_HANDLE, privkey: CK_OBJ
 
     let key_type = get_attribute(session, privkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
     assert_eq!(key_type, ulong_bytes(CKK_EC_EDWARDS), "CKA_KEY_TYPE");
+
+    logout(session, CKR_OK as CK_RV);
 }
 
 #[test]
@@ -268,8 +272,7 @@ fn test_generated_ed25519() {
         eddsa_sign(session, privkey, Some(pubkey));
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -298,8 +301,7 @@ fn test_imported_ed25519() {
         eddsa_sign(session, privkey, Some(pubkey));
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -328,10 +330,7 @@ fn test_key_attributes_ed25519() {
     let (privkey, pubkey) = keys[0];
 
     assert_ed25519_pubkey_attributes(session, pubkey);
-    login_so(session, CKR_OK as CK_RV);
     assert_ed25519_privkey_attributes(session, privkey);
-    logout(session, CKR_OK as CK_RV);
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }

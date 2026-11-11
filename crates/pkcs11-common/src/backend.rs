@@ -824,10 +824,6 @@ impl<B: Backend> Engine<B> {
             str_pad(&mut info.manufacturerID, &tinfo.manufacturer_id);
             str_pad(&mut info.model, &tinfo.model);
             str_pad(&mut info.serialNumber, &tinfo.serial_number);
-            // No backend here tracks a real-time clock, so this is always
-            // "unknown" -- PKCS#11 convention for that is all spaces (same
-            // as every other unset/unsupported string field above), not the
-            // zero bytes `mem::zeroed()` would otherwise leave it at.
             str_pad(&mut info.utcTime, "");
 
             info.flags = CKF_RNG as CK_FLAGS
@@ -958,8 +954,6 @@ impl<B: Backend> Engine<B> {
             state.session_to_slot.remove(h);
         }
         slot_guard.sessions.clear();
-        // See close_session's own comment on why this ignores B::logout's
-        // result but still unconditionally lands on `Public`.
         let _ = B::logout(&mut slot_guard);
         slot_guard.login_state = LoginState::Public;
         CKR_OK.into()

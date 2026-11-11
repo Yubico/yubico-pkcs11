@@ -127,6 +127,5 @@ fn test_digest() {
         assert_eq!(digest_streamed, expected, "C_DigestFinal value (0x{mechanism:x})");
     }
 
-    let rv = unsafe { ykcs11::C_CloseSession(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseSession");
+    close_session(session);
 }

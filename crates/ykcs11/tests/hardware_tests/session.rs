@@ -19,6 +19,11 @@ use pkcs11_sys::*;
 use crate::ec::{generate_ec_keys, ecdsa_sign};
 use std::ptr;
 
+fn close_all_sessions(slot_id: CK_SLOT_ID) {
+    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+}
+
 fn session_info(session: CK_SESSION_HANDLE) -> CK_SESSION_INFO {
     let mut info: CK_SESSION_INFO = unsafe { std::mem::zeroed() };
     let rv = unsafe { ykcs11::C_GetSessionInfo(session, &mut info) };
@@ -58,8 +63,7 @@ fn test_session() {
     );
     assert_eq!(device_error, 0, "CK_SESSION_INFO.ulDeviceError");
 
-    let rv = unsafe { ykcs11::C_CloseSession(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseSession");
+    close_session(session);
 
     // The handle must be rejected once closed.
     let rv = unsafe { ykcs11::C_GetSessionInfo(session, &mut info) };
@@ -88,8 +92,7 @@ fn test_login() {
     // Login as USER and verify SO can't log in on top of it.
     login_user(session1, CKR_OK as CK_RV);
     login_so(session1, CKR_USER_ANOTHER_ALREADY_LOGGED_IN as CK_RV);
-    let rv = unsafe { ykcs11::C_Logout(session1) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER) session1");
+    logout(session1, CKR_OK as CK_RV);
 
     // Login as SO and verify USER can't log in on top of it.
     login_so(session1, CKR_OK as CK_RV);
@@ -100,8 +103,7 @@ fn test_login() {
     let session2: CK_SESSION_HANDLE = open_session(slot_id);
     assert_eq!(session_state(session2), CKS_RW_SO_FUNCTIONS as CK_STATE, "session2 state");
 
-    let rv = unsafe { ykcs11::C_Logout(session1) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO) session1");
+    logout(session1, CKR_OK as CK_RV);
 
     assert_eq!(
         session_state(session1),
@@ -115,8 +117,7 @@ fn test_login() {
         "session2 state after logout"
     );
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_all_sessions(slot_id);
 }
 
 /// Generates two EC P-256 key pairs (PIV slots 9a/9c), then for each one logs in as
@@ -136,7 +137,6 @@ fn test_login_order() {
     ensure_initialized();
 
     let slot_id = first_populated_slot();
-    token_init(slot_id.clone());
 
     let h_session1: CK_SESSION_HANDLE = open_session(slot_id.clone());
 
@@ -159,11 +159,9 @@ fn test_login_order() {
         let rv = unsafe { ykcs11::C_DestroyObject(h_session1, key.0) };
         assert_eq!(rv, CKR_OK as CK_RV, "C_DestroyObject");
     }
-    let rv = unsafe { ykcs11::C_Logout(h_session1) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_SO)");
+    logout(h_session1, CKR_OK as CK_RV);
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_all_sessions(slot_id);
 }
 
 /// login state (`CKU_USER`/`CKU_SO`) lives on the slot, not the session, so
@@ -202,8 +200,7 @@ fn test_multiple_sessions() {
     );
 
     // Logout from session2 => both sessions go back to public.
-    let rv = unsafe { ykcs11::C_Logout(session2) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout(CKU_USER) session2");
+    logout(session2, CKR_OK as CK_RV);
     assert_eq!(
         session_state(session2),
         CKS_RW_PUBLIC_SESSION as CK_STATE,
@@ -224,8 +221,7 @@ fn test_multiple_sessions() {
     }
 
     // Close session2. Its handle becomes invalid.
-    let rv = unsafe { ykcs11::C_CloseSession(session2) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseSession(session2)");
+    close_session(session2);
     let mut info: CK_SESSION_INFO = unsafe { std::mem::zeroed() };
     let rv = unsafe { ykcs11::C_GetSessionInfo(session2, &mut info) };
     assert_eq!(
@@ -244,8 +240,7 @@ fn test_multiple_sessions() {
     login_user(session4, CKR_USER_ANOTHER_ALREADY_LOGGED_IN as CK_RV);
     assert_eq!(session_state(session4), CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state unchanged");
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_all_sessions(slot_id);
 }
 
 /// a slot allows at most 16 concurrent sessions (`piv_slot::YKCS11_MAX_SESSIONS`).
@@ -288,8 +283,7 @@ fn test_max_multiple_sessions() {
         "C_OpenSession past the session limit: rv={rv:#x}"
     );
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_all_sessions(slot_id);
 
     for session in sessions {
         let mut info: CK_SESSION_INFO = unsafe { std::mem::zeroed() };

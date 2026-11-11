@@ -788,6 +788,8 @@ fn assert_rsa_privkey_attributes(
     modulus_len: usize,
     expected_always_auth: bool,
 ) {
+    login_user(session, CKR_OK as CK_RV);
+
     let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
@@ -841,6 +843,8 @@ fn assert_rsa_privkey_attributes(
 
     let pubexp = get_attribute(session, privkey, CKA_PUBLIC_EXPONENT, PUBLIC_EXPONENT.len(), "CKA_PUBLIC_EXPONENT");
     assert_eq!(pubexp, PUBLIC_EXPONENT, "CKA_PUBLIC_EXPONENT");
+
+    logout(session, CKR_OK as CK_RV);
 }
 
 fn rsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, modulus_len: usize) {
@@ -1493,8 +1497,7 @@ fn test_generated_rsakeys() {
         }
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -1524,9 +1527,7 @@ fn test_imported_rsakeys() {
         );
         let (privkey, pubkey) = keys[0];
         assert_rsa_pubkey_attributes(session, pubkey, 128);
-        login_so(session, CKR_OK as CK_RV);
         assert_rsa_privkey_attributes(session, privkey, 128, false);
-        logout(session, CKR_OK as CK_RV);
 
         for (privkey, pubkey) in keys {
             rsa_sign_pkcs(session, privkey, pubkey, 128);
@@ -1549,9 +1550,7 @@ fn test_imported_rsakeys() {
     );
     let (privkey, pubkey) = keys[0];
     assert_rsa_pubkey_attributes(session, pubkey, 256);
-    login_so(session, CKR_OK as CK_RV);
     assert_rsa_privkey_attributes(session, privkey, 256, false);
-    logout(session, CKR_OK as CK_RV);
 
     for (privkey, pubkey) in keys {
         rsa_sign_pkcs(session, privkey, pubkey, 256);
@@ -1574,9 +1573,7 @@ fn test_imported_rsakeys() {
         );
         let (privkey, pubkey) = keys[0];
         assert_rsa_pubkey_attributes(session, pubkey, 384);
-        login_so(session, CKR_OK as CK_RV);
         assert_rsa_privkey_attributes(session, privkey, 384, false);
-        logout(session, CKR_OK as CK_RV);
 
         for (privkey, pubkey) in keys {
             rsa_sign_pkcs(session, privkey, pubkey, 384);
@@ -1598,9 +1595,7 @@ fn test_imported_rsakeys() {
         );
         let (privkey, pubkey) = keys[0];
         assert_rsa_pubkey_attributes(session, pubkey, 512);
-        login_so(session, CKR_OK as CK_RV);
         assert_rsa_privkey_attributes(session, privkey, 512, false);
-        logout(session, CKR_OK as CK_RV);
 
         for (privkey, pubkey) in keys {
             rsa_sign_pkcs(session, privkey, pubkey, 512);
@@ -1611,8 +1606,7 @@ fn test_imported_rsakeys() {
         }
     }
 
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
 
 #[test]
@@ -1680,7 +1674,5 @@ fn test_import_rsa_with_policy() {
     assert_eq!(rv, CKR_OK as CK_RV, "C_DestroyObject");
 
     logout(session, CKR_OK as CK_RV);
-
-    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+    close_session(session);
 }
