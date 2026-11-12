@@ -32,6 +32,13 @@ const YKCS11_VERSION_MINOR: u8 = 0;
 
 pub struct PivBackend;
 
+fn firmware_version(data: &PivSlotData) -> (u8, u8) {
+    data.token_info
+        .as_ref()
+        .map(|t| (t.fw_version_major, t.fw_version_minor))
+        .unwrap_or((0, 0))
+}
+
 /// Per-session state of active operations
 #[derive(Default)]
 pub struct PivSessionData {
@@ -122,30 +129,18 @@ impl Backend for PivBackend {
         Some(crate::piv_slot::YKCS11_MAX_SESSIONS)
     }
 
-    fn mechanism_list(_data: &PivSlotData) -> Vec<CK_MECHANISM_TYPE> {
-        crate::mechanisms::token_mechanisms()
+    fn mechanism_list(data: &PivSlotData) -> Vec<CK_MECHANISM_TYPE> {
+        crate::mechanisms::token_mechanisms(firmware_version(data))
     }
 
     fn mechanism_info(data: &PivSlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
-        let entry = crate::mechanisms::mechanism_table()
+        let entry = crate::mechanisms::mechanism_table(firmware_version(data))
             .into_iter()
             .find(|e| e.mechanism == mechanism)?;
 
-        // RSA key generation/operations above 2048 bits need firmware 5.7+
-        let mut max_key_size = entry.max_key_size;
-        if max_key_size == 4096 {
-            let fw_at_least_5_7 = data
-                .token_info
-                .as_ref()
-                .is_some_and(|t| (t.fw_version_major, t.fw_version_minor) >= (5, 7));
-            if !fw_at_least_5_7 {
-                max_key_size = 2048;
-            }
-        }
-
         Some(MechanismInfo {
             min_key_size: entry.min_key_size,
-            max_key_size,
+            max_key_size: entry.max_key_size,
             flags: entry.flags,
         })
     }
@@ -244,6 +239,23 @@ impl Backend for PivBackend {
         if slot.login_state == LoginState::Public {
             return Err(CKR_USER_NOT_LOGGED_IN.into());
         }
+
+        // Force a real PC/SC card reset to deauthenticate and authenticated state
+        if let Some(piv) = slot.data.piv_session.take() {
+            let mut conn = piv.into_connection();
+            if conn.reconnect(false).is_err() {
+                slot.data.disconnect();
+                return Err(CKR_DEVICE_ERROR.into());
+            }
+            match ActivePivSession::new(conn) {
+                Ok(fresh) => slot.data.piv_session = Some(fresh),
+                Err((e, _conn)) => {
+                    slot.data.disconnect();
+                    return Err(piv_error_to_rv(e));
+                }
+            }
+        }
+
         slot.login_state = LoginState::Public;
         Ok(())
     }

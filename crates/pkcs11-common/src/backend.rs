@@ -824,6 +824,7 @@ impl<B: Backend> Engine<B> {
             str_pad(&mut info.manufacturerID, &tinfo.manufacturer_id);
             str_pad(&mut info.model, &tinfo.model);
             str_pad(&mut info.serialNumber, &tinfo.serial_number);
+            str_pad(&mut info.utcTime, "");
 
             info.flags = CKF_RNG as CK_FLAGS
                 | CKF_LOGIN_REQUIRED as CK_FLAGS
@@ -931,6 +932,7 @@ impl<B: Backend> Engine<B> {
         let mut slot_guard = slot.lock();
         slot_guard.sessions.remove(&h_session);
         if slot_guard.sessions.is_empty() {
+            let _ = B::logout(&mut slot_guard);
             slot_guard.login_state = LoginState::Public;
         }
         CKR_OK.into()
@@ -952,6 +954,7 @@ impl<B: Backend> Engine<B> {
             state.session_to_slot.remove(h);
         }
         slot_guard.sessions.clear();
+        let _ = B::logout(&mut slot_guard);
         slot_guard.login_state = LoginState::Public;
         CKR_OK.into()
     }

@@ -20,6 +20,10 @@ use crate::template::require_so_login;
 use pkcs11_common::backend::Slot;
 use pkcs11_sys::*;
 
+/// PIV has no APDU to erase just the private key material (it's only ever replaced
+// by generating/importing a new key into the slot). The function maps all four object
+// classes for a slot to the same PIV slot number. Destroying any of
+// them deletes the slot's stored certificate and returns `CKR_OK`.
 pub fn destroy_object(
     slot: &mut Slot<PivBackend>,
     _h_session: CK_SESSION_HANDLE,
@@ -34,9 +38,11 @@ pub fn destroy_object(
             slot.data.objects.retain(|o| o.class != ObjectClass::SecretKey);
             Ok(())
         }
-        ObjectClass::PrivateKey => Err(CKR_OBJECT_HANDLE_INVALID.into()),
         ObjectClass::Data => Err(CKR_ACTION_PROHIBITED.into()),
-        ObjectClass::Certificate | ObjectClass::PublicKey | ObjectClass::AttestationCertificate => {
+        ObjectClass::PrivateKey
+        | ObjectClass::Certificate
+        | ObjectClass::PublicKey
+        | ObjectClass::AttestationCertificate => {
             require_so_login(slot.login_state)?;
             let piv_slot = obj.slot;
 

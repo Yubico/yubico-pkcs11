@@ -53,11 +53,18 @@ fi
 set +e
 pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --keypairgen --id 1 --key-type EC:edwards25519  2>&1 > /dev/null
 newkey=$?
+
+pkcs11-tool --module $MODULE --login --login-type so --so-pin 010203040506070801020304050607080102030405060708 --keypairgen --id 1 --key-type rsa:1024  2>&1 > /dev/null
+oldkey=$?
 set -e
 
 EC_CURVES=("prime256v1" "secp384r1")
-RSA_KEYSIZES=("1024" "2048")
+RSA_KEYSIZES=("2048")
 HASH_SIZES=("1" "256" "384" "512")
+
+if [ $oldkey -eq 0 ]; then
+  RSA_KEYSIZES=("1024" ${RSA_KEYSIZES[@]})
+fi
 
 if [ $newkey -eq 0 ]; then
   RSA_KEYSIZES=(${RSA_KEYSIZES[@]} "3072" "4096")

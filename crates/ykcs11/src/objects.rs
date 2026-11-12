@@ -1955,7 +1955,22 @@ mod tests {
     }
 
     #[test]
-    fn destroy_object_always_rejects_a_private_key_handle() {
+    fn destroy_object_requires_so_login_for_a_private_key_handle() {
+        let obj = test_object(
+            PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
+            ObjectClass::PrivateKey,
+            Slot::Authentication,
+        );
+        let handle = obj.id as CK_OBJECT_HANDLE;
+        let mut slot = test_slot(vec![obj], LoginState::User);
+        assert_eq!(
+            crate::destroy_object::destroy_object(&mut slot, 1, handle),
+            Err(CKR_USER_TYPE_INVALID.into())
+        );
+    }
+
+    #[test]
+    fn destroy_object_treats_a_private_key_handle_like_its_slots_certificate() {
         let obj = test_object(
             PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
             ObjectClass::PrivateKey,
@@ -1965,7 +1980,7 @@ mod tests {
         let mut slot = test_slot(vec![obj], LoginState::SO);
         assert_eq!(
             crate::destroy_object::destroy_object(&mut slot, 1, handle),
-            Err(CKR_OBJECT_HANDLE_INVALID.into())
+            Err(CKR_TOKEN_NOT_PRESENT.into())
         );
     }
 
