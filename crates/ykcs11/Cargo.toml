@@ -49,3 +49,4 @@ ml-kem = "0.3"
 # CK_ATTRIBUTE/CK_* values for the real C_* calls those tests exercise.
 [dev-dependencies]
 pkcs11-sys = { workspace = true }
+shake = "0.1"

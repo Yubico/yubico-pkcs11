@@ -58,7 +58,6 @@ fn hex_decode(hex: &str) -> Vec<u8> {
         .collect()
 }
 
-/// No `token_init` or login -- digesting touches no PIV application state.
 #[test]
 fn test_digest() {
     if !hardware_tests_enabled() {

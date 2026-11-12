@@ -59,7 +59,6 @@ fn test_find_objects() {
     ensure_initialized();
 
     let slot_id = first_populated_slot();
-    token_init(slot_id.clone());
     let session = open_session(slot_id);
 
     const ID: u8 = 1; // 9a (Authentication)

@@ -42,16 +42,20 @@ pub(crate) fn hardware_tests_enabled() -> bool {
 }
 
 /// Calls `C_Initialize` exactly once for this test binary's whole process,
-/// no matter how many `#[test]` fns call this. The live PC/SC connection
-/// and PIV session inside `ykcs11`'s own process-wide state then survive
-/// across every test, so only the first test to actually need a connection
-/// pays for it. `HARDWARE_LOCK` is already held by the caller before this runs,
-/// so whichever test gets there first performs the real call and every other test's call is a
-/// no-op.
+/// no matter how many `#[test]` fns call this, then factory-resets the PIV
+/// application exactly once too. The live PC/SC connection and PIV session
+/// inside `ykcs11`'s own process-wide state then survive across every test,
+/// so only the first test to actually need a connection pays for it.
+/// `HARDWARE_LOCK` is already held by the caller before this runs, so
+/// whichever test gets there first performs the real work and every other
+/// test's call is a no-op.
 pub(crate) fn ensure_initialized() {
     INIT.call_once(|| {
         let rv = unsafe { ykcs11::C_Initialize(ptr::null_mut()) };
         assert_eq!(rv, CKR_OK as CK_RV, "C_Initialize");
+
+        let slot_id = first_populated_slot();
+        token_init(slot_id);
     });
 }
 

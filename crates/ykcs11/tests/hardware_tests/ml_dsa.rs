@@ -191,6 +191,197 @@ fn mldsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_
     logout(session, CKR_OK as CK_RV);
 }
 
+/// FIPS 204's external-mu message representative:
+/// `mu = SHAKE256(SHAKE256(pk, 64) || 0x00 || len(ctx) || ctx || message, 64)`
+fn ml_dsa_mu(public_key: &[u8], context: &[u8], message: &[u8]) -> [u8; 64] {
+    use shake::digest::{ExtendableOutput, Update, XofReader};
+
+    assert!(context.len() <= 255, "ML-DSA context must be at most 255 bytes");
+
+    let mut tr_hasher = shake::Shake256::default();
+    tr_hasher.update(public_key);
+    let mut tr = [0u8; 64];
+    tr_hasher.finalize_xof().read(&mut tr);
+
+    let mut mu_hasher = shake::Shake256::default();
+    mu_hasher.update(&tr);
+    mu_hasher.update(&[0u8, context.len() as u8]);
+    mu_hasher.update(context);
+    mu_hasher.update(message);
+    let mut mu = [0u8; 64];
+    mu_hasher.finalize_xof().read(&mut mu);
+    mu
+}
+
+/// Signs via `CKM_ML_DSA_EXTERNAL_MU` and checks the resulting signature two
+/// ways: indirectly, via the standard context-aware `CKM_ML_DSA` verify over
+/// the original message and context (proving the external-mu path produces
+/// exactly the signature FIPS 204's ExternalMu-ML-DSA.Sign promises); and
+/// directly, via `CKM_ML_DSA_EXTERNAL_MU`'s own verify over `mu` itself.
+fn mldsa_sign_external_mu(
+    session: CK_SESSION_HANDLE,
+    privkey: CK_OBJECT_HANDLE,
+    pubkey: CK_OBJECT_HANDLE,
+    value_len: usize,
+    signature_len: usize,
+) {
+    login_user(session, CKR_OK as CK_RV);
+
+    let public_key = get_attribute(session, pubkey, CKA_VALUE, value_len, "CKA_VALUE");
+    let message = vec![0xa5u8; 300];
+    let context = b"ykcs11 hardware test context".to_vec();
+    let mu = ml_dsa_mu(&public_key, &context, &message);
+
+    let mut sign_mechanism = CK_MECHANISM {
+        mechanism: CKM_ML_DSA_EXTERNAL_MU as CK_MECHANISM_TYPE,
+        pParameter: ptr::null_mut(),
+        ulParameterLen: 0,
+    };
+    let rv = unsafe { ykcs11::C_SignInit(session, &mut sign_mechanism, privkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (external mu)");
+
+    // A private-key operation needs CKU_CONTEXT_SPECIFIC re-login immediately before C_Sign
+    login_context_specific(session, CKR_OK as CK_RV);
+
+    let mut signature = vec![0u8; signature_len];
+    let mut signature_len_out = signature.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_Sign(
+            session,
+            mu.as_ptr() as CK_BYTE_PTR,
+            mu.len() as CK_ULONG,
+            signature.as_mut_ptr(),
+            &mut signature_len_out,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Sign (external mu)");
+    assert_eq!(signature_len_out as usize, signature.len(), "unexpected external-mu signature length");
+
+    // --- Verify indirectly, via context-aware CKM_ML_DSA over the original
+    // message and context ---
+    let context_param = CK_SIGN_ADDITIONAL_CONTEXT {
+        hedgeVariant: CKH_HEDGE_PREFERRED as CK_HEDGE_TYPE,
+        pContext: context.as_ptr() as CK_BYTE_PTR,
+        ulContextLen: context.len() as CK_ULONG,
+    };
+    let mut verify_with_context_mechanism = CK_MECHANISM {
+        mechanism: CKM_ML_DSA as CK_MECHANISM_TYPE,
+        pParameter: &context_param as *const CK_SIGN_ADDITIONAL_CONTEXT as CK_VOID_PTR,
+        ulParameterLen: std::mem::size_of::<CK_SIGN_ADDITIONAL_CONTEXT>() as CK_ULONG,
+    };
+    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_with_context_mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (indirect, CKM_ML_DSA)");
+    let rv = unsafe {
+        ykcs11::C_Verify(
+            session,
+            message.as_ptr() as CK_BYTE_PTR,
+            message.len() as CK_ULONG,
+            signature.as_mut_ptr(),
+            signature_len_out,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (indirect, CKM_ML_DSA, over the original message+context)");
+
+    // --- Verify directly, via CKM_ML_DSA_EXTERNAL_MU over mu itself ---
+    let mut verify_mu_mechanism = CK_MECHANISM {
+        mechanism: CKM_ML_DSA_EXTERNAL_MU as CK_MECHANISM_TYPE,
+        pParameter: ptr::null_mut(),
+        ulParameterLen: 0,
+    };
+    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (direct, CKM_ML_DSA_EXTERNAL_MU)");
+    let rv = unsafe {
+        ykcs11::C_Verify(
+            session,
+            mu.as_ptr() as CK_BYTE_PTR,
+            mu.len() as CK_ULONG,
+            signature.as_mut_ptr(),
+            signature_len_out,
+        )
+    };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (direct, CKM_ML_DSA_EXTERNAL_MU, over mu)");
+
+    // --- Negative: direct verification against the wrong mu must fail ---
+    let wrong_mu = ml_dsa_mu(&public_key, &context, b"a different message entirely");
+    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (wrong mu)");
+    let rv = unsafe {
+        ykcs11::C_Verify(
+            session,
+            wrong_mu.as_ptr() as CK_BYTE_PTR,
+            wrong_mu.len() as CK_ULONG,
+            signature.as_mut_ptr(),
+            signature_len_out,
+        )
+    };
+    assert_eq!(rv, CKR_SIGNATURE_INVALID as CK_RV, "C_Verify unexpectedly accepted the wrong mu");
+
+    // --- Negative: direct verification of a tampered signature must fail ---
+    let mut tampered_signature = signature.clone();
+    tampered_signature[0] ^= 0x01;
+    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (tampered signature)");
+    let rv = unsafe {
+        ykcs11::C_Verify(
+            session,
+            mu.as_ptr() as CK_BYTE_PTR,
+            mu.len() as CK_ULONG,
+            tampered_signature.as_mut_ptr(),
+            signature_len_out,
+        )
+    };
+    assert_eq!(rv, CKR_SIGNATURE_INVALID as CK_RV, "C_Verify unexpectedly accepted a tampered signature");
+
+    // --- Negative: direct verification with a wrong-length mu must fail
+    // client-side, mirroring verify.rs's own length check ---
+    let short_mu = &mu[..32];
+    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_mechanism, pubkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (short mu)");
+    let rv = unsafe {
+        ykcs11::C_Verify(
+            session,
+            short_mu.as_ptr() as CK_BYTE_PTR,
+            short_mu.len() as CK_ULONG,
+            signature.as_mut_ptr(),
+            signature_len_out,
+        )
+    };
+    assert_eq!(rv, CKR_DATA_LEN_RANGE as CK_RV, "C_Verify unexpectedly accepted a wrong-length mu");
+
+    // --- Negative: C_VerifyInit with a non-empty context must be rejected --
+    // the spec requires ulContextLen == 0 for CKM_ML_DSA_EXTERNAL_MU, same as
+    // on the signing side ---
+    let mut verify_mu_with_context_mechanism = CK_MECHANISM {
+        mechanism: CKM_ML_DSA_EXTERNAL_MU as CK_MECHANISM_TYPE,
+        pParameter: &context_param as *const CK_SIGN_ADDITIONAL_CONTEXT as CK_VOID_PTR,
+        ulParameterLen: std::mem::size_of::<CK_SIGN_ADDITIONAL_CONTEXT>() as CK_ULONG,
+    };
+    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_with_context_mechanism, pubkey) };
+    assert_eq!(
+        rv, CKR_MECHANISM_PARAM_INVALID as CK_RV,
+        "C_VerifyInit unexpectedly accepted a non-empty context for CKM_ML_DSA_EXTERNAL_MU"
+    );
+
+    // --- Negative: signing a wrong-length mu must fail client-side ---
+    let rv = unsafe { ykcs11::C_SignInit(session, &mut sign_mechanism, privkey) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_SignInit (short mu)");
+    login_context_specific(session, CKR_OK as CK_RV);
+    let mut short_sig = vec![0u8; signature_len];
+    let mut short_sig_len = short_sig.len() as CK_ULONG;
+    let rv = unsafe {
+        ykcs11::C_Sign(
+            session,
+            short_mu.as_ptr() as CK_BYTE_PTR,
+            short_mu.len() as CK_ULONG,
+            short_sig.as_mut_ptr(),
+            &mut short_sig_len,
+        )
+    };
+    assert_eq!(rv, CKR_DATA_LEN_RANGE as CK_RV, "C_Sign unexpectedly accepted a wrong-length mu");
+
+    logout(session, CKR_OK as CK_RV);
+}
+
 fn assert_mldsa_pubkey_attributes(
     session: CK_SESSION_HANDLE,
     pubkey: CK_OBJECT_HANDLE,
@@ -341,6 +532,7 @@ fn test_generated_mldsa() {
 
         for (privkey, pubkey) in keys {
             mldsa_sign(session, privkey, pubkey, signature_len);
+            mldsa_sign_external_mu(session, privkey, pubkey, value_len, signature_len);
         }
     }
 
@@ -400,6 +592,7 @@ fn test_imported_mldsa() {
 
         for (privkey, pubkey) in keys {
             mldsa_sign(session, privkey, pubkey, signature_len);
+            mldsa_sign_external_mu(session, privkey, pubkey, value_len, signature_len);
         }
     }
 
