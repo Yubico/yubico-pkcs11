@@ -1,4 +1,4 @@
-name: Build and test
+name: "yubihsm-pkcs11 - Build and test"
 
 on: [push]
 
@@ -20,15 +20,8 @@ jobs:
         run: |
           sudo apt-get update
 
-          # ykcs11
-          sudo apt-get install -y libpcsclite-dev libclang-dev pcscd libudev-dev
-          # C_GetSlotList talks to the PC/SC resource manager even with zero
-          # readers attached — pcscd must actually be running or it fails
-          # with CKR_DEVICE_ERROR (same as it would on a real machine).
-          sudo systemctl start pcscd
-
-          # yubihsm-pkcs11
           sudo apt-get install -y libclang-dev \
+                                  libudev-dev \
                                   libcurl4-openssl-dev \
                                   libssl-dev \
                                   cmake \
@@ -36,17 +29,10 @@ jobs:
                                   libedit-dev \
                                   gengetopt
 
-          # common for testing
+          # for testing
           sudo apt-get install -y opensc
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Build ykcs11
-        run: |
-            cargo build -p ykcs11 --verbose
-            cargo test -p ykcs11
-            test -f "target/debug/libykcs11.so" || { echo "::error::expected artifact target/debug/libykcs11.so was not produced"; exit 1; }
-            pkcs11-tool --module target/debug/libykcs11.so --show-info | grep "PKCS#11 PIV Library"
 
       - name: Build yubihsm-pkcs11
         env:
@@ -78,7 +64,7 @@ jobs:
           ls $GITHUB_WORKSPACE/../yubihsm-shell/build/lib
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
-          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo test
+          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo test -p yubihsm-pkcs11
           cd target/debug
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           cat yubihsm_pkcs11.conf
@@ -107,16 +93,9 @@ jobs:
 
       - name: install dependencies
         run: |
-            brew install opensc
+          brew install opensc
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Build ykcs11
-        run: |
-            cargo build -p ykcs11 --verbose
-            cargo test -p ykcs11
-            test -f "target/debug/libykcs11.dylib" || { echo "::error::expected artifact target/debug/libykcs11.dylib was not produced"; exit 1; }
-            pkcs11-tool --module target/debug/libykcs11.dylib --show-info | grep "PKCS#11 PIV Library"
 
       - name: Build yubihsm-pkcs11
         run: |
@@ -133,7 +112,7 @@ jobs:
           cd yubico-pkcs11
           YUBIHSM_LIB_DIR=/usr/local/lib cargo build -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
-          YUBIHSM_LIB_DIR=/usr/local/lib cargo test
+          YUBIHSM_LIB_DIR=/usr/local/lib cargo test -p yubihsm-pkcs11
           
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           #DYLD_LIBRARY_PATH=/usr/local/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubihsm_pkcs11.conf pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info
@@ -160,26 +139,6 @@ jobs:
         uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Build ykcs11
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-            $ErrorActionPreference = "Stop"
-
-            rustup target add x86_64-pc-windows-msvc
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-            cargo build -p ykcs11 --verbose
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          
-            cargo test -p ykcs11
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-            ls target/debug
-
-            Test-Path target/debug/ykcs11.dll -PathType Leaf
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Build libyubihsm
         env:
@@ -223,7 +182,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo.exe build -p yubihsm-pkcs11 --verbose
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo.exe test
+          cargo.exe test -p yubihsm-pkcs11
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           Test-Path target/debug/yubihsm_pkcs11.dll -PathType Leaf
@@ -241,40 +200,6 @@ jobs:
           Start-Sleep -Seconds 120
           $log = "$env:GITHUB_WORKSPACE\install_opensc.log"
           Start-Process "msiexec" "/i `"$env:GITHUB_WORKSPACE\OpenSC.msi`" /qn /l*! `"$log`"" -Wait -NoNewWindow -PassThru
-
-      - name: Test ykcs11 module
-        env:
-          ARCH: ${{ matrix.arch }}
-
-        run: |
-          Set-PSDebug -Trace 1
-
-          $env:PATH += ";C:\Program Files\OpenSC Project\OpenSC\tools"
-
-          # C_GetSlotList calls into yubikit's PC/SC reader enumeration,
-          # which talks to the Smart Card resource manager service even with
-          # zero readers attached (same reason pcscd has to be running on
-          # Linux). On a stock Windows Server CI image SCardSvr is
-          # manual/trigger-start and that trigger doesn't always fire, so
-          # start it explicitly rather than relying on that.
-          Start-Service -Name SCardSvr
-          Get-Service -Name SCardSvr | Format-List Name, Status, StartType
-
-          # No PC/SC reader on this runner, so C_GetSlotList(NULL) legitimately
-          # returns CKR_DEVICE_ERROR and pkcs11-tool exits non-zero — same
-          # reason the Linux/macOS jobs above capture output and grep for a
-          # known-good string instead of trusting the exit code. Treat
-          # finding our manufacturer string in the output as success.
-          $output = & pkcs11-tool.exe --module target/debug/ykcs11.dll --show-info 2>&1 | Out-String
-          Write-Host $output
-
-          if ($output.Contains("Yubico (www.yubico.com)")) {
-            Write-Host "PASS: found expected manufacturer string"
-            exit 0
-          } else {
-            Write-Host "FAIL: expected manufacturer string not found"
-            exit 1
-          }
 
       - name: Test yubihsm_pkcs11 module
         env:
