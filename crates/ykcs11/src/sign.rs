@@ -24,6 +24,9 @@ use pkcs11_sys::*;
 use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey, RsaKeySize};
 use yubikit::piv::{KeyType, Slot as PivSlot};
 
+// TODO Read return error code from the YubiKey/yubikit when message size is too long
+const MAX_RAW_SIGN_DATA_LEN: usize = 4900;
+
 pub struct SignState {
     slot: PivSlot,
     key_type: KeyType,
@@ -80,8 +83,6 @@ enum SignAlgorithm {
     /// `CKM_ML_DSA_EXTERNAL_MU`
     MlDsaExternalMu,
 }
-
-const MAX_RAW_SIGN_DATA_LEN: usize = 3072;
 
 /// Validates `CK_SIGN_ADDITIONAL_CONTEXT` for `CKM_ML_DSA`
 pub(crate) fn resolve_ml_dsa_context(parameter: &[u8]) -> Result<Vec<u8>, CK_RV> {
