@@ -24,6 +24,7 @@ use pkcs11_common::backend::{
 use pkcs11_common::session::LoginState;
 use pkcs11_sys::*;
 use yubikit::piv::{ManagementKey, PivError, PivPin};
+use yubikit::smartcard::SmartCardError;
 
 const YKCS11_MANUFACTURER: &str = "Yubico (www.yubico.com)";
 const YKCS11_LIBDESC: &str = "PKCS#11 PIV Library (SP-800-73)";
@@ -481,6 +482,12 @@ pub(crate) fn piv_error_to_rv(e: PivError) -> CK_RV {
         PivError::InvalidPin(_) => CKR_PIN_INCORRECT.into(),
         PivError::NotSupported(_) => CKR_FUNCTION_NOT_SUPPORTED.into(),
         PivError::InvalidData(_) => CKR_ARGUMENTS_BAD.into(),
+        PivError::Connection(SmartCardError::Apdu { sw: 0x6982, .. }) => {
+            CKR_USER_NOT_LOGGED_IN.into()
+        }
+        PivError::Connection(SmartCardError::Apdu { sw: 0x6983, .. }) => {
+            CKR_PIN_LOCKED.into()
+        }
         PivError::Connection(_) => CKR_DEVICE_ERROR.into(),
         _ => CKR_GENERAL_ERROR.into(),
     }
