@@ -45,9 +45,9 @@ pub(crate) fn hardware_tests_enabled() -> bool {
 /// no matter how many `#[test]` fns call this. The live PC/SC connection
 /// and PIV session inside `ykcs11`'s own process-wide state then survive
 /// across every test, so only the first test to actually need a connection
-/// pays for it. `HARDWARE_LOCK` is already held by the caller before this runs,
-/// so whichever test gets there first performs the real call and every other test's call is a
-/// no-op.
+/// pays for it. `HARDWARE_LOCK` is already held by the caller before this
+/// runs, so whichever test gets there first performs the real call and
+/// every other test's call is a no-op.
 pub(crate) fn ensure_initialized() {
     INIT.call_once(|| {
         let rv = unsafe { ykcs11::C_Initialize(ptr::null_mut()) };
@@ -97,6 +97,9 @@ pub(crate) fn first_populated_slot() -> CK_SLOT_ID {
 /// Resets the PIV application to factory defaults via the real
 /// `C_InitToken` PKCS#11 call
 pub(crate) fn token_init(slot_id: CK_SLOT_ID) {
+    let rv = unsafe { ykcs11::C_CloseAllSessions(slot_id) };
+    assert_eq!(rv, CKR_OK as CK_RV, "C_CloseAllSessions");
+
     eprintln!(
         "\n\
          ********************************************************************\n\
@@ -178,8 +181,6 @@ pub(crate) fn logout(session: CK_SESSION_HANDLE, expected: CK_RV) {
 }
 
 pub(crate) fn close_session(h_session: CK_SESSION_HANDLE) {
-    // let rv = unsafe { ykcs11::C_Logout(h_session) };
-    // assert_eq!(rv, CKR_OK as CK_RV, "C_Logout");
     let rv = unsafe { ykcs11::C_CloseSession(h_session) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_CloseSession");
 }
