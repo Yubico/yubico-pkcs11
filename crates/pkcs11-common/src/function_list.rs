@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use crate::stubs;
 use pkcs11_sys::*;
 
@@ -86,7 +85,7 @@ pub const fn build_function_list(real: RealFunctions) -> CK_FUNCTION_LIST {
         C_Finalize: real.c_finalize,
         C_GetInfo: real.c_get_info,
         C_GetFunctionList: real.c_get_function_list,
-        C_GetSlotList: real     .c_get_slot_list,
+        C_GetSlotList: real.c_get_slot_list,
         C_GetSlotInfo: real.c_get_slot_info,
         C_GetTokenInfo: real.c_get_token_info,
         C_GetMechanismList: real.c_get_mechanism_list,

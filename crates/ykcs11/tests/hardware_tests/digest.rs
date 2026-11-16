@@ -54,7 +54,9 @@ fn digest_vectors() -> Vec<(CK_MECHANISM_TYPE, &'static [u8], &'static str)> {
 fn hex_decode(hex: &str) -> Vec<u8> {
     (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("invalid hex literal in digest_vectors"))
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16).expect("invalid hex literal in digest_vectors")
+        })
         .collect()
 }
 
@@ -81,7 +83,10 @@ fn test_digest() {
             ulParameterLen: 0,
         };
         let rv = unsafe { ykcs11::C_DigestInit(session, &mut mechanism_struct) };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_DigestInit (one-shot, 0x{mechanism:x})");
+        assert_eq!(
+            rv, CKR_OK as CK_RV,
+            "C_DigestInit (one-shot, 0x{mechanism:x})"
+        );
 
         let mut digest = vec![0u8; expected.len()];
         let mut digest_len = digest.len() as CK_ULONG;
@@ -95,27 +100,46 @@ fn test_digest() {
             )
         };
         assert_eq!(rv, CKR_OK as CK_RV, "C_Digest (0x{mechanism:x})");
-        assert_eq!(digest_len as usize, expected.len(), "C_Digest length (0x{mechanism:x})");
+        assert_eq!(
+            digest_len as usize,
+            expected.len(),
+            "C_Digest length (0x{mechanism:x})"
+        );
         assert_eq!(digest, expected, "C_Digest value (0x{mechanism:x})");
 
         // Streaming: C_DigestInit + two C_DigestUpdate calls + C_DigestFinal
         let rv = unsafe { ykcs11::C_DigestInit(session, &mut mechanism_struct) };
-        assert_eq!(rv, CKR_OK as CK_RV, "C_DigestInit (streaming, 0x{mechanism:x})");
+        assert_eq!(
+            rv, CKR_OK as CK_RV,
+            "C_DigestInit (streaming, 0x{mechanism:x})"
+        );
 
         let (first, rest) = message.split_at(1);
         let rv = unsafe {
-            ykcs11::C_DigestUpdate(session, first.as_ptr() as CK_BYTE_PTR, first.len() as CK_ULONG)
+            ykcs11::C_DigestUpdate(
+                session,
+                first.as_ptr() as CK_BYTE_PTR,
+                first.len() as CK_ULONG,
+            )
         };
         assert_eq!(rv, CKR_OK as CK_RV, "C_DigestUpdate #1 (0x{mechanism:x})");
         let rv = unsafe {
-            ykcs11::C_DigestUpdate(session, rest.as_ptr() as CK_BYTE_PTR, rest.len() as CK_ULONG)
+            ykcs11::C_DigestUpdate(
+                session,
+                rest.as_ptr() as CK_BYTE_PTR,
+                rest.len() as CK_ULONG,
+            )
         };
         assert_eq!(rv, CKR_OK as CK_RV, "C_DigestUpdate #2 (0x{mechanism:x})");
 
         let mut digest_streamed = vec![0u8; expected.len()];
         let mut digest_streamed_len = digest_streamed.len() as CK_ULONG;
         let rv = unsafe {
-            ykcs11::C_DigestFinal(session, digest_streamed.as_mut_ptr(), &mut digest_streamed_len)
+            ykcs11::C_DigestFinal(
+                session,
+                digest_streamed.as_mut_ptr(),
+                &mut digest_streamed_len,
+            )
         };
         assert_eq!(rv, CKR_OK as CK_RV, "C_DigestFinal (0x{mechanism:x})");
         assert_eq!(
@@ -123,7 +147,10 @@ fn test_digest() {
             expected.len(),
             "C_DigestFinal length (0x{mechanism:x})"
         );
-        assert_eq!(digest_streamed, expected, "C_DigestFinal value (0x{mechanism:x})");
+        assert_eq!(
+            digest_streamed, expected,
+            "C_DigestFinal value (0x{mechanism:x})"
+        );
     }
 
     close_session(session);

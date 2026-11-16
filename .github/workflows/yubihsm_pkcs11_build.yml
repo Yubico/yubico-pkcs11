@@ -1,20 +1,30 @@
 name: "yubihsm-pkcs11 - Build and test"
 
-on: [push]
+on: [push, pull_request]
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "2"
 
 jobs:
 
   ubuntu:
-    name: Build and test on Linux
+    name: Build and test on Linux (Rust ${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, "1.88.0"]
     env:
       LIBYUBIHSM_VERSION: 2.8.0
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install PC/SC + bindgen build deps
         run: |
@@ -32,18 +42,21 @@ jobs:
           # for testing
           sudo apt-get install -y opensc
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build yubihsm-pkcs11
-        env:
-          LIBYUBIHSM_TAG: ${{ matrix.libyubihsm_tag }}
         run: |
           set -x
 
           cd ..
 
-          #git clone --branch $LIBYUBIHSM_TAG https://github.com/Yubico/yubihsm-shell.git
-          git clone https://github.com/Yubico/yubihsm-shell.git
+          git clone --depth 1 --branch "$LIBYUBIHSM_VERSION" https://github.com/Yubico/yubihsm-shell.git
           cd yubihsm-shell
 
           # ubuntu 24.04 and newer come with _FORTIFY_SOURCE already set
@@ -62,9 +75,12 @@ jobs:
 
           cd ../../yubico-pkcs11
           ls $GITHUB_WORKSPACE/../yubihsm-shell/build/lib
-          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build -p yubihsm-pkcs11 --verbose
+          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo check --locked -p yubihsm-pkcs11 --all-targets --all-features
+          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
-          YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo test -p yubihsm-pkcs11
+          YUBIHSM_LIB_DIR="$GITHUB_WORKSPACE/../yubihsm-shell/build/lib" \
+            LD_LIBRARY_PATH="$GITHUB_WORKSPACE/../yubihsm-shell/build/lib" \
+            cargo test --locked -p yubihsm-pkcs11
           cd target/debug
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           cat yubihsm_pkcs11.conf
@@ -89,13 +105,21 @@ jobs:
 
     steps:
       - name: clone repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: install dependencies
         run: |
           brew install opensc
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build yubihsm-pkcs11
         run: |
@@ -110,9 +134,9 @@ jobs:
           sudo installer -verbose -pkg yubihsm-shell-installer.pkg -target /
 
           cd yubico-pkcs11
-          YUBIHSM_LIB_DIR=/usr/local/lib cargo build -p yubihsm-pkcs11 --verbose
+          YUBIHSM_LIB_DIR=/usr/local/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
-          YUBIHSM_LIB_DIR=/usr/local/lib cargo test -p yubihsm-pkcs11
+          YUBIHSM_LIB_DIR=/usr/local/lib cargo test --locked -p yubihsm-pkcs11
           
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
           #DYLD_LIBRARY_PATH=/usr/local/lib YUBIHSM_PKCS11_CONF=$GITHUB_WORKSPACE/yubihsm_pkcs11.conf pkcs11-tool --module target/debug/libyubihsm_pkcs11.dylib --show-info
@@ -136,9 +160,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build libyubihsm
         env:
@@ -180,9 +212,9 @@ jobs:
           # $env:PATH+=";$env:GITHUB_WORKSPACE/pkcs11/bin"
           cargo.exe update
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo.exe build -p yubihsm-pkcs11 --verbose
+          cargo.exe build --locked -p yubihsm-pkcs11 --verbose
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo.exe test -p yubihsm-pkcs11
+          cargo.exe test --locked -p yubihsm-pkcs11
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           Test-Path target/debug/yubihsm_pkcs11.dll -PathType Leaf

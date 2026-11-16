@@ -19,7 +19,9 @@ use crate::sign::{Accumulator, resolve_ml_dsa_context};
 use pkcs11_common::backend::Slot;
 use pkcs11_common::digest::DigestOp;
 use pkcs11_common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
-use pkcs11_common::verify::{verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509};
+use pkcs11_common::verify::{
+    verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509,
+};
 use pkcs11_sys::*;
 use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey};
 
@@ -82,7 +84,8 @@ pub fn verify_init(
     parameter: &[u8],
     key_handle: CK_OBJECT_HANDLE,
 ) -> Result<(), CK_RV> {
-    let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle) else {
+    let Some((_, public_key)) = crate::objects::find_public_key(&slot.data.objects, key_handle)
+    else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
@@ -109,7 +112,8 @@ pub fn verify_init(
             hash_mechanism: Some(*h),
         },
         (MechanismKind::RsaPssRaw, PublicKey::Rsa(k)) => {
-            let (hash_mechanism, mgf_hash_mechanism, salt_len) = resolve_pss_params(parameter, None)?;
+            let (hash_mechanism, mgf_hash_mechanism, salt_len) =
+                resolve_pss_params(parameter, None)?;
             VerifyAlgorithm::RsaPss {
                 n: k.n.clone(),
                 e: k.e.clone(),
@@ -139,7 +143,9 @@ pub fn verify_init(
                 point: k.point.clone(),
             }
         }
-        (MechanismKind::Eddsa, PublicKey::Ed25519(k)) => VerifyAlgorithm::Eddsa { key: k.key.clone() },
+        (MechanismKind::Eddsa, PublicKey::Ed25519(k)) => {
+            VerifyAlgorithm::Eddsa { key: k.key.clone() }
+        }
         (MechanismKind::MlDsa, PublicKey::MlDsa(k)) => {
             let context = resolve_ml_dsa_context(parameter)?;
             VerifyAlgorithm::MlDsa {
@@ -250,13 +256,16 @@ pub fn verify_final(
             &message,
             signature,
         ),
-        VerifyAlgorithm::Ecdsa { curve_byte_len, point } => {
-            verify_ecdsa(curve_byte_len, &point, &message, signature)
-        }
+        VerifyAlgorithm::Ecdsa {
+            curve_byte_len,
+            point,
+        } => verify_ecdsa(curve_byte_len, &point, &message, signature),
         VerifyAlgorithm::Eddsa { key } => verify_eddsa(&key, &message, signature),
-        VerifyAlgorithm::MlDsa { key, parameter_set, context } => {
-            verify_ml_dsa(parameter_set, &key, &context, &message, signature)
-        }
+        VerifyAlgorithm::MlDsa {
+            key,
+            parameter_set,
+            context,
+        } => verify_ml_dsa(parameter_set, &key, &context, &message, signature),
         VerifyAlgorithm::MlDsaExternalMu { key, parameter_set } => {
             verify_ml_dsa_external_mu(parameter_set, &key, &message, signature)
         }
@@ -278,7 +287,9 @@ fn verify_ml_dsa(
 
     match parameter_set {
         MlDsaParameterSet::MlDsa44 => {
-            let key: &[u8; 1312] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 1312] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa44>::new(key.into());
             let sig = Signature::<MlDsa44>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -289,7 +300,9 @@ fn verify_ml_dsa(
             }
         }
         MlDsaParameterSet::MlDsa65 => {
-            let key: &[u8; 1952] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 1952] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa65>::new(key.into());
             let sig = Signature::<MlDsa65>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -300,7 +313,9 @@ fn verify_ml_dsa(
             }
         }
         MlDsaParameterSet::MlDsa87 => {
-            let key: &[u8; 2592] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 2592] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa87>::new(key.into());
             let sig = Signature::<MlDsa87>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -332,7 +347,9 @@ fn verify_ml_dsa_external_mu(
 
     match parameter_set {
         MlDsaParameterSet::MlDsa44 => {
-            let key: &[u8; 1312] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 1312] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa44>::new(key.into());
             let sig = Signature::<MlDsa44>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -343,7 +360,9 @@ fn verify_ml_dsa_external_mu(
             }
         }
         MlDsaParameterSet::MlDsa65 => {
-            let key: &[u8; 1952] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 1952] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa65>::new(key.into());
             let sig = Signature::<MlDsa65>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -354,7 +373,9 @@ fn verify_ml_dsa_external_mu(
             }
         }
         MlDsaParameterSet::MlDsa87 => {
-            let key: &[u8; 2592] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 2592] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa87>::new(key.into());
             let sig = Signature::<MlDsa87>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use crate::sign::mgf1;
 use pkcs11_sys::*;
@@ -57,10 +56,18 @@ pub fn eme_oaep_unpad(
     let masked_db = &em[1 + h_len..];
 
     let seed_mask = mgf1(masked_db, h_len, mgf_hash_mechanism)?;
-    let seed: Vec<u8> = masked_seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+    let seed: Vec<u8> = masked_seed
+        .iter()
+        .zip(seed_mask.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
 
     let db_mask = mgf1(&seed, masked_db.len(), mgf_hash_mechanism)?;
-    let db: Vec<u8> = masked_db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    let db: Vec<u8> = masked_db
+        .iter()
+        .zip(db_mask.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
 
     // DB = lHash' || PS || 0x01 || M.
     let (db_lhash, rest) = db.split_at(h_len);
@@ -97,13 +104,22 @@ mod tests {
     fn eme_pkcs1_v15_unpad_rejects_bad_first_bytes() {
         let mut em = pkcs1_v15_pad(b"hello world", 256);
         em[1] = 0x01;
-        assert_eq!(eme_pkcs1_v15_unpad(&em), Err(CKR_ENCRYPTED_DATA_INVALID.into()));
+        assert_eq!(
+            eme_pkcs1_v15_unpad(&em),
+            Err(CKR_ENCRYPTED_DATA_INVALID.into())
+        );
     }
 
     #[test]
     fn eme_pkcs1_v15_unpad_rejects_missing_separator() {
-        let em = vec![0x00, 0x02].into_iter().chain(std::iter::repeat(0xFFu8).take(254)).collect::<Vec<u8>>();
-        assert_eq!(eme_pkcs1_v15_unpad(&em), Err(CKR_ENCRYPTED_DATA_INVALID.into()));
+        let em = vec![0x00, 0x02]
+            .into_iter()
+            .chain(std::iter::repeat(0xFFu8).take(254))
+            .collect::<Vec<u8>>();
+        assert_eq!(
+            eme_pkcs1_v15_unpad(&em),
+            Err(CKR_ENCRYPTED_DATA_INVALID.into())
+        );
     }
 
     #[test]
@@ -121,7 +137,11 @@ mod tests {
             let db_mask = mgf1(&seed, db.len(), CKM_SHA256 as CK_MECHANISM_TYPE).unwrap();
             let masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
             let seed_mask = mgf1(&masked_db, h_len, CKM_SHA256 as CK_MECHANISM_TYPE).unwrap();
-            let masked_seed: Vec<u8> = seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+            let masked_seed: Vec<u8> = seed
+                .iter()
+                .zip(seed_mask.iter())
+                .map(|(a, b)| a ^ b)
+                .collect();
             let mut em = vec![0x00u8];
             em.extend(masked_seed);
             em.extend(masked_db);
@@ -159,7 +179,11 @@ mod tests {
             let db_mask = mgf1(&seed, db.len(), CKM_SHA256 as CK_MECHANISM_TYPE).unwrap();
             let masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
             let seed_mask = mgf1(&masked_db, h_len, CKM_SHA256 as CK_MECHANISM_TYPE).unwrap();
-            let masked_seed: Vec<u8> = seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+            let masked_seed: Vec<u8> = seed
+                .iter()
+                .zip(seed_mask.iter())
+                .map(|(a, b)| a ^ b)
+                .collect();
             let mut em = vec![0x00u8];
             em.extend(masked_seed);
             em.extend(masked_db);
@@ -169,9 +193,13 @@ mod tests {
         let mut em = oaep_encode(b"the quick brown fox", b"", 256, 32);
         em[255] ^= 0x01;
         assert_eq!(
-            eme_oaep_unpad(&em, b"", CKM_SHA256 as CK_MECHANISM_TYPE, CKM_SHA256 as CK_MECHANISM_TYPE),
+            eme_oaep_unpad(
+                &em,
+                b"",
+                CKM_SHA256 as CK_MECHANISM_TYPE,
+                CKM_SHA256 as CK_MECHANISM_TYPE
+            ),
             Err(CKR_ENCRYPTED_DATA_INVALID.into())
         );
     }
-
 }

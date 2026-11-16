@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use pkcs11_sys::*;
 
@@ -70,7 +69,11 @@ pub fn zero_pad(data: &[u8], modulus_len: usize) -> Result<Vec<u8>, CK_RV> {
 /// MGF1 mask generation function (RFC 8017 Appendix B.2.1): repeatedly
 /// hashes `seed || counter` (a 4-byte big-endian counter starting at 0),
 /// concatenating the results, and truncates to `mask_len` bytes.
-pub fn mgf1(seed: &[u8], mask_len: usize, hash_mechanism: CK_MECHANISM_TYPE) -> Result<Vec<u8>, CK_RV> {
+pub fn mgf1(
+    seed: &[u8],
+    mask_len: usize,
+    hash_mechanism: CK_MECHANISM_TYPE,
+) -> Result<Vec<u8>, CK_RV> {
     let mut out = Vec::with_capacity(mask_len);
     let mut counter: u32 = 0;
     while out.len() < mask_len {
@@ -139,10 +142,34 @@ mod tests {
 
     #[test]
     fn digest_info_prefix_lengths_match_rfc_8017_appendix_b1() {
-        assert_eq!(digest_info_prefix(CKM_SHA_1 as CK_MECHANISM_TYPE).unwrap().len() + 20, 35);
-        assert_eq!(digest_info_prefix(CKM_SHA256 as CK_MECHANISM_TYPE).unwrap().len() + 32, 51);
-        assert_eq!(digest_info_prefix(CKM_SHA384 as CK_MECHANISM_TYPE).unwrap().len() + 48, 67);
-        assert_eq!(digest_info_prefix(CKM_SHA512 as CK_MECHANISM_TYPE).unwrap().len() + 64, 83);
+        assert_eq!(
+            digest_info_prefix(CKM_SHA_1 as CK_MECHANISM_TYPE)
+                .unwrap()
+                .len()
+                + 20,
+            35
+        );
+        assert_eq!(
+            digest_info_prefix(CKM_SHA256 as CK_MECHANISM_TYPE)
+                .unwrap()
+                .len()
+                + 32,
+            51
+        );
+        assert_eq!(
+            digest_info_prefix(CKM_SHA384 as CK_MECHANISM_TYPE)
+                .unwrap()
+                .len()
+                + 48,
+            67
+        );
+        assert_eq!(
+            digest_info_prefix(CKM_SHA512 as CK_MECHANISM_TYPE)
+                .unwrap()
+                .len()
+                + 64,
+            83
+        );
     }
 
     #[test]

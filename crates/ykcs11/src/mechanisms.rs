@@ -38,7 +38,6 @@ fn max_rsa_key_size(fw: (u8, u8)) -> CK_ULONG {
     }
 }
 
-
 pub struct MechanismEntry {
     pub mechanism: CK_MECHANISM_TYPE,
     pub min_key_size: CK_ULONG,
@@ -250,7 +249,7 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
     ];
 
     // ED25519 and X25519 mechanisms
-    if firmware >= (5,7) {
+    if firmware >= (5, 7) {
         table.push(MechanismEntry {
             mechanism: CKM_EC_EDWARDS_KEY_PAIR_GEN.into(),
             min_key_size: 255,
@@ -285,7 +284,7 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
     }
 
     // PQC mechanisms
-    if firmware >= (6,0) {
+    if firmware >= (6, 0) {
         table.push(MechanismEntry {
             mechanism: CKM_ML_DSA_KEY_PAIR_GEN.into(),
             min_key_size: 0,
@@ -322,5 +321,8 @@ pub fn mechanism_table(firmware: (u8, u8)) -> Vec<MechanismEntry> {
 }
 
 pub fn token_mechanisms(firmware: (u8, u8)) -> Vec<CK_MECHANISM_TYPE> {
-    mechanism_table(firmware).into_iter().map(|e| e.mechanism).collect()
+    mechanism_table(firmware)
+        .into_iter()
+        .map(|e| e.mechanism)
+        .collect()
 }

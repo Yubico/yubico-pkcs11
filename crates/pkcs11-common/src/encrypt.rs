@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use crate::sign::{mgf1, zero_pad};
 use crate::verify::rsa_public_raw_op;
 use pkcs11_sys::*;
 
-pub fn rsa_x509_encrypt(n: &[u8], e: &[u8], modulus_len: usize, message: &[u8]) -> Result<Vec<u8>, CK_RV> {
+pub fn rsa_x509_encrypt(
+    n: &[u8],
+    e: &[u8],
+    modulus_len: usize,
+    message: &[u8],
+) -> Result<Vec<u8>, CK_RV> {
     let padded = zero_pad(message, modulus_len)?;
     rsa_public_raw_op(n, e, &padded, modulus_len)
 }
@@ -83,7 +87,11 @@ fn eme_oaep_encode(
     let db_mask = mgf1(seed, db.len(), mgf_hash_mechanism)?;
     let masked_db: Vec<u8> = db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
     let seed_mask = mgf1(&masked_db, h_len, mgf_hash_mechanism)?;
-    let masked_seed: Vec<u8> = seed.iter().zip(seed_mask.iter()).map(|(a, b)| a ^ b).collect();
+    let masked_seed: Vec<u8> = seed
+        .iter()
+        .zip(seed_mask.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
 
     let mut em = Vec::with_capacity(modulus_len);
     em.push(0x00);
@@ -103,7 +111,14 @@ pub fn rsa_oaep_encrypt(
     hash_mechanism: CK_MECHANISM_TYPE,
     mgf_hash_mechanism: CK_MECHANISM_TYPE,
 ) -> Result<Vec<u8>, CK_RV> {
-    let em = eme_oaep_encode(message, label, seed, modulus_len, hash_mechanism, mgf_hash_mechanism)?;
+    let em = eme_oaep_encode(
+        message,
+        label,
+        seed,
+        modulus_len,
+        hash_mechanism,
+        mgf_hash_mechanism,
+    )?;
     rsa_public_raw_op(n, e, &em, modulus_len)
 }
 
@@ -178,10 +193,11 @@ mod tests {
     include!("verify_test_key.rs");
 
     fn modexp(input: &[u8], exp: &[u8]) -> Vec<u8> {
-        let base = rsa::BigUint::from_bytes_be(input);
-        let e = rsa::BigUint::from_bytes_be(exp);
-        let n = rsa::BigUint::from_bytes_be(TEST_RSA_N);
-        base.modpow(&e, &n).to_bytes_be()
+        let base = rsa::BoxedUint::from_be_slice_vartime(input);
+        let e = rsa::BoxedUint::from_be_slice_vartime(exp);
+        let n = crypto_bigint::Odd::new(rsa::BoxedUint::from_be_slice_vartime(TEST_RSA_N))
+            .expect("TEST_RSA_N is an odd RSA modulus");
+        base.pow_mod(&e, &n).to_be_bytes_trimmed_vartime().to_vec()
     }
 
     #[test]

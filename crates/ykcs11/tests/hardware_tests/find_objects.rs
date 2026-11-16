@@ -29,21 +29,41 @@ fn find_objects(
     let rv = unsafe {
         ykcs11::C_FindObjectsInit(h_session, template.as_mut_ptr(), template.len() as CK_ULONG)
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsInit ({what})"));
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_FindObjectsInit ({what})")
+    );
 
     let mut handles = vec![0 as CK_OBJECT_HANDLE; max_count];
     let mut count: CK_ULONG = 0;
     let rv = unsafe {
-        ykcs11::C_FindObjects(h_session, handles.as_mut_ptr(), handles.len() as CK_ULONG, &mut count)
+        ykcs11::C_FindObjects(
+            h_session,
+            handles.as_mut_ptr(),
+            handles.len() as CK_ULONG,
+            &mut count,
+        )
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjects ({what})"));
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_FindObjects ({what})")
+    );
     assert!(
         (count as usize) < max_count,
         "{what}: found {count} objects, max_count={max_count} may have truncated results"
     );
 
     let rv = unsafe { ykcs11::C_FindObjectsFinal(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsFinal ({what})"));
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_FindObjectsFinal ({what})")
+    );
 
     handles.truncate(count as usize);
     handles
@@ -77,7 +97,13 @@ fn test_find_objects() {
     let mut n_cert = 0;
     let mut n_data = 0;
     for &handle in &found {
-        let class_bytes = get_attribute(session, handle, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+        let class_bytes = get_attribute(
+            session,
+            handle,
+            CKA_CLASS,
+            std::mem::size_of::<CK_ULONG>(),
+            "CKA_CLASS",
+        );
         let class = CK_ULONG::from_ne_bytes(class_bytes.try_into().unwrap()) as u32;
         match class {
             CKO_PRIVATE_KEY => {
@@ -96,24 +122,42 @@ fn test_find_objects() {
     assert_eq!(n_privkey, 1, "expected exactly one private key object");
     assert_eq!(n_pubkey, 1, "expected exactly one public key object");
     // Could be more than 1 certificate if the firmware version supports attestation
-    assert!(n_cert >= 1, "expected at least one certificate object, found {n_cert}");
-    assert!(n_data >= 1, "expected at least one data object, found {n_data}");
+    assert!(
+        n_cert >= 1,
+        "expected at least one certificate object, found {n_cert}"
+    );
+    assert!(
+        n_data >= 1,
+        "expected at least one data object, found {n_data}"
+    );
 
     let privkey_found = find_object_handle(session, CKO_PRIVATE_KEY, ID, "private key by class+id");
-    assert_eq!(privkey_found, privkey, "wrong private key handle (class+id search)");
+    assert_eq!(
+        privkey_found, privkey,
+        "wrong private key handle (class+id search)"
+    );
 
     let pubkey_found = find_object_handle(session, CKO_PUBLIC_KEY, ID, "public key by class+id");
-    assert_eq!(pubkey_found, pubkey, "wrong public key handle (class+id search)");
+    assert_eq!(
+        pubkey_found, pubkey,
+        "wrong public key handle (class+id search)"
+    );
 
     let cert_class = ulong_bytes(CKO_CERTIFICATE);
     let mut cert_template = [attr(CKA_ID, &id_bytes), attr(CKA_CLASS, &cert_class)];
     let certs = find_objects(session, &mut cert_template, 10, "certificates by class+id");
-    assert!(!certs.is_empty(), "expected at least one certificate object (class+id search)");
+    assert!(
+        !certs.is_empty(),
+        "expected at least one certificate object (class+id search)"
+    );
 
     let data_class = ulong_bytes(CKO_DATA);
     let mut data_template = [attr(CKA_ID, &id_bytes), attr(CKA_CLASS, &data_class)];
     let data_objs = find_objects(session, &mut data_template, 10, "data objects by class+id");
-    assert!(!data_objs.is_empty(), "expected at least one data object (class+id search)");
+    assert!(
+        !data_objs.is_empty(),
+        "expected at least one data object (class+id search)"
+    );
 
     logout(session, CKR_OK as CK_RV);
     close_session(session);

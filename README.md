@@ -16,15 +16,18 @@ crates/
 
 ## Building
 
+Rust 1.88 or newer is required. Linux CI builds and tests the workspace on both
+the minimum supported Rust version and stable.
+
 ```bash
 # Build everything (both modules + common library)
-cargo build
+cargo build --locked
 
 # Build only the YubiKey PIV module
-cargo build -p ykcs11
+cargo build --locked -p ykcs11
 
 # Build only the YubiHSM module
-cargo build -p yubihsm-pkcs11
+cargo build --locked -p yubihsm-pkcs11
 
 ```
 
@@ -33,6 +36,34 @@ This produces:
 - `target/debug/libykcs11.{so/dylib/dll}` (+ `.a`) — YubiKey PIV module
 
 On Windows: `.dll` + `.lib`; on macOS: `.dylib` + `.a`.
+
+## Development checks
+
+The workspace tracks `Cargo.lock`; builds and checks use `--locked` so dependency
+changes are explicit. Use `cargo update` when intentionally updating dependencies
+and include the resulting lockfile changes.
+
+Install Rust's `rustfmt` and `clippy` components, `pre-commit`, and
+`cargo-deny` (CI uses version `0.20.2`), then enable the hooks:
+
+```bash
+rustup component add rustfmt clippy
+pre-commit install
+pre-commit run --all-files
+```
+
+The same hooks run on pull requests: formatting, workspace Clippy, and dependency
+advisory/license/source checks. Existing Clippy warnings are non-fatal.
+`deny.toml` records accepted existing advisory risks; other advisories fail.
+
+Clippy needs the workspace's native build dependencies: libclang for bindgen,
+PC/SC development libraries (and libudev on Linux), and libyubihsm. Configure
+`YUBIHSM_LIB_DIR` as described below if libyubihsm is not discoverable through
+pkg-config.
+
+Hooks do not enable hardware tests. Those require a dedicated disposable YubiKey
+and explicit `YKCS11_HW_TESTS=1`; they permanently erase its PIV keys and
+certificates.
 
 ## Versioning
 

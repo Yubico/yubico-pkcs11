@@ -2,17 +2,27 @@ name: "ykcs11 - Build and test"
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "2"
 
 jobs:
 
   ubuntu:
-    name: Build and test on Linux
+    name: Build and test on Linux (Rust ${{ matrix.toolchain }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, "1.88.0"]
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install PC/SC + bindgen build deps
         run: |
@@ -28,12 +38,19 @@ jobs:
           # for testing
           sudo apt-get install -y opensc
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build ykcs11
         run: |
-          cargo build -p ykcs11 --verbose
-          cargo test -p ykcs11
+          cargo check --locked -p ykcs11 --all-targets --all-features
+          cargo build --locked -p ykcs11 --verbose
+          cargo test --locked -p ykcs11
           
           test -f "target/debug/libykcs11.so" || { echo "::error::expected artifact target/debug/libykcs11.so was not produced"; exit 1; }
           pkcs11-tool --module target/debug/libykcs11.so --show-info | grep "PKCS#11 PIV Library"
@@ -52,18 +69,26 @@ jobs:
 
     steps:
       - name: clone repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: install dependencies
         run: |
           brew install opensc
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build ykcs11
         run: |
-          cargo build -p ykcs11 --verbose
-          cargo test -p ykcs11
+          cargo build --locked  -p ykcs11 --verbose
+          cargo test --locked -p ykcs11
           
           test -f "target/debug/libykcs11.dylib" || { echo "::error::expected artifact target/debug/libykcs11.dylib was not produced"; exit 1; }
           pkcs11-tool --module target/debug/libykcs11.dylib --show-info | grep "PKCS#11 PIV Library"
@@ -80,9 +105,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build ykcs11
         env:
@@ -93,10 +126,13 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           
-          cargo build -p ykcs11 --verbose
+          cargo.exe update
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           
-          cargo test -p ykcs11
+          cargo build --locked -p ykcs11 --verbose
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          
+          cargo test --locked -p ykcs11
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
                     
           Test-Path target/debug/ykcs11.dll -PathType Leaf

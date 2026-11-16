@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
-
 use crate::digest::DigestOp;
 use crate::sign::{digest_info_prefix, mgf1, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
-use rsa::BigUint;
+use rsa::BoxedUint;
 pub(crate) fn rsa_public_raw_op(
     n: &[u8],
     e: &[u8],
@@ -28,11 +27,15 @@ pub(crate) fn rsa_public_raw_op(
     if input.len() != modulus_len {
         return Err(CKR_SIGNATURE_LEN_RANGE.into());
     }
-    let pub_key = rsa::RsaPublicKey::new(BigUint::from_bytes_be(n), BigUint::from_bytes_be(e))
-        .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
-    let m = BigUint::from_bytes_be(input);
-    let result = rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
-    zero_pad(&result.to_bytes_be(), modulus_len)
+    let pub_key = rsa::PublicKey::new(
+        BoxedUint::from_be_slice_vartime(n),
+        BoxedUint::from_be_slice_vartime(e),
+    )
+    .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
+    let m = BoxedUint::from_be_slice_vartime(input);
+    let result =
+        rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
+    zero_pad(&result.to_be_bytes_trimmed_vartime(), modulus_len)
 }
 
 pub fn verify_rsa_x509(
@@ -115,7 +118,11 @@ fn emsa_pss_verify(
     }
 
     let db_mask = mgf1(h, db_len, mgf_hash_mechanism)?;
-    let mut db: Vec<u8> = masked_db.iter().zip(db_mask.iter()).map(|(a, b)| a ^ b).collect();
+    let mut db: Vec<u8> = masked_db
+        .iter()
+        .zip(db_mask.iter())
+        .map(|(a, b)| a ^ b)
+        .collect();
     if extra_bits > 0 {
         db[0] &= 0xFFu8 >> extra_bits;
     }
@@ -223,13 +230,16 @@ pub fn verify_eddsa(key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), 
     if signature.len() != 64 {
         return Err(CKR_SIGNATURE_LEN_RANGE.into());
     }
-    let key_bytes: [u8; 32] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+    let key_bytes: [u8; 32] = key
+        .try_into()
+        .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
     let vk = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)
         .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
     // SAFETY-free: length already checked above.
     let sig_bytes: [u8; 64] = signature.try_into().unwrap();
     let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-    vk.verify(message, &sig).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
+    vk.verify(message, &sig)
+        .map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))
 }
 
 #[cfg(test)]
@@ -242,10 +252,11 @@ mod tests {
     include!("verify_test_key.rs");
 
     fn modexp(input: &[u8], exp: &[u8]) -> Vec<u8> {
-        let base = BigUint::from_bytes_be(input);
-        let e = BigUint::from_bytes_be(exp);
-        let n = BigUint::from_bytes_be(TEST_RSA_N);
-        base.modpow(&e, &n).to_bytes_be()
+        let base = BoxedUint::from_be_slice_vartime(input);
+        let e = BoxedUint::from_be_slice_vartime(exp);
+        let n = crypto_bigint::Odd::new(BoxedUint::from_be_slice_vartime(TEST_RSA_N))
+            .expect("TEST_RSA_N is an odd RSA modulus");
+        base.pow_mod(&e, &n).to_be_bytes_trimmed_vartime().to_vec()
     }
 
     #[test]
@@ -377,7 +388,7 @@ mod tests {
     fn verify_ecdsa_p256_accepts_a_genuine_signature() {
         let sk = p256::ecdsa::SigningKey::from_bytes(&[0x7Au8; 32].into()).unwrap();
         let vk = p256::ecdsa::VerifyingKey::from(&sk);
-        let point = vk.to_encoded_point(false);
+        let point = vk.to_sec1_point(false);
         let prehash = [0x55u8; 32];
 
         use p256::ecdsa::signature::hazmat::PrehashSigner;
@@ -390,7 +401,7 @@ mod tests {
     fn verify_ecdsa_p256_rejects_a_tampered_signature() {
         let sk = p256::ecdsa::SigningKey::from_bytes(&[0x7Au8; 32].into()).unwrap();
         let vk = p256::ecdsa::VerifyingKey::from(&sk);
-        let point = vk.to_encoded_point(false);
+        let point = vk.to_sec1_point(false);
         let prehash = [0x55u8; 32];
 
         use p256::ecdsa::signature::hazmat::PrehashSigner;
@@ -444,7 +455,7 @@ mod tests {
     fn verify_ecdsa_p384_accepts_a_genuine_signature() {
         let sk = p384::ecdsa::SigningKey::from_bytes(&[0x7Au8; 48].into()).unwrap();
         let vk = p384::ecdsa::VerifyingKey::from(&sk);
-        let point = vk.to_encoded_point(false);
+        let point = vk.to_sec1_point(false);
         let prehash = [0x55u8; 48];
 
         use p384::ecdsa::signature::hazmat::PrehashSigner;

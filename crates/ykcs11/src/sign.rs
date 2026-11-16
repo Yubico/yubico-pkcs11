@@ -241,7 +241,11 @@ pub fn sign_init(
             let context = resolve_ml_dsa_context(parameter)?;
             let key_type = KeyType::try_from(&public_key.algorithm())
                 .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
-            (key_type, SignAlgorithm::MlDsa { context }, ml_dsa_signature_len(k.parameter_set)?)
+            (
+                key_type,
+                SignAlgorithm::MlDsa { context },
+                ml_dsa_signature_len(k.parameter_set)?,
+            )
         }
         (MechanismKind::MlDsaExternalMu, PublicKey::MlDsa(k)) => {
             // CK_SIGN_ADDITIONAL_CONTEXT is optional here, and the spec
@@ -266,9 +270,9 @@ pub fn sign_init(
     let acc = match mech_kind {
         MechanismKind::RsaPkcs1Hashed(h)
         | MechanismKind::EcdsaHashed(h)
-        | MechanismKind::RsaPssHashed(h) => Accumulator::Hash(
-            DigestOp::new(h).map_err(|_| CK_RV::from(CKR_MECHANISM_INVALID))?,
-        ),
+        | MechanismKind::RsaPssHashed(h) => {
+            Accumulator::Hash(DigestOp::new(h).map_err(|_| CK_RV::from(CKR_MECHANISM_INVALID))?)
+        }
         MechanismKind::RsaX509
         | MechanismKind::RsaPkcs1Raw
         | MechanismKind::RsaPssRaw
@@ -310,7 +314,10 @@ pub fn sign_update(
     Ok(())
 }
 
-pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> Result<Vec<u8>, CK_RV> {
+pub fn sign_final(
+    slot: &mut Slot<PivBackend>,
+    h_session: CK_SESSION_HANDLE,
+) -> Result<Vec<u8>, CK_RV> {
     let session = slot
         .sessions
         .get_mut(&h_session)
@@ -341,8 +348,7 @@ pub fn sign_final(slot: &mut Slot<PivBackend>, h_session: CK_SESSION_HANDLE) -> 
         } => {
             let to_pad = match hash_mechanism {
                 Some(h) => {
-                    let prefix =
-                        digest_info_prefix(h).ok_or(CK_RV::from(CKR_MECHANISM_INVALID))?;
+                    let prefix = digest_info_prefix(h).ok_or(CK_RV::from(CKR_MECHANISM_INVALID))?;
                     let mut v = Vec::with_capacity(prefix.len() + message.len());
                     v.extend_from_slice(prefix);
                     v.extend_from_slice(&message);

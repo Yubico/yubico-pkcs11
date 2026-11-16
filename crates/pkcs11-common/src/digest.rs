@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use digest::DynDigest;
 use pkcs11_sys::*;
 
@@ -24,7 +23,6 @@ pub struct DigestOp {
 }
 
 impl DigestOp {
-
     pub fn new(mechanism: CK_MECHANISM_TYPE) -> Result<Self, CK_RV> {
         let hasher: Box<dyn DynDigest + Send> = match mechanism as u32 {
             CKM_SHA_1 => Box::new(sha1::Sha1::default()),

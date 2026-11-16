@@ -19,7 +19,9 @@ use crate::discovery::ActivePivSession;
 use pkcs11_common::backend::Slot;
 use pkcs11_common::util::hex_decode;
 use pkcs11_sys::*;
-use yubikit::piv::{DEFAULT_MANAGEMENT_KEY, ManagementKey, ManagementKeyType, PivError, TouchPolicy};
+use yubikit::piv::{
+    DEFAULT_MANAGEMENT_KEY, ManagementKey, ManagementKeyType, PivError, TouchPolicy,
+};
 
 fn authenticate_with_key(
     piv: &mut ActivePivSession,

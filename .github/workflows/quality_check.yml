@@ -1,0 +1,66 @@
+name: "Rust Quality Checks"
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "2"
+
+jobs:
+
+  quality:
+    name: Rust quality checks
+    runs-on: ubuntu-latest
+    env:
+      LIBYUBIHSM_VERSION: 2.8.0
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev \
+                                  libudev-dev \
+                                  libcurl4-openssl-dev \
+                                  libssl-dev \
+                                  cmake \
+                                  libusb-1.0.0-dev \
+                                  libedit-dev \
+                                  gengetopt
+          
+          sudo apt-get install -y libpcsclite-dev pcscd libudev-dev
+
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: stable
+          components: clippy,rustfmt
+          build-warnings: ""
+          rustflags: ""
+          cache: true
+          cache-save-if: ${{ github.event_name == 'push' }}
+
+      - name: Build native YubiHSM library
+        run: |
+          git clone --depth 1 --branch "$LIBYUBIHSM_VERSION" \
+            https://github.com/Yubico/yubihsm-shell.git "$RUNNER_TEMP/yubihsm-shell"
+          sed -i 's/add_definitions (-D_FORTIFY_SOURCE=2)/add_definitions (-D_FORTIFY_SOURCE=3)/' \
+            "$RUNNER_TEMP/yubihsm-shell/cmake/SecurityFlags.cmake"
+          cmake -S "$RUNNER_TEMP/yubihsm-shell" -B "$RUNNER_TEMP/yubihsm-build" \
+            -DWITHOUT_YKYH=1 -DBUILD_ONLY_LIB=ON \
+            -DENABLE_CERT_COMPRESS=OFF -DWITHOUT_MANPAGES=1
+          cmake --build "$RUNNER_TEMP/yubihsm-build"
+
+      - name: Install quality tools
+        run: |
+          pipx install pre-commit
+          cargo install cargo-deny --locked --version 0.20.2
+
+      - name: Run pre-commit hooks
+        env:
+          YUBIHSM_LIB_DIR: ${{ runner.temp }}/yubihsm-build/lib
+        run: pre-commit run --all-files --show-diff-on-failure

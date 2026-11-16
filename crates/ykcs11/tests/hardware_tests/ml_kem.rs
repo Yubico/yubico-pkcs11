@@ -77,12 +77,17 @@ fn generate_ml_kem_keys(
             )
         };
         assert_eq!(
-            rv,
-            CKR_OK as CK_RV,
+            rv, CKR_OK as CK_RV,
             "C_GenerateKeyPair (ML-KEM parameter set {parameter_set}, slot {slot})"
         );
-        assert_ne!(h_private_key, 0, "C_GenerateKeyPair returned a null private key handle");
-        assert_ne!(h_public_key, 0, "C_GenerateKeyPair returned a null public key handle");
+        assert_ne!(
+            h_private_key, 0,
+            "C_GenerateKeyPair returned a null private key handle"
+        );
+        assert_ne!(
+            h_public_key, 0,
+            "C_GenerateKeyPair returned a null public key handle"
+        );
         generated.push((h_private_key, h_public_key));
     }
 
@@ -124,11 +129,13 @@ fn import_ml_kem_keys(
             )
         };
         assert_eq!(
-            rv,
-            CKR_OK as CK_RV,
+            rv, CKR_OK as CK_RV,
             "C_CreateObject (ML-KEM parameter set {parameter_set}, slot {slot})"
         );
-        assert_ne!(h_private_key, 0, "C_CreateObject (private key) returned a null handle");
+        assert_ne!(
+            h_private_key, 0,
+            "C_CreateObject (private key) returned a null handle"
+        );
 
         // Unlike the RSA/EC/Ed25519/X25519 import helpers, no certificate
         // is needed for the public key to appear: firmware >= 6.0 (already
@@ -136,7 +143,12 @@ fn import_ml_kem_keys(
         // objects.rs's read_slot_objects derives the public key straight
         // from the device's response regardless of whether the key was
         // generated on-device or imported.
-        let h_public_key = find_object_handle(h_session, CKO_PUBLIC_KEY, *slot, "imported ML-KEM public key");
+        let h_public_key = find_object_handle(
+            h_session,
+            CKO_PUBLIC_KEY,
+            *slot,
+            "imported ML-KEM public key",
+        );
 
         imported.push((h_private_key, h_public_key));
     }
@@ -149,7 +161,12 @@ fn import_ml_kem_keys(
 /// Encapsulates a fresh shared secret against `pubkey`, decapsulates the
 /// resulting ciphertext with `privkey`, and confirms both sides land on the
 /// identical shared secret
-fn mlkem_decapsulate(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, ciphertext_len: usize) {
+fn mlkem_decapsulate(
+    session: CK_SESSION_HANDLE,
+    privkey: CK_OBJECT_HANDLE,
+    pubkey: CK_OBJECT_HANDLE,
+    ciphertext_len: usize,
+) {
     login_user(session, CKR_OK as CK_RV);
 
     let mut encap_mechanism = CK_MECHANISM {
@@ -174,10 +191,20 @@ fn mlkem_decapsulate(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubk
         )
     };
     assert_eq!(rv, CKR_OK as CK_RV, "C_EncapsulateKey");
-    assert_eq!(ciphertext_len_out as usize, ciphertext.len(), "unexpected ML-KEM ciphertext length");
+    assert_eq!(
+        ciphertext_len_out as usize,
+        ciphertext.len(),
+        "unexpected ML-KEM ciphertext length"
+    );
     assert_ne!(h_encap_secret, 0, "C_EncapsulateKey returned a null handle");
 
-    let encapsulated_secret = get_attribute(session, h_encap_secret, CKA_VALUE, MLKEM_SECRET_LEN, "encapsulated secret");
+    let encapsulated_secret = get_attribute(
+        session,
+        h_encap_secret,
+        CKA_VALUE,
+        MLKEM_SECRET_LEN,
+        "encapsulated secret",
+    );
 
     let mut decap_mechanism = CK_MECHANISM {
         mechanism: CKM_ML_KEM as CK_MECHANISM_TYPE,
@@ -201,7 +228,13 @@ fn mlkem_decapsulate(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubk
     assert_eq!(rv, CKR_OK as CK_RV, "C_DecapsulateKey");
     assert_ne!(h_decap_secret, 0, "C_DecapsulateKey returned a null handle");
 
-    let decapsulated_secret = get_attribute(session, h_decap_secret, CKA_VALUE, MLKEM_SECRET_LEN, "decapsulated secret");
+    let decapsulated_secret = get_attribute(
+        session,
+        h_decap_secret,
+        CKA_VALUE,
+        MLKEM_SECRET_LEN,
+        "decapsulated secret",
+    );
 
     assert_eq!(
         encapsulated_secret, decapsulated_secret,
@@ -219,7 +252,13 @@ fn assert_mlkem_pubkey_attributes(
     expected_local: bool,
     label: &str,
 ) {
-    let class = get_attribute(session, pubkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    let class = get_attribute(
+        session,
+        pubkey,
+        CKA_CLASS,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_CLASS",
+    );
     assert_eq!(class, ulong_bytes(CKO_PUBLIC_KEY), "CKA_CLASS");
 
     let token = get_attribute(session, pubkey, CKA_TOKEN, 1, "CKA_TOKEN");
@@ -228,7 +267,13 @@ fn assert_mlkem_pubkey_attributes(
     let private = get_attribute(session, pubkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
     assert_eq!(private, vec![0u8], "CKA_PRIVATE");
 
-    let key_type = get_attribute(session, pubkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    let key_type = get_attribute(
+        session,
+        pubkey,
+        CKA_KEY_TYPE,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_KEY_TYPE",
+    );
     assert_eq!(key_type, ulong_bytes(CKK_ML_KEM), "CKA_KEY_TYPE");
 
     let local = get_attribute(session, pubkey, CKA_LOCAL, 1, "CKA_LOCAL");
@@ -249,7 +294,13 @@ fn assert_mlkem_pubkey_attributes(
     let modifiable = get_attribute(session, pubkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
     assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
 
-    let param_set = get_attribute(session, pubkey, CKA_PARAMETER_SET, std::mem::size_of::<CK_ULONG>(), "CKA_PARAMETER_SET");
+    let param_set = get_attribute(
+        session,
+        pubkey,
+        CKA_PARAMETER_SET,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_PARAMETER_SET",
+    );
     assert_eq!(param_set, ulong_bytes(parameter_set), "CKA_PARAMETER_SET");
 
     let value = get_attribute(session, pubkey, CKA_VALUE, value_len, "CKA_VALUE");
@@ -269,7 +320,13 @@ fn assert_mlkem_privkey_attributes(
 ) {
     login_user(session, CKR_OK as CK_RV);
 
-    let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    let class = get_attribute(
+        session,
+        privkey,
+        CKA_CLASS,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_CLASS",
+    );
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
     let token = get_attribute(session, privkey, CKA_TOKEN, 1, "CKA_TOKEN");
@@ -278,19 +335,37 @@ fn assert_mlkem_privkey_attributes(
     let private = get_attribute(session, privkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
     assert_eq!(private, vec![1u8], "CKA_PRIVATE");
 
-    let key_type = get_attribute(session, privkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    let key_type = get_attribute(
+        session,
+        privkey,
+        CKA_KEY_TYPE,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_KEY_TYPE",
+    );
     assert_eq!(key_type, ulong_bytes(CKK_ML_KEM), "CKA_KEY_TYPE");
 
     let sensitive = get_attribute(session, privkey, CKA_SENSITIVE, 1, "CKA_SENSITIVE");
     assert_eq!(sensitive, vec![1u8], "CKA_SENSITIVE");
 
-    let always_sensitive = get_attribute(session, privkey, CKA_ALWAYS_SENSITIVE, 1, "CKA_ALWAYS_SENSITIVE");
+    let always_sensitive = get_attribute(
+        session,
+        privkey,
+        CKA_ALWAYS_SENSITIVE,
+        1,
+        "CKA_ALWAYS_SENSITIVE",
+    );
     assert_eq!(always_sensitive, vec![1u8], "CKA_ALWAYS_SENSITIVE");
 
     let extractable = get_attribute(session, privkey, CKA_EXTRACTABLE, 1, "CKA_EXTRACTABLE");
     assert_eq!(extractable, vec![0u8], "CKA_EXTRACTABLE");
 
-    let never_extractable = get_attribute(session, privkey, CKA_NEVER_EXTRACTABLE, 1, "CKA_NEVER_EXTRACTABLE");
+    let never_extractable = get_attribute(
+        session,
+        privkey,
+        CKA_NEVER_EXTRACTABLE,
+        1,
+        "CKA_NEVER_EXTRACTABLE",
+    );
     assert_eq!(never_extractable, vec![1u8], "CKA_NEVER_EXTRACTABLE");
 
     let local = get_attribute(session, privkey, CKA_LOCAL, 1, "CKA_LOCAL");
@@ -305,13 +380,29 @@ fn assert_mlkem_privkey_attributes(
     let decapsulate = get_attribute(session, privkey, CKA_DECAPSULATE, 1, "CKA_DECAPSULATE");
     assert_eq!(decapsulate, vec![1u8], "CKA_DECAPSULATE");
 
-    let always_auth = get_attribute(session, privkey, CKA_ALWAYS_AUTHENTICATE, 1, "CKA_ALWAYS_AUTHENTICATE");
-    assert_eq!(always_auth, vec![expected_always_auth as u8], "CKA_ALWAYS_AUTHENTICATE");
+    let always_auth = get_attribute(
+        session,
+        privkey,
+        CKA_ALWAYS_AUTHENTICATE,
+        1,
+        "CKA_ALWAYS_AUTHENTICATE",
+    );
+    assert_eq!(
+        always_auth,
+        vec![expected_always_auth as u8],
+        "CKA_ALWAYS_AUTHENTICATE"
+    );
 
     let modifiable = get_attribute(session, privkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
     assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
 
-    let param_set = get_attribute(session, privkey, CKA_PARAMETER_SET, std::mem::size_of::<CK_ULONG>(), "CKA_PARAMETER_SET");
+    let param_set = get_attribute(
+        session,
+        privkey,
+        CKA_PARAMETER_SET,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_PARAMETER_SET",
+    );
     assert_eq!(param_set, ulong_bytes(parameter_set), "CKA_PARAMETER_SET");
 
     let got_label = get_attribute(session, privkey, CKA_LABEL, label.len(), "CKA_LABEL");

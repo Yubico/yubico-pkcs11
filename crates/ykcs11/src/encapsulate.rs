@@ -34,7 +34,10 @@ fn ml_kem_ciphertext_len(parameter_set: MlKemParameterSet) -> Result<usize, CK_R
     })
 }
 
-fn ml_kem_encapsulate(parameter_set: MlKemParameterSet, key: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CK_RV> {
+fn ml_kem_encapsulate(
+    parameter_set: MlKemParameterSet,
+    key: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), CK_RV> {
     use ml_kem::{EncapsulationKey512, EncapsulationKey768, EncapsulationKey1024};
 
     let mut seed = [0u8; 32];
@@ -42,25 +45,40 @@ fn ml_kem_encapsulate(parameter_set: MlKemParameterSet, key: &[u8]) -> Result<(V
 
     match parameter_set {
         MlKemParameterSet::MlKem512 => {
-            let ek_bytes: &[u8; 800] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let ek_bytes: &[u8; 800] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let ek = EncapsulationKey512::new(ek_bytes.into())
                 .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let (ciphertext, shared_secret) = ek.encapsulate_deterministic(&seed.into());
-            Ok((ciphertext.as_slice().to_vec(), shared_secret.as_slice().to_vec()))
+            Ok((
+                ciphertext.as_slice().to_vec(),
+                shared_secret.as_slice().to_vec(),
+            ))
         }
         MlKemParameterSet::MlKem768 => {
-            let ek_bytes: &[u8; 1184] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let ek_bytes: &[u8; 1184] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let ek = EncapsulationKey768::new(ek_bytes.into())
                 .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let (ciphertext, shared_secret) = ek.encapsulate_deterministic(&seed.into());
-            Ok((ciphertext.as_slice().to_vec(), shared_secret.as_slice().to_vec()))
+            Ok((
+                ciphertext.as_slice().to_vec(),
+                shared_secret.as_slice().to_vec(),
+            ))
         }
         MlKemParameterSet::MlKem1024 => {
-            let ek_bytes: &[u8; 1568] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let ek_bytes: &[u8; 1568] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let ek = EncapsulationKey1024::new(ek_bytes.into())
                 .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let (ciphertext, shared_secret) = ek.encapsulate_deterministic(&seed.into());
-            Ok((ciphertext.as_slice().to_vec(), shared_secret.as_slice().to_vec()))
+            Ok((
+                ciphertext.as_slice().to_vec(),
+                shared_secret.as_slice().to_vec(),
+            ))
         }
         _ => Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     }
@@ -79,7 +97,10 @@ fn check_mechanism(mechanism: CK_MECHANISM_TYPE, parameter: &[u8]) -> Result<(),
 
 /// The ciphertext length `encapsulate_key` will produce for `h_public_key`,
 /// without performing the (randomized) encapsulation
-pub fn encapsulate_key_len(slot: &mut Slot<PivBackend>, h_public_key: CK_OBJECT_HANDLE) -> Result<usize, CK_RV> {
+pub fn encapsulate_key_len(
+    slot: &mut Slot<PivBackend>,
+    h_public_key: CK_OBJECT_HANDLE,
+) -> Result<usize, CK_RV> {
     let Some((_, public_key)) = find_public_key(&slot.data.objects, h_public_key) else {
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
@@ -135,8 +156,8 @@ pub fn decapsulate_key(
     let PublicKey::MlKem(_) = public_key else {
         return Err(CKR_KEY_TYPE_INCONSISTENT.into());
     };
-    let key_type =
-        KeyType::try_from(&public_key.algorithm()).map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
+    let key_type = KeyType::try_from(&public_key.algorithm())
+        .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
 
     let piv = slot
         .data

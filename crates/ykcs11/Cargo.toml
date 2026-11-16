@@ -1,8 +1,10 @@
 [package]
 name = "ykcs11"
 version = "0.0.1"
-edition = "2024"
-license = "Apache-2.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
 description = "YubiKey PIV PKCS#11 module"
 
 [lib]
@@ -21,15 +23,15 @@ pkcs11-common = { workspace = true }
 parking_lot = { workspace = true }
 log = { workspace = true }
 getrandom = "0.4"
-der = "0.7"
-x509-cert = { version = "0.2", features = ["builder"] }
-p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
-p384 = { version = "0.13", features = ["ecdsa"] }
+der = "0.8"
+x509-cert = { version = "0.3", features = ["builder"] }
+p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }
+p384 = { version = "0.14", features = ["ecdsa"] }
 # "oid" is needed for ecdsa-core's `SignatureAlgorithmIdentifier` impl
 # (x509-cert's CertificateBuilder needs it to self-sign the placeholder
 # cert in generate.rs) -- not on by default, and p256's own "sha256"
 # feature doesn't turn it on either.
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.11", features = ["oid"] }
 yubikit = { git = "https://github.com/Yubico/yubikey-manager.git", tag = "6.0.0-beta.0", default-features = false, features = ["pcsc"] }
 # ML-DSA (FIPS 204) signature verification for CKM_ML_DSA (see verify.rs) --
 # same version yubikit itself already pins as a dev-dependency for its own
@@ -50,3 +52,6 @@ ml-kem = "0.3"
 [dev-dependencies]
 pkcs11-sys = { workspace = true }
 shake = "0.1"
+
+[lints]
+workspace = true

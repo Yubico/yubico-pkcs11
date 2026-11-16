@@ -41,14 +41,14 @@
 //! serializing all hardware access onto one thread at a time regardless of
 //! how `cargo test` schedules them.
 
-mod util;
-mod ml_dsa;
-mod ml_kem;
 mod digest;
 mod ec;
 mod ed25519;
 mod find_objects;
+mod ml_dsa;
+mod ml_kem;
 mod rsa;
 mod session;
 mod token_info;
+mod util;
 mod x25519;

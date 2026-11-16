@@ -1,8 +1,10 @@
 [package]
 name = "yubihsm-pkcs11"
 version = "0.0.1"
-edition = "2024"
-license = "Apache-2.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
 description = "YubiHSM 2 PKCS#11 module"
 
 [lib]
@@ -14,3 +16,6 @@ pkcs11-sys = { workspace = true }
 pkcs11-common = { workspace = true }
 log = { workspace = true }
 yubihsmrs = { git = "https://github.com/Yubico/yubihsmrs.git", branch = "pkcs11" }
+
+[lints]
+workspace = true
