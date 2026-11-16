@@ -55,8 +55,8 @@ impl Backend for TestBackend {
         attr: CK_ATTRIBUTE_TYPE,
     ) -> Option<Vec<u8>> {
         match attr {
-            CKA_LABEL => Some(b"label".to_vec()),
-            CKA_ID => Some(vec![42]),
+            value if value == CKA_LABEL as CK_ATTRIBUTE_TYPE => Some(b"label".to_vec()),
+            value if value == CKA_ID as CK_ATTRIBUTE_TYPE => Some(vec![42]),
             _ => None,
         }
     }
@@ -70,17 +70,17 @@ fn short_attribute_buffer_marks_length_unavailable_and_processes_other_attribute
     let mut id = [0u8; 1];
     let mut attrs = [
         CK_ATTRIBUTE {
-            type_: CKA_LABEL,
+            type_: CKA_LABEL as CK_ATTRIBUTE_TYPE,
             pValue: short.as_mut_ptr().cast(),
             ulValueLen: short.len() as CK_ULONG,
         },
         CK_ATTRIBUTE {
-            type_: CKA_ID,
+            type_: CKA_ID as CK_ATTRIBUTE_TYPE,
             pValue: id.as_mut_ptr().cast(),
             ulValueLen: id.len() as CK_ULONG,
         },
         CK_ATTRIBUTE {
-            type_: CKA_LABEL,
+            type_: CKA_LABEL as CK_ATTRIBUTE_TYPE,
             pValue: null_mut(),
             ulValueLen: 0,
         },
