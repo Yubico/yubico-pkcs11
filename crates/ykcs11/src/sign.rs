@@ -241,7 +241,11 @@ pub fn sign_init(
             let context = resolve_ml_dsa_context(parameter)?;
             let key_type = KeyType::try_from(&public_key.algorithm())
                 .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
-            (key_type, SignAlgorithm::MlDsa { context }, ml_dsa_signature_len(k.parameter_set)?)
+            (
+                key_type,
+                SignAlgorithm::MlDsa { context },
+                ml_dsa_signature_len(k.parameter_set)?,
+            )
         }
         (MechanismKind::MlDsaExternalMu, PublicKey::MlDsa(k)) => {
             // CK_SIGN_ADDITIONAL_CONTEXT is optional here, and the spec

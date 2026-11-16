@@ -261,9 +261,11 @@ pub fn verify_final(
             point,
         } => verify_ecdsa(curve_byte_len, &point, &message, signature),
         VerifyAlgorithm::Eddsa { key } => verify_eddsa(&key, &message, signature),
-        VerifyAlgorithm::MlDsa { key, parameter_set, context } => {
-            verify_ml_dsa(parameter_set, &key, &context, &message, signature)
-        }
+        VerifyAlgorithm::MlDsa {
+            key,
+            parameter_set,
+            context,
+        } => verify_ml_dsa(parameter_set, &key, &context, &message, signature),
         VerifyAlgorithm::MlDsaExternalMu { key, parameter_set } => {
             verify_ml_dsa_external_mu(parameter_set, &key, &message, signature)
         }
@@ -345,7 +347,9 @@ fn verify_ml_dsa_external_mu(
 
     match parameter_set {
         MlDsaParameterSet::MlDsa44 => {
-            let key: &[u8; 1312] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 1312] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa44>::new(key.into());
             let sig = Signature::<MlDsa44>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -356,7 +360,9 @@ fn verify_ml_dsa_external_mu(
             }
         }
         MlDsaParameterSet::MlDsa65 => {
-            let key: &[u8; 1952] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 1952] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa65>::new(key.into());
             let sig = Signature::<MlDsa65>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;
@@ -367,7 +373,9 @@ fn verify_ml_dsa_external_mu(
             }
         }
         MlDsaParameterSet::MlDsa87 => {
-            let key: &[u8; 2592] = key.try_into().map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
+            let key: &[u8; 2592] = key
+                .try_into()
+                .map_err(|_| CK_RV::from(CKR_KEY_HANDLE_INVALID))?;
             let vk = VerifyingKey::<MlDsa87>::new(key.into());
             let sig = Signature::<MlDsa87>::try_from(signature)
                 .map_err(|_| CK_RV::from(CKR_SIGNATURE_LEN_RANGE))?;

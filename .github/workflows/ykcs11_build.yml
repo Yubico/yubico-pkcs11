@@ -22,14 +22,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev \
-                                  libudev-dev \
-                                  libcurl4-openssl-dev \
-                                  libssl-dev \
-                                  cmake \
-                                  libusb-1.0.0-dev \
-                                  libedit-dev \
-                                  gengetopt
+          sudo apt-get install -y libpcsclite-dev libclang-dev pcscd libudev-dev
 
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:

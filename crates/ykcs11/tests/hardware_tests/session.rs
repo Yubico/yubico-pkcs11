@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
+use crate::ec::{ecdsa_sign, generate_ec_keys};
 use crate::util::*;
 use pkcs11_sys::*;
-use crate::ec::{generate_ec_keys, ecdsa_sign};
 use std::ptr;
 
 fn close_all_sessions(slot_id: CK_SLOT_ID) {
@@ -55,7 +55,10 @@ fn test_session() {
     let state = info.state;
     let flags = info.flags;
     let device_error = info.ulDeviceError;
-    assert_eq!(state, CKS_RW_PUBLIC_SESSION as CK_STATE, "CK_SESSION_INFO.state");
+    assert_eq!(
+        state, CKS_RW_PUBLIC_SESSION as CK_STATE,
+        "CK_SESSION_INFO.state"
+    );
     assert_eq!(
         flags,
         (CKF_SERIAL_SESSION | CKF_RW_SESSION) as CK_FLAGS,
@@ -68,8 +71,7 @@ fn test_session() {
     // The handle must be rejected once closed.
     let rv = unsafe { ykcs11::C_GetSessionInfo(session, &mut info) };
     assert_eq!(
-        rv,
-        CKR_SESSION_HANDLE_INVALID as CK_RV,
+        rv, CKR_SESSION_HANDLE_INVALID as CK_RV,
         "C_GetSessionInfo after close: expected CKR_SESSION_HANDLE_INVALID, got rv={rv:#x}"
     );
 }
@@ -101,7 +103,11 @@ fn test_login() {
     // Open a second session and confirm it sees the same slot-wide SO login
     // state the first session set up.
     let session2: CK_SESSION_HANDLE = open_session(slot_id);
-    assert_eq!(session_state(session2), CKS_RW_SO_FUNCTIONS as CK_STATE, "session2 state");
+    assert_eq!(
+        session_state(session2),
+        CKS_RW_SO_FUNCTIONS as CK_STATE,
+        "session2 state"
+    );
 
     logout(session1, CKR_OK as CK_RV);
 
@@ -182,7 +188,11 @@ fn test_multiple_sessions() {
 
     // Open the first session as a public session (no logging in).
     let session1 = open_session(slot_id);
-    assert_eq!(session_state(session1), CKS_RW_PUBLIC_SESSION as CK_STATE, "session1 state");
+    assert_eq!(
+        session_state(session1),
+        CKS_RW_PUBLIC_SESSION as CK_STATE,
+        "session1 state"
+    );
 
     // Open a second session and log in as USER on it. Both sessions
     // should then report CKS_RW_USER_FUNCTIONS
@@ -216,8 +226,16 @@ fn test_multiple_sessions() {
     // now report CKS_RW_SO_FUNCTIONS.
     let session3 = open_session(slot_id);
     login_so(session3, CKR_OK as CK_RV);
-    for (session, name) in [(session3, "session3"), (session2, "session2"), (session1, "session1")] {
-        assert_eq!(session_state(session), CKS_RW_SO_FUNCTIONS as CK_STATE, "{name} state after SO login");
+    for (session, name) in [
+        (session3, "session3"),
+        (session2, "session2"),
+        (session1, "session1"),
+    ] {
+        assert_eq!(
+            session_state(session),
+            CKS_RW_SO_FUNCTIONS as CK_STATE,
+            "{name} state after SO login"
+        );
     }
 
     // Close session2. Its handle becomes invalid.
@@ -225,8 +243,7 @@ fn test_multiple_sessions() {
     let mut info: CK_SESSION_INFO = unsafe { std::mem::zeroed() };
     let rv = unsafe { ykcs11::C_GetSessionInfo(session2, &mut info) };
     assert_eq!(
-        rv,
-        CKR_SESSION_HANDLE_INVALID as CK_RV,
+        rv, CKR_SESSION_HANDLE_INVALID as CK_RV,
         "C_GetSessionInfo(session2) after close: rv={rv:#x}"
     );
 
@@ -234,11 +251,19 @@ fn test_multiple_sessions() {
     // state session1/session3 set up, even though it was opened after
     // session2 was closed.
     let session4 = open_session(slot_id);
-    assert_eq!(session_state(session4), CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state");
+    assert_eq!(
+        session_state(session4),
+        CKS_RW_SO_FUNCTIONS as CK_STATE,
+        "session4 state"
+    );
 
     // A USER login attempt on the slot still fails while SO is logged in
     login_user(session4, CKR_USER_ANOTHER_ALREADY_LOGGED_IN as CK_RV);
-    assert_eq!(session_state(session4), CKS_RW_SO_FUNCTIONS as CK_STATE, "session4 state unchanged");
+    assert_eq!(
+        session_state(session4),
+        CKS_RW_SO_FUNCTIONS as CK_STATE,
+        "session4 state unchanged"
+    );
 
     close_all_sessions(slot_id);
 }
@@ -278,8 +303,7 @@ fn test_max_multiple_sessions() {
         )
     };
     assert_eq!(
-        rv,
-        CKR_SESSION_COUNT as CK_RV,
+        rv, CKR_SESSION_COUNT as CK_RV,
         "C_OpenSession past the session limit: rv={rv:#x}"
     );
 
@@ -289,8 +313,7 @@ fn test_max_multiple_sessions() {
         let mut info: CK_SESSION_INFO = unsafe { std::mem::zeroed() };
         let rv = unsafe { ykcs11::C_GetSessionInfo(session, &mut info) };
         assert_eq!(
-            rv,
-            CKR_SESSION_HANDLE_INVALID as CK_RV,
+            rv, CKR_SESSION_HANDLE_INVALID as CK_RV,
             "C_GetSessionInfo after C_CloseAllSessions: rv={rv:#x}"
         );
     }

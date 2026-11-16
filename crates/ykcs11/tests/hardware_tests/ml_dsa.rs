@@ -77,12 +77,17 @@ fn generate_ml_dsa_keys(
             )
         };
         assert_eq!(
-            rv,
-            CKR_OK as CK_RV,
+            rv, CKR_OK as CK_RV,
             "C_GenerateKeyPair (ML-DSA parameter set {parameter_set}, slot {slot})"
         );
-        assert_ne!(h_private_key, 0, "C_GenerateKeyPair returned a null private key handle");
-        assert_ne!(h_public_key, 0, "C_GenerateKeyPair returned a null public key handle");
+        assert_ne!(
+            h_private_key, 0,
+            "C_GenerateKeyPair returned a null private key handle"
+        );
+        assert_ne!(
+            h_public_key, 0,
+            "C_GenerateKeyPair returned a null public key handle"
+        );
         generated.push((h_private_key, h_public_key));
     }
 
@@ -124,11 +129,13 @@ fn import_ml_dsa_keys(
             )
         };
         assert_eq!(
-            rv,
-            CKR_OK as CK_RV,
+            rv, CKR_OK as CK_RV,
             "C_CreateObject (ML-DSA parameter set {parameter_set}, slot {slot})"
         );
-        assert_ne!(h_private_key, 0, "C_CreateObject (private key) returned a null handle");
+        assert_ne!(
+            h_private_key, 0,
+            "C_CreateObject (private key) returned a null handle"
+        );
 
         // Unlike the RSA/EC/Ed25519/X25519 import helpers, no certificate
         // is needed for the public key to appear: firmware >= 6.0 (already
@@ -136,7 +143,12 @@ fn import_ml_dsa_keys(
         // objects.rs's read_slot_objects derives the public key straight
         // from the device's response regardless of whether the key was
         // generated on-device or imported.
-        let h_public_key = find_object_handle(h_session, CKO_PUBLIC_KEY, *slot, "imported ML-DSA public key");
+        let h_public_key = find_object_handle(
+            h_session,
+            CKO_PUBLIC_KEY,
+            *slot,
+            "imported ML-DSA public key",
+        );
 
         imported.push((h_private_key, h_public_key));
     }
@@ -146,7 +158,12 @@ fn import_ml_dsa_keys(
     imported
 }
 
-fn mldsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_OBJECT_HANDLE, signature_len: usize) {
+fn mldsa_sign(
+    session: CK_SESSION_HANDLE,
+    privkey: CK_OBJECT_HANDLE,
+    pubkey: CK_OBJECT_HANDLE,
+    signature_len: usize,
+) {
     login_user(session, CKR_OK as CK_RV);
 
     let mut mechanism = CK_MECHANISM {
@@ -173,7 +190,11 @@ fn mldsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_
         )
     };
     assert_eq!(rv, CKR_OK as CK_RV, "C_Sign");
-    assert_eq!(signature_len_out as usize, signature.len(), "unexpected ML-DSA signature length");
+    assert_eq!(
+        signature_len_out as usize,
+        signature.len(),
+        "unexpected ML-DSA signature length"
+    );
 
     let rv = unsafe { ykcs11::C_VerifyInit(session, &mut mechanism, pubkey) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit");
@@ -196,7 +217,10 @@ fn mldsa_sign(session: CK_SESSION_HANDLE, privkey: CK_OBJECT_HANDLE, pubkey: CK_
 fn ml_dsa_mu(public_key: &[u8], context: &[u8], message: &[u8]) -> [u8; 64] {
     use shake::digest::{ExtendableOutput, Update, XofReader};
 
-    assert!(context.len() <= 255, "ML-DSA context must be at most 255 bytes");
+    assert!(
+        context.len() <= 255,
+        "ML-DSA context must be at most 255 bytes"
+    );
 
     let mut tr_hasher = shake::Shake256::default();
     tr_hasher.update(public_key);
@@ -255,7 +279,11 @@ fn mldsa_sign_external_mu(
         )
     };
     assert_eq!(rv, CKR_OK as CK_RV, "C_Sign (external mu)");
-    assert_eq!(signature_len_out as usize, signature.len(), "unexpected external-mu signature length");
+    assert_eq!(
+        signature_len_out as usize,
+        signature.len(),
+        "unexpected external-mu signature length"
+    );
 
     // --- Verify indirectly, via context-aware CKM_ML_DSA over the original
     // message and context ---
@@ -280,7 +308,10 @@ fn mldsa_sign_external_mu(
             signature_len_out,
         )
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (indirect, CKM_ML_DSA, over the original message+context)");
+    assert_eq!(
+        rv, CKR_OK as CK_RV,
+        "C_Verify (indirect, CKM_ML_DSA, over the original message+context)"
+    );
 
     // --- Verify directly, via CKM_ML_DSA_EXTERNAL_MU over mu itself ---
     let mut verify_mu_mechanism = CK_MECHANISM {
@@ -289,7 +320,10 @@ fn mldsa_sign_external_mu(
         ulParameterLen: 0,
     };
     let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_mechanism, pubkey) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_VerifyInit (direct, CKM_ML_DSA_EXTERNAL_MU)");
+    assert_eq!(
+        rv, CKR_OK as CK_RV,
+        "C_VerifyInit (direct, CKM_ML_DSA_EXTERNAL_MU)"
+    );
     let rv = unsafe {
         ykcs11::C_Verify(
             session,
@@ -299,7 +333,10 @@ fn mldsa_sign_external_mu(
             signature_len_out,
         )
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Verify (direct, CKM_ML_DSA_EXTERNAL_MU, over mu)");
+    assert_eq!(
+        rv, CKR_OK as CK_RV,
+        "C_Verify (direct, CKM_ML_DSA_EXTERNAL_MU, over mu)"
+    );
 
     // --- Negative: direct verification against the wrong mu must fail ---
     let wrong_mu = ml_dsa_mu(&public_key, &context, b"a different message entirely");
@@ -314,7 +351,10 @@ fn mldsa_sign_external_mu(
             signature_len_out,
         )
     };
-    assert_eq!(rv, CKR_SIGNATURE_INVALID as CK_RV, "C_Verify unexpectedly accepted the wrong mu");
+    assert_eq!(
+        rv, CKR_SIGNATURE_INVALID as CK_RV,
+        "C_Verify unexpectedly accepted the wrong mu"
+    );
 
     // --- Negative: direct verification of a tampered signature must fail ---
     let mut tampered_signature = signature.clone();
@@ -330,7 +370,10 @@ fn mldsa_sign_external_mu(
             signature_len_out,
         )
     };
-    assert_eq!(rv, CKR_SIGNATURE_INVALID as CK_RV, "C_Verify unexpectedly accepted a tampered signature");
+    assert_eq!(
+        rv, CKR_SIGNATURE_INVALID as CK_RV,
+        "C_Verify unexpectedly accepted a tampered signature"
+    );
 
     // --- Negative: direct verification with a wrong-length mu must fail
     // client-side, mirroring verify.rs's own length check ---
@@ -346,7 +389,10 @@ fn mldsa_sign_external_mu(
             signature_len_out,
         )
     };
-    assert_eq!(rv, CKR_DATA_LEN_RANGE as CK_RV, "C_Verify unexpectedly accepted a wrong-length mu");
+    assert_eq!(
+        rv, CKR_DATA_LEN_RANGE as CK_RV,
+        "C_Verify unexpectedly accepted a wrong-length mu"
+    );
 
     // --- Negative: C_VerifyInit with a non-empty context must be rejected --
     // the spec requires ulContextLen == 0 for CKM_ML_DSA_EXTERNAL_MU, same as
@@ -356,7 +402,8 @@ fn mldsa_sign_external_mu(
         pParameter: &context_param as *const CK_SIGN_ADDITIONAL_CONTEXT as CK_VOID_PTR,
         ulParameterLen: std::mem::size_of::<CK_SIGN_ADDITIONAL_CONTEXT>() as CK_ULONG,
     };
-    let rv = unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_with_context_mechanism, pubkey) };
+    let rv =
+        unsafe { ykcs11::C_VerifyInit(session, &mut verify_mu_with_context_mechanism, pubkey) };
     assert_eq!(
         rv, CKR_MECHANISM_PARAM_INVALID as CK_RV,
         "C_VerifyInit unexpectedly accepted a non-empty context for CKM_ML_DSA_EXTERNAL_MU"
@@ -377,7 +424,10 @@ fn mldsa_sign_external_mu(
             &mut short_sig_len,
         )
     };
-    assert_eq!(rv, CKR_DATA_LEN_RANGE as CK_RV, "C_Sign unexpectedly accepted a wrong-length mu");
+    assert_eq!(
+        rv, CKR_DATA_LEN_RANGE as CK_RV,
+        "C_Sign unexpectedly accepted a wrong-length mu"
+    );
 
     logout(session, CKR_OK as CK_RV);
 }
@@ -390,7 +440,13 @@ fn assert_mldsa_pubkey_attributes(
     expected_local: bool,
     label: &str,
 ) {
-    let class = get_attribute(session, pubkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    let class = get_attribute(
+        session,
+        pubkey,
+        CKA_CLASS,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_CLASS",
+    );
     assert_eq!(class, ulong_bytes(CKO_PUBLIC_KEY), "CKA_CLASS");
 
     let token = get_attribute(session, pubkey, CKA_TOKEN, 1, "CKA_TOKEN");
@@ -399,7 +455,13 @@ fn assert_mldsa_pubkey_attributes(
     let private = get_attribute(session, pubkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
     assert_eq!(private, vec![0u8], "CKA_PRIVATE");
 
-    let key_type = get_attribute(session, pubkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    let key_type = get_attribute(
+        session,
+        pubkey,
+        CKA_KEY_TYPE,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_KEY_TYPE",
+    );
     assert_eq!(key_type, ulong_bytes(CKK_ML_DSA), "CKA_KEY_TYPE");
 
     let local = get_attribute(session, pubkey, CKA_LOCAL, 1, "CKA_LOCAL");
@@ -417,7 +479,13 @@ fn assert_mldsa_pubkey_attributes(
     let modifiable = get_attribute(session, pubkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
     assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
 
-    let param_set = get_attribute(session, pubkey, CKA_PARAMETER_SET, std::mem::size_of::<CK_ULONG>(), "CKA_PARAMETER_SET");
+    let param_set = get_attribute(
+        session,
+        pubkey,
+        CKA_PARAMETER_SET,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_PARAMETER_SET",
+    );
     assert_eq!(param_set, ulong_bytes(parameter_set), "CKA_PARAMETER_SET");
 
     let value = get_attribute(session, pubkey, CKA_VALUE, value_len, "CKA_VALUE");
@@ -437,7 +505,13 @@ fn assert_mldsa_privkey_attributes(
 ) {
     login_user(session, CKR_OK as CK_RV);
 
-    let class = get_attribute(session, privkey, CKA_CLASS, std::mem::size_of::<CK_ULONG>(), "CKA_CLASS");
+    let class = get_attribute(
+        session,
+        privkey,
+        CKA_CLASS,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_CLASS",
+    );
     assert_eq!(class, ulong_bytes(CKO_PRIVATE_KEY), "CKA_CLASS");
 
     let token = get_attribute(session, privkey, CKA_TOKEN, 1, "CKA_TOKEN");
@@ -446,19 +520,37 @@ fn assert_mldsa_privkey_attributes(
     let private = get_attribute(session, privkey, CKA_PRIVATE, 1, "CKA_PRIVATE");
     assert_eq!(private, vec![1u8], "CKA_PRIVATE");
 
-    let key_type = get_attribute(session, privkey, CKA_KEY_TYPE, std::mem::size_of::<CK_ULONG>(), "CKA_KEY_TYPE");
+    let key_type = get_attribute(
+        session,
+        privkey,
+        CKA_KEY_TYPE,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_KEY_TYPE",
+    );
     assert_eq!(key_type, ulong_bytes(CKK_ML_DSA), "CKA_KEY_TYPE");
 
     let sensitive = get_attribute(session, privkey, CKA_SENSITIVE, 1, "CKA_SENSITIVE");
     assert_eq!(sensitive, vec![1u8], "CKA_SENSITIVE");
 
-    let always_sensitive = get_attribute(session, privkey, CKA_ALWAYS_SENSITIVE, 1, "CKA_ALWAYS_SENSITIVE");
+    let always_sensitive = get_attribute(
+        session,
+        privkey,
+        CKA_ALWAYS_SENSITIVE,
+        1,
+        "CKA_ALWAYS_SENSITIVE",
+    );
     assert_eq!(always_sensitive, vec![1u8], "CKA_ALWAYS_SENSITIVE");
 
     let extractable = get_attribute(session, privkey, CKA_EXTRACTABLE, 1, "CKA_EXTRACTABLE");
     assert_eq!(extractable, vec![0u8], "CKA_EXTRACTABLE");
 
-    let never_extractable = get_attribute(session, privkey, CKA_NEVER_EXTRACTABLE, 1, "CKA_NEVER_EXTRACTABLE");
+    let never_extractable = get_attribute(
+        session,
+        privkey,
+        CKA_NEVER_EXTRACTABLE,
+        1,
+        "CKA_NEVER_EXTRACTABLE",
+    );
     assert_eq!(never_extractable, vec![1u8], "CKA_NEVER_EXTRACTABLE");
 
     let local = get_attribute(session, privkey, CKA_LOCAL, 1, "CKA_LOCAL");
@@ -470,13 +562,29 @@ fn assert_mldsa_privkey_attributes(
     let derive = get_attribute(session, privkey, CKA_DERIVE, 1, "CKA_DERIVE");
     assert_eq!(derive, vec![0u8], "CKA_DERIVE");
 
-    let always_auth = get_attribute(session, privkey, CKA_ALWAYS_AUTHENTICATE, 1, "CKA_ALWAYS_AUTHENTICATE");
-    assert_eq!(always_auth, vec![expected_always_auth as u8], "CKA_ALWAYS_AUTHENTICATE");
+    let always_auth = get_attribute(
+        session,
+        privkey,
+        CKA_ALWAYS_AUTHENTICATE,
+        1,
+        "CKA_ALWAYS_AUTHENTICATE",
+    );
+    assert_eq!(
+        always_auth,
+        vec![expected_always_auth as u8],
+        "CKA_ALWAYS_AUTHENTICATE"
+    );
 
     let modifiable = get_attribute(session, privkey, CKA_MODIFIABLE, 1, "CKA_MODIFIABLE");
     assert_eq!(modifiable, vec![0u8], "CKA_MODIFIABLE");
 
-    let param_set = get_attribute(session, privkey, CKA_PARAMETER_SET, std::mem::size_of::<CK_ULONG>(), "CKA_PARAMETER_SET");
+    let param_set = get_attribute(
+        session,
+        privkey,
+        CKA_PARAMETER_SET,
+        std::mem::size_of::<CK_ULONG>(),
+        "CKA_PARAMETER_SET",
+    );
     assert_eq!(param_set, ulong_bytes(parameter_set), "CKA_PARAMETER_SET");
 
     let got_label = get_attribute(session, privkey, CKA_LABEL, label.len(), "CKA_LABEL");

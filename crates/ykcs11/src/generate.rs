@@ -52,7 +52,8 @@ impl BuilderProfile for RootProfile {
         tbs: &TbsCertificate,
     ) -> x509_cert::builder::Result<Vec<Extension>> {
         let mut extensions: Vec<Extension> = Vec::new();
-        extensions.push(SubjectKeyIdentifier::try_from(spk)?.to_extension(tbs.subject(), &extensions)?);
+        extensions
+            .push(SubjectKeyIdentifier::try_from(spk)?.to_extension(tbs.subject(), &extensions)?);
         extensions.push(
             BasicConstraints {
                 ca: true,
@@ -61,7 +62,8 @@ impl BuilderProfile for RootProfile {
             .to_extension(tbs.subject(), &extensions)?,
         );
         extensions.push(
-            KeyUsage(KeyUsages::KeyCertSign | KeyUsages::CRLSign).to_extension(tbs.subject(), &extensions)?,
+            KeyUsage(KeyUsages::KeyCertSign | KeyUsages::CRLSign)
+                .to_extension(tbs.subject(), &extensions)?,
         );
         Ok(extensions)
     }

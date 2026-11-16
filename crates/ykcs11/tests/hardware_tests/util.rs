@@ -31,7 +31,8 @@ pub(crate) const RUN_ENV_VAR: &str = "YKCS11_HW_TESTS";
 pub(crate) const DEFAULT_USER_PIN: &[u8] = b"123456";
 pub(crate) const DEFAULT_MGMT_KEY_HEX: &[u8] = b"010203040506070801020304050607080102030405060708";
 
-pub(crate) const P256_EC_PARAMS: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+pub(crate) const P256_EC_PARAMS: &[u8] =
+    &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 pub(crate) const P384_EC_PARAMS: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
 
 pub(crate) const SLOT_LIST_EXTENDED: &[u8] = &[1, 2, 4, 5, 24];
@@ -88,8 +89,7 @@ pub(crate) fn first_populated_slot() -> CK_SLOT_ID {
     );
 
     let mut slots = vec![0 as CK_SLOT_ID; count as usize];
-    let rv =
-        unsafe { ykcs11::C_GetSlotList(CK_TRUE as CK_BBOOL, slots.as_mut_ptr(), &mut count) };
+    let rv = unsafe { ykcs11::C_GetSlotList(CK_TRUE as CK_BBOOL, slots.as_mut_ptr(), &mut count) };
     assert_eq!(rv, CKR_OK as CK_RV, "C_GetSlotList (fill)");
     slots[0]
 }
@@ -145,7 +145,10 @@ pub(crate) fn login_user(session: CK_SESSION_HANDLE, expected: CK_RV) {
             DEFAULT_USER_PIN.len() as CK_ULONG,
         )
     };
-    assert_eq!(rv, expected, "C_Login(CKU_USER). Expected {expected:#x}. Found {rv:#x}");
+    assert_eq!(
+        rv, expected,
+        "C_Login(CKU_USER). Expected {expected:#x}. Found {rv:#x}"
+    );
 }
 
 pub(crate) fn login_so(session: CK_SESSION_HANDLE, expected: CK_RV) {
@@ -157,7 +160,10 @@ pub(crate) fn login_so(session: CK_SESSION_HANDLE, expected: CK_RV) {
             DEFAULT_MGMT_KEY_HEX.len() as CK_ULONG,
         )
     };
-    assert_eq!(rv, expected, "C_Login(CKU_SO). Expected {expected:#x}. Found {rv:#x}");
+    assert_eq!(
+        rv, expected,
+        "C_Login(CKU_SO). Expected {expected:#x}. Found {rv:#x}"
+    );
 }
 
 pub(crate) fn login_context_specific(session: CK_SESSION_HANDLE, expected: CK_RV) {
@@ -177,7 +183,10 @@ pub(crate) fn login_context_specific(session: CK_SESSION_HANDLE, expected: CK_RV
 
 pub(crate) fn logout(session: CK_SESSION_HANDLE, expected: CK_RV) {
     let rv = unsafe { ykcs11::C_Logout(session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "C_Logout. Expected {expected:#x}. Found {rv:#x}");
+    assert_eq!(
+        rv, CKR_OK as CK_RV,
+        "C_Logout. Expected {expected:#x}. Found {rv:#x}"
+    );
 }
 
 pub(crate) fn close_session(h_session: CK_SESSION_HANDLE) {
@@ -205,29 +214,62 @@ pub(crate) fn get_attribute(
             template.len() as CK_ULONG,
         )
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_GetAttributeValue ({what})"));
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_GetAttributeValue ({what})")
+    );
     buf
 }
 
-pub(crate) fn find_object_handle(h_session: CK_SESSION_HANDLE, class: u32, id: u8, what: &str) -> CK_OBJECT_HANDLE {
+pub(crate) fn find_object_handle(
+    h_session: CK_SESSION_HANDLE,
+    class: u32,
+    id: u8,
+    what: &str,
+) -> CK_OBJECT_HANDLE {
     let class_bytes = ulong_bytes(class);
     let id_bytes = [id];
     let mut template = [attr(CKA_CLASS, &class_bytes), attr(CKA_ID, &id_bytes)];
     let rv = unsafe {
         ykcs11::C_FindObjectsInit(h_session, template.as_mut_ptr(), template.len() as CK_ULONG)
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsInit ({what})"));
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_FindObjectsInit ({what})")
+    );
 
     let mut handles = [0 as CK_OBJECT_HANDLE; 1];
     let mut count: CK_ULONG = 0;
     let rv = unsafe {
-        ykcs11::C_FindObjects(h_session, handles.as_mut_ptr(), handles.len() as CK_ULONG, &mut count)
+        ykcs11::C_FindObjects(
+            h_session,
+            handles.as_mut_ptr(),
+            handles.len() as CK_ULONG,
+            &mut count,
+        )
     };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjects ({what})"));
-    assert_eq!(count, 1, "{what}: expected exactly one matching object, found {count}");
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_FindObjects ({what})")
+    );
+    assert_eq!(
+        count, 1,
+        "{what}: expected exactly one matching object, found {count}"
+    );
 
     let rv = unsafe { ykcs11::C_FindObjectsFinal(h_session) };
-    assert_eq!(rv, CKR_OK as CK_RV, "{}", &format!("C_FindObjectsFinal ({what})"));
+    assert_eq!(
+        rv,
+        CKR_OK as CK_RV,
+        "{}",
+        &format!("C_FindObjectsFinal ({what})")
+    );
 
     handles[0]
 }
