@@ -561,11 +561,7 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
 }
 
 /// Reads the PIN-protected management key (if one is configured) and
-/// authenticates with it. Matches `ykpiv_util_get_config` returning
-/// `YKPIV_CONFIG_MGM_INVALID`/non-`YKPIV_CONFIG_MGM_PROTECTED`, and the C
-/// module's own `CKR_USER_PIN_NOT_INITIALIZED` fallback for that case
-/// (token.c:355-359), by requiring both the admin-data flag and an actual
-/// stored key to be present.
+/// authenticates with it
 fn authenticate_so_with_protected_key(piv: &mut ActivePivSession) -> Result<(), CK_RV> {
     let admin_data = yubikit::piv_util::get_pivman_data(piv).map_err(piv_error_to_rv)?;
     if !yubikit::piv_util::has_stored_key(&admin_data) {
