@@ -796,9 +796,8 @@ pub struct PivObject {
 /// Reads the PIN/touch policy an attestation certificate asserts for its key
 fn parse_attestation(cert: &Certificate) -> Option<(PinPolicy, TouchPolicy)> {
     let ext = cert
-        .tbs_certificate
-        .extensions
-        .as_ref()?
+        .tbs_certificate()
+        .extensions()?
         .iter()
         .find(|ext| ext.extn_id == OID_USAGE_POLICY)?;
 
@@ -845,8 +844,8 @@ fn detect_key(
                     touch_policy = tp;
                 }
                 let public_key = attestation_cert
-                    .tbs_certificate
-                    .subject_public_key_info
+                    .tbs_certificate()
+                    .subject_public_key_info()
                     .to_der()
                     .ok()
                     .and_then(|der| PublicKey::from_spki(&der).ok());
@@ -932,12 +931,12 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
     let mut ec_params_der = None;
     if let Ok(cert_der) = piv.get_certificate(slot) {
         if let Ok(cert) = Certificate::from_der(&cert_der) {
-            let tbs = &cert.tbs_certificate;
+            let tbs = cert.tbs_certificate();
             if let (Ok(subject_der), Ok(issuer_der), Ok(serial_der), Ok(spki_der)) = (
-                tbs.subject.to_der(),
-                tbs.issuer.to_der(),
-                tbs.serial_number.to_der(),
-                tbs.subject_public_key_info.to_der(),
+                tbs.subject().to_der(),
+                tbs.issuer().to_der(),
+                tbs.serial_number().to_der(),
+                tbs.subject_public_key_info().to_der(),
             ) {
                 if let Ok(pk) = PublicKey::from_spki(&spki_der) {
                     if matches!(
@@ -950,7 +949,7 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
                             | PublicKey::MlKem(_)
                     ) {
                         ec_params_der = tbs
-                            .subject_public_key_info
+                            .subject_public_key_info()
                             .algorithm
                             .parameters
                             .as_ref()
@@ -985,11 +984,11 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
         let (subject_der, issuer_der, serial_der) = Certificate::from_der(&attestation_der)
             .ok()
             .map(|cert| {
-                let tbs = &cert.tbs_certificate;
+                let tbs = cert.tbs_certificate();
                 (
-                    tbs.subject.to_der().ok(),
-                    tbs.issuer.to_der().ok(),
-                    tbs.serial_number.to_der().ok(),
+                    tbs.subject().to_der().ok(),
+                    tbs.issuer().to_der().ok(),
+                    tbs.serial_number().to_der().ok(),
                 )
             })
             .unwrap_or((None, None, None));

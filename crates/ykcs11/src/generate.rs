@@ -23,12 +23,49 @@ use crate::template::{
 use der::{Decode, Encode};
 use pkcs11_common::backend::Slot;
 use pkcs11_sys::*;
-use x509_cert::builder::{Builder, CertificateBuilder, Profile};
+use x509_cert::TbsCertificate;
+use x509_cert::builder::profile::BuilderProfile;
+use x509_cert::builder::{Builder, CertificateBuilder};
+use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages, SubjectKeyIdentifier};
+use x509_cert::ext::{Extension, ToExtension};
 use x509_cert::name::Name;
 use x509_cert::serial_number::SerialNumber;
-use x509_cert::spki::SubjectPublicKeyInfoOwned;
+use x509_cert::spki::{SubjectPublicKeyInfoOwned, SubjectPublicKeyInfoRef};
 use x509_cert::time::Validity;
 use yubikit::piv::{KeyType, Slot as PivSlot};
+
+struct RootProfile(Name);
+
+impl BuilderProfile for RootProfile {
+    fn get_issuer(&self, subject: &Name) -> Name {
+        subject.clone()
+    }
+
+    fn get_subject(&self) -> Name {
+        self.0.clone()
+    }
+
+    fn build_extensions(
+        &self,
+        spk: SubjectPublicKeyInfoRef<'_>,
+        _issuer_spk: SubjectPublicKeyInfoRef<'_>,
+        tbs: &TbsCertificate,
+    ) -> x509_cert::builder::Result<Vec<Extension>> {
+        let mut extensions: Vec<Extension> = Vec::new();
+        extensions.push(SubjectKeyIdentifier::try_from(spk)?.to_extension(tbs.subject(), &extensions)?);
+        extensions.push(
+            BasicConstraints {
+                ca: true,
+                path_len_constraint: None,
+            }
+            .to_extension(tbs.subject(), &extensions)?,
+        );
+        extensions.push(
+            KeyUsage(KeyUsages::KeyCertSign | KeyUsages::CRLSign).to_extension(tbs.subject(), &extensions)?,
+        );
+        Ok(extensions)
+    }
+}
 
 enum KeyFamily {
     Rsa,
@@ -227,11 +264,10 @@ fn build_placeholder_cert_with_signer(
     let validity = Validity::from_now(core::time::Duration::new(10 * 365 * 24 * 3600, 0))
         .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
 
-    let builder =
-        CertificateBuilder::new(Profile::Root, serial, validity, subject, spki, signing_key)
-            .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
+    let builder = CertificateBuilder::new(RootProfile(subject), serial, validity, spki)
+        .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
     let cert = builder
-        .build::<p256::ecdsa::DerSignature>()
+        .build::<_, p256::ecdsa::DerSignature>(signing_key)
         .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
     cert.to_der().map_err(|_| CKR_GENERAL_ERROR.into())
 }
@@ -551,7 +587,7 @@ mod tests {
         // signer never corresponds to the subject's own key).
         let device_sk = p256::ecdsa::SigningKey::from_bytes((&[0x11u8; 32]).into()).unwrap();
         let device_vk = p256::ecdsa::VerifyingKey::from(&device_sk);
-        let point = device_vk.to_encoded_point(false).as_bytes().to_vec();
+        let point = device_vk.to_sec1_point(false).as_bytes().to_vec();
         let public_key = PublicKey::Ec(EcPublicKey {
             curve: EcCurve::P256,
             point,
@@ -567,23 +603,23 @@ mod tests {
 
         let parsed = x509_cert::Certificate::from_der(&cert_der).expect("parse cert");
         assert_eq!(
-            parsed.tbs_certificate.subject.to_string(),
+            parsed.tbs_certificate().subject().to_string(),
             "CN=YubiKey PIV Slot 9a"
         );
 
         // The embedded subject key must be the *device's* key, not the signer's.
         assert_eq!(
             parsed
-                .tbs_certificate
-                .subject_public_key_info
+                .tbs_certificate()
+                .subject_public_key_info()
                 .to_der()
                 .unwrap(),
             public_key.to_spki().unwrap()
         );
 
         // The signature must verify against the throwaway signer's key.
-        let tbs_der = parsed.tbs_certificate.to_der().expect("encode TBS");
-        let cert_sig = p256::ecdsa::DerSignature::from_der(parsed.signature.raw_bytes())
+        let tbs_der = parsed.tbs_certificate().to_der().expect("encode TBS");
+        let cert_sig = p256::ecdsa::DerSignature::from_der(parsed.signature().raw_bytes())
             .expect("parse signature");
         signer_vk
             .verify(&tbs_der, &cert_sig)
