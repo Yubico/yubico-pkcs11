@@ -1296,7 +1296,7 @@ impl<B: Backend> Engine<B> {
                         if attr.pValue.is_null() {
                             attr.ulValueLen = value.len() as CK_ULONG;
                         } else if (attr.ulValueLen as usize) < value.len() {
-                            attr.ulValueLen = CKR_BUFFER_TOO_SMALL as CK_ULONG;
+                            attr.ulValueLen = CK_UNAVAILABLE_INFORMATION as CK_ULONG;
                             any_too_small = true;
                         } else {
                             std::ptr::copy_nonoverlapping(
