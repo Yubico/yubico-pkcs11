@@ -572,7 +572,8 @@ fn authenticate_so_with_protected_key(piv: &mut ActivePivSession) -> Result<(), 
         return Err(CKR_USER_PIN_NOT_INITIALIZED.into());
     }
 
-    let protected_data = yubikit::piv_util::get_pivman_protected_data(piv).map_err(piv_error_to_rv)?;
+    let protected_data =
+        yubikit::piv_util::get_pivman_protected_data(piv).map_err(piv_error_to_rv)?;
     let key_bytes = protected_data
         .iter()
         .find(|(tag, _)| *tag == yubikit::piv_util::TAG_PIVMAN_KEY)
