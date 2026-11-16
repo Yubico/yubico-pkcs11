@@ -553,12 +553,10 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
         });
     }
 
-    // PIN (or UV) verified above, but the caller gave us no key material --
-    // matches token_login's fallthrough (token.c:348-362): look for a
-    // management key stored on-device, protected by the PIN that was just
-    // verified (`ykman::piv`'s "pivman" admin-data/protected-data objects,
-    // `0x5FFF00`/`Printed`; see that crate's Cargo.toml doc comment on its
-    // `piv` feature for why this is a dependency instead of a port).
+    // PIN (or UV) verified above, but the caller gave us no key material.
+    // Look for a management key stored on-device, protected by the PIN that was just
+    // verified (`yubikit::piv_util`'s "pivman" admin-data/protected-data
+    // objects, `0x5FFF00`/`Printed`).
     authenticate_so_with_protected_key(piv)
 }
 
@@ -569,15 +567,15 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
 /// (token.c:355-359), by requiring both the admin-data flag and an actual
 /// stored key to be present.
 fn authenticate_so_with_protected_key(piv: &mut ActivePivSession) -> Result<(), CK_RV> {
-    let admin_data = ykman::piv::get_pivman_data(piv);
-    if !ykman::piv::has_stored_key(&admin_data) {
+    let admin_data = yubikit::piv_util::get_pivman_data(piv).map_err(piv_error_to_rv)?;
+    if !yubikit::piv_util::has_stored_key(&admin_data) {
         return Err(CKR_USER_PIN_NOT_INITIALIZED.into());
     }
 
-    let protected_data = ykman::piv::get_pivman_protected_data(piv);
+    let protected_data = yubikit::piv_util::get_pivman_protected_data(piv).map_err(piv_error_to_rv)?;
     let key_bytes = protected_data
         .iter()
-        .find(|(tag, _)| *tag == ykman::piv::TAG_PIVMAN_KEY)
+        .find(|(tag, _)| *tag == yubikit::piv_util::TAG_PIVMAN_KEY)
         .map(|(_, value)| value.as_slice())
         .ok_or(CK_RV::from(CKR_USER_PIN_NOT_INITIALIZED))?;
 
