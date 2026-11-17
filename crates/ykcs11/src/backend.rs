@@ -553,9 +553,38 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
         });
     }
 
-    // TODO Authenticate with PIN protected management key
+    // PIN (or UV) verified above, but the caller gave us no key material.
+    // Look for a management key stored on-device, protected by the PIN that was just
+    // verified (`yubikit::piv_util`'s "pivman" admin-data/protected-data
+    // objects, `0x5FFF00`/`Printed`).
+    authenticate_so_with_protected_key(piv)
+}
 
-    Err(CKR_USER_PIN_NOT_INITIALIZED.into())
+/// Reads the PIN-protected management key (if one is configured) and
+/// authenticates with it
+fn authenticate_so_with_protected_key(piv: &mut ActivePivSession) -> Result<(), CK_RV> {
+    let admin_data = yubikit::piv_util::get_pivman_data(piv).map_err(piv_error_to_rv)?;
+    if !yubikit::piv_util::has_stored_key(&admin_data) {
+        return Err(CKR_USER_PIN_NOT_INITIALIZED.into());
+    }
+
+    let protected_data =
+        yubikit::piv_util::get_pivman_protected_data(piv).map_err(piv_error_to_rv)?;
+    let key_bytes = protected_data
+        .iter()
+        .find(|(tag, _)| *tag == yubikit::piv_util::TAG_PIVMAN_KEY)
+        .map(|(_, value)| value.as_slice())
+        .ok_or(CK_RV::from(CKR_USER_PIN_NOT_INITIALIZED))?;
+
+    let key_type = piv.management_key_type();
+    let key = ManagementKey::new(key_type, key_bytes).map_err(|_| CK_RV::from(CKR_DEVICE_ERROR))?;
+    piv.authenticate(&key).map_err(|e| match e {
+        // Matches token.c:366-367: a rejected response from the device
+        // means the stored key itself is wrong (e.g. stale after an
+        // out-of-band management-key change that didn't update it).
+        PivError::InvalidData(_) => CK_RV::from(CKR_PIN_INCORRECT),
+        other => piv_error_to_rv(other),
+    })
 }
 
 pub static G_ENGINE: Engine<PivBackend> = Engine::new();
