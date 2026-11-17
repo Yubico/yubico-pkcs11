@@ -102,9 +102,14 @@ fn short_attribute_buffer_marks_length_unavailable_and_processes_other_attribute
             CKR_BUFFER_TOO_SMALL.into()
         );
     }
-    assert_eq!(attrs[0].ulValueLen, CK_UNAVAILABLE_INFORMATION as CK_ULONG);
+    // CK_ATTRIBUTE is `#[repr(packed)]` on Windows, so its `ulValueLen` field
+    // can't be referenced in place
+    let len0 = attrs[0].ulValueLen;
+    let len1 = attrs[1].ulValueLen;
+    let len2 = attrs[2].ulValueLen;
+    assert_eq!(len0, CK_UNAVAILABLE_INFORMATION as CK_ULONG);
     assert_eq!(short, [0xAA; 2]);
-    assert_eq!(attrs[1].ulValueLen, 1);
+    assert_eq!(len1, 1);
     assert_eq!(id, [42]);
-    assert_eq!(attrs[2].ulValueLen, 5);
+    assert_eq!(len2, 5);
 }
