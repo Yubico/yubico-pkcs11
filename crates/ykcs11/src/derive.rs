@@ -17,8 +17,7 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{find_private_key, store_secret_key};
 use crate::template::find_attr;
-use pkcs11_common::backend::Slot;
-use pkcs11_common::mechanism::MechanismParam;
+use common::backend::Slot;
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 use yubikit::piv::KeyType;

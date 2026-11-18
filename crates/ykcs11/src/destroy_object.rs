@@ -17,7 +17,7 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{ObjectClass, refresh_slot_objects};
 use crate::template::require_so_login;
-use pkcs11_common::backend::Slot;
+use common::backend::Slot;
 use pkcs11_sys::*;
 
 /// PIV has no APDU to erase just the private key material (it's only ever replaced

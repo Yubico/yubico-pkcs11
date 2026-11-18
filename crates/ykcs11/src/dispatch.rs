@@ -15,9 +15,9 @@
  */
 
 use crate::backend::G_ENGINE;
-use pkcs11_common::debug;
-use pkcs11_common::function_list::{RealFunctions, build_function_list, build_function_list_3_2};
-use pkcs11_common::yk_dbg;
+use common::debug;
+use common::function_list::{RealFunctions, build_function_list, build_function_list_3_2};
+use common::yk_dbg;
 use pkcs11_sys::*;
 
 /// Brackets a call into `G_ENGINE` with entry/exit tracing output.

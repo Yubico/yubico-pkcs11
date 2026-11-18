@@ -14,11 +14,9 @@
  * limitations under the License.
  */
 
-use pkcs11_common::backend::Slot;
-use pkcs11_common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
-use pkcs11_common::mechanism::{
-    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
-};
+use common::backend::Slot;
+use common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
+use common::mechanism::{CryptMechanismKind, classify_crypt_mechanism, resolve_oaep_params};
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 
@@ -140,7 +138,7 @@ pub fn encrypt_final(
             mgf_hash_mechanism,
             label,
         } => {
-            let h_len = pkcs11_common::digest::DigestOp::new(hash_mechanism)?.output_len();
+            let h_len = common::digest::DigestOp::new(hash_mechanism)?.output_len();
             let seed = random_bytes(h_len)?;
             rsa_oaep_encrypt(
                 &state.n,

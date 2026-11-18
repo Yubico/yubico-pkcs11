@@ -19,9 +19,9 @@ use crate::objects::refresh_slot_objects;
 use crate::template::{
     P256_CURVE_OID, P384_CURVE_OID, find_attr, is_public_exponent_65537, require_so_login,
 };
+use common::backend::Slot;
+use common::yk_dbg;
 use der::Decode;
-use pkcs11_common::backend::Slot;
-use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 use yubikit::keys::{
     EcCurve, EcPrivateKey, Ed25519PrivateKey, MlDsaParameterSet, MlDsaPrivateKey,

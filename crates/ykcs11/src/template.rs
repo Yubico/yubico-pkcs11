@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use pkcs11_common::session::LoginState;
+use common::session::LoginState;
 use pkcs11_sys::*;
 use yubikit::piv::{PinPolicy, TouchPolicy};
 

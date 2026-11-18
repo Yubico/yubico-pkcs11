@@ -1,4 +1,4 @@
-use pkcs11_common::backend::*;
+use common::backend::*;
 use pkcs11_sys::*;
 use std::ptr::null_mut;
 

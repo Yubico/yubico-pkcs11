@@ -16,12 +16,10 @@
 
 use crate::backend::PivBackend;
 use crate::sign::{Accumulator, resolve_ml_dsa_context};
-use pkcs11_common::backend::Slot;
-use pkcs11_common::digest::DigestOp;
-use pkcs11_common::mechanism::{
-    MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params,
-};
-use pkcs11_common::verify::{
+use common::backend::Slot;
+use common::digest::DigestOp;
+use common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
+use common::verify::{
     verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509,
 };
 use pkcs11_sys::*;

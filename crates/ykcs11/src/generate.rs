@@ -20,8 +20,8 @@ use crate::template::{
     P256_CURVE_OID, P384_CURVE_OID, find_attr, find_byte, is_public_exponent_65537,
     require_so_login, resolve_policies,
 };
+use common::backend::Slot;
 use der::{Decode, Encode};
-use pkcs11_common::backend::Slot;
 use pkcs11_sys::*;
 use x509_cert::TbsCertificate;
 use x509_cert::builder::profile::BuilderProfile;

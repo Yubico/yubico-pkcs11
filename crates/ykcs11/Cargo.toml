@@ -19,7 +19,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 pkcs11-sys = { workspace = true }
-pkcs11-common = { workspace = true }
+common = { workspace = true }
 parking_lot = { workspace = true }
 log = { workspace = true }
 getrandom = "0.4"

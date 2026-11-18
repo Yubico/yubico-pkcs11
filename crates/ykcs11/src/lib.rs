@@ -17,7 +17,7 @@
 #![allow(non_snake_case)]
 #![allow(unused_variables)]
 
-extern crate pkcs11_common;
+extern crate common;
 extern crate yubikit;
 
 mod backend;
@@ -33,7 +33,7 @@ mod generate;
 mod init_token;
 mod mechanisms;
 mod objects;
-mod piv_slot;
+mod pkcs11_slot;
 mod set_pin;
 mod sign;
 mod template;

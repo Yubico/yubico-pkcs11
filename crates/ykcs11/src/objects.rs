@@ -15,9 +15,9 @@
  */
 
 use crate::discovery::ActivePivSession;
+use common::yk_dbg;
 use der::asn1::ObjectIdentifier;
 use der::{Decode, Encode};
-use pkcs11_common::yk_dbg;
 use pkcs11_sys::*;
 use x509_cert::Certificate;
 use yubikit::keys::{MlDsaParameterSet, MlKemParameterSet, PublicKey};
@@ -1959,9 +1959,9 @@ fn get_data_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<V
 mod tests {
     use super::*;
     use crate::backend::PivBackend;
-    use crate::piv_slot::PivSlotData;
-    use pkcs11_common::backend::Slot as EngineSlot;
-    use pkcs11_common::session::LoginState;
+    use crate::pkcs11_slot::Pkcs11SlotData;
+    use common::backend::Slot as EngineSlot;
+    use common::session::LoginState;
 
     fn test_object(id: PivObjectId, class: ObjectClass, slot: Slot) -> PivObject {
         PivObject {
@@ -1982,7 +1982,7 @@ mod tests {
     }
 
     fn test_slot(objects: Vec<PivObject>, login_state: LoginState) -> EngineSlot<PivBackend> {
-        let mut data = PivSlotData::new("test reader".to_string());
+        let mut data = Pkcs11SlotData::new("test reader".to_string());
         data.objects = objects;
         EngineSlot {
             login_state,

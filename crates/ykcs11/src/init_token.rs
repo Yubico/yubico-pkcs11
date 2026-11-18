@@ -16,8 +16,8 @@
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::discovery::ActivePivSession;
-use pkcs11_common::backend::Slot;
-use pkcs11_common::util::hex_decode;
+use common::backend::Slot;
+use common::util::hex_decode;
 use pkcs11_sys::*;
 use yubikit::piv::{
     DEFAULT_MANAGEMENT_KEY, ManagementKey, ManagementKeyType, PivError, TouchPolicy,

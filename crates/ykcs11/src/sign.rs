@@ -15,13 +15,11 @@
  */
 
 use crate::backend::{PivBackend, piv_error_to_rv};
-use pkcs11_common::backend::Slot;
-use pkcs11_common::digest::DigestOp;
-use pkcs11_common::mechanism::{
-    MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params,
-};
-use pkcs11_common::session::LoginState;
-use pkcs11_common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
+use common::backend::Slot;
+use common::digest::DigestOp;
+use common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
+use common::session::LoginState;
+use common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
 use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey, RsaKeySize};
 use yubikit::piv::{KeyType, Slot as PivSlot};

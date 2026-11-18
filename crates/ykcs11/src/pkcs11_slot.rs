@@ -19,7 +19,7 @@ use pkcs11_sys::CK_ULONG;
 
 pub const YKCS11_MAX_SESSIONS: usize = 16;
 
-pub struct PivTokenInfo {
+pub struct Pkcs11TokenInfo {
     pub label: String,
     pub manufacturer: String,
     pub model: String,
@@ -35,12 +35,12 @@ pub struct PivTokenInfo {
 /// Slots are looked up by `reader_name` and, once created, keep
 /// their `CK_SLOT_ID` (their index in `ModuleState::slots`) even if the
 /// reader/token temporarily disappears (`token_present` just goes false).
-pub struct PivSlotData {
+pub struct Pkcs11SlotData {
     pub reader_name: String,
     pub hw_version: (u8, u8),
     pub fw_version: (u8, u8),
     pub token_present: bool,
-    pub token_info: Option<PivTokenInfo>,
+    pub token_info: Option<Pkcs11TokenInfo>,
     /// Live PC/SC connection + PIV application session for this slot, if
     /// currently connected.
     pub piv_session: Option<ActivePivSession>,
@@ -49,7 +49,7 @@ pub struct PivSlotData {
     pub objects: Vec<crate::objects::PivObject>,
 }
 
-impl PivSlotData {
+impl Pkcs11SlotData {
     pub fn new(reader_name: String) -> Self {
         Self {
             hw_version: (1, 0),

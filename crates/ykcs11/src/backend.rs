@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-//! [`pkcs11_common::backend::Backend`] impl for the YubiKey PIV module.
+//! [`common::backend::Backend`] impl for the YubiKey PIV module.
 
 use crate::discovery::ActivePivSession;
-use crate::piv_slot::PivSlotData;
-use pkcs11_common::backend::{
+use crate::pkcs11_slot::Pkcs11SlotData;
+use common::backend::{
     Backend, Engine, LibraryInfo, MechanismInfo, ModuleState, Slot, SlotInfo, TokenInfo,
 };
-use pkcs11_common::mechanism::MechanismParam;
-use pkcs11_common::session::LoginState;
+use common::session::LoginState;
 use pkcs11_sys::*;
 use yubikit::piv::{ManagementKey, PivError, PivPin};
 
@@ -33,7 +32,7 @@ const YKCS11_VERSION_MINOR: u8 = 0;
 
 pub struct PivBackend;
 
-fn firmware_version(data: &PivSlotData) -> (u8, u8) {
+fn firmware_version(data: &Pkcs11SlotData) -> (u8, u8) {
     data.token_info
         .as_ref()
         .map(|t| (t.fw_version_major, t.fw_version_minor))
@@ -50,7 +49,7 @@ pub struct PivSessionData {
 }
 
 impl Backend for PivBackend {
-    type SlotData = PivSlotData;
+    type SlotData = Pkcs11SlotData;
     type SessionData = PivSessionData;
     type ModuleData = ();
 
@@ -69,7 +68,7 @@ impl Backend for PivBackend {
         }
     }
 
-    fn initialize(reserved: Option<&str>) -> Result<((), Vec<PivSlotData>), CK_RV> {
+    fn initialize(reserved: Option<&str>) -> Result<((), Vec<Pkcs11SlotData>), CK_RV> {
         if reserved.is_some() {
             return Err(CKR_ARGUMENTS_BAD.into());
         }
@@ -81,11 +80,11 @@ impl Backend for PivBackend {
         crate::discovery::refresh_slots(state)
     }
 
-    fn is_present(data: &PivSlotData) -> bool {
+    fn is_present(data: &Pkcs11SlotData) -> bool {
         data.token_present
     }
 
-    fn slot_info(_slot_id: CK_SLOT_ID, data: &PivSlotData) -> SlotInfo {
+    fn slot_info(_slot_id: CK_SLOT_ID, data: &Pkcs11SlotData) -> SlotInfo {
         SlotInfo {
             description: data.reader_name.clone(),
             manufacturer_id: YKCS11_MANUFACTURER.to_string(),
@@ -94,7 +93,7 @@ impl Backend for PivBackend {
         }
     }
 
-    fn token_info(data: &mut PivSlotData) -> Option<TokenInfo> {
+    fn token_info(data: &mut Pkcs11SlotData) -> Option<TokenInfo> {
         if !data.token_present {
             return None;
         }
@@ -126,15 +125,18 @@ impl Backend for PivBackend {
         })
     }
 
-    fn max_sessions(_data: &PivSlotData) -> Option<usize> {
-        Some(crate::piv_slot::YKCS11_MAX_SESSIONS)
+    fn max_sessions(_data: &Pkcs11SlotData) -> Option<usize> {
+        Some(crate::pkcs11_slot::YKCS11_MAX_SESSIONS)
     }
 
-    fn mechanism_list(data: &PivSlotData) -> Vec<CK_MECHANISM_TYPE> {
+    fn mechanism_list(data: &Pkcs11SlotData) -> Vec<CK_MECHANISM_TYPE> {
         crate::mechanisms::token_mechanisms(firmware_version(data))
     }
 
-    fn mechanism_info(data: &PivSlotData, mechanism: CK_MECHANISM_TYPE) -> Option<MechanismInfo> {
+    fn mechanism_info(
+        data: &Pkcs11SlotData,
+        mechanism: CK_MECHANISM_TYPE,
+    ) -> Option<MechanismInfo> {
         let entry = crate::mechanisms::mechanism_table(firmware_version(data))
             .into_iter()
             .find(|e| e.mechanism == mechanism)?;
@@ -147,7 +149,7 @@ impl Backend for PivBackend {
     }
 
     fn new_session_data(
-        slot: &mut PivSlotData,
+        slot: &mut Pkcs11SlotData,
         _handle: CK_SESSION_HANDLE,
         _flags: CK_FLAGS,
     ) -> PivSessionData {
@@ -280,7 +282,7 @@ impl Backend for PivBackend {
     }
 
     fn get_one_attribute_value(
-        data: &PivSlotData,
+        data: &Pkcs11SlotData,
         handle: CK_OBJECT_HANDLE,
         attr_type: CK_ATTRIBUTE_TYPE,
     ) -> Option<Vec<u8>> {
@@ -541,8 +543,7 @@ fn authenticate_so(piv: &mut ActivePivSession, pin: &[u8]) -> Result<(), CK_RV> 
     } else {
         // Not a PIN-length value: must be the literal hex-encoded
         // management key.
-        let key_bytes =
-            pkcs11_common::util::hex_decode(pin).ok_or(CK_RV::from(CKR_ARGUMENTS_BAD))?;
+        let key_bytes = common::util::hex_decode(pin).ok_or(CK_RV::from(CKR_ARGUMENTS_BAD))?;
         let key_type = piv.management_key_type();
         let key =
             ManagementKey::new(key_type, &key_bytes).map_err(|_| CK_RV::from(CKR_ARGUMENTS_BAD))?;
@@ -593,7 +594,7 @@ pub static G_ENGINE: Engine<PivBackend> = Engine::new();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkcs11_common::backend::{DecryptOp, EncryptOp, FindOp, Session, SignOp, VerifyOp};
+    use common::backend::{DecryptOp, EncryptOp, FindOp, Session, SignOp, VerifyOp};
     use std::collections::HashMap;
 
     fn slot_with_session(
@@ -625,7 +626,7 @@ mod tests {
         Slot {
             login_state: LoginState::Public,
             sessions,
-            data: crate::piv_slot::PivSlotData::new("test reader".to_string()),
+            data: crate::pkcs11_slot::Pkcs11SlotData::new("test reader".to_string()),
         }
     }
 

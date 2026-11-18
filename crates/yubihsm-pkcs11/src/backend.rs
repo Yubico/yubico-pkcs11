@@ -14,18 +14,16 @@
  * limitations under the License.
  */
 
-//! [`pkcs11_common::backend::Backend`] impl for the YubiHSM module.
+//! [`common::backend::Backend`] impl for the YubiHSM module.
 
 use crate::config::{self, Config};
 use crate::debug;
 use crate::error::hsm_error_to_rv;
 use crate::slot::YubiHsmSlotData;
 use crate::{dbg_err, dbg_info, dbg_warn};
-use pkcs11_common::backend::{
-    Backend, Engine, LibraryInfo, MechanismInfo, Slot, SlotInfo, TokenInfo,
-};
-use pkcs11_common::session::LoginState;
-use pkcs11_common::util::hex_decode;
+use common::backend::{Backend, Engine, LibraryInfo, MechanismInfo, Slot, SlotInfo, TokenInfo};
+use common::session::LoginState;
+use common::util::hex_decode;
 use pkcs11_sys::*;
 use yubihsmrs::object::ObjectAlgorithm;
 
