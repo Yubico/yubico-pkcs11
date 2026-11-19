@@ -16,7 +16,9 @@
 
 use common::backend::Slot;
 use common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
-use common::mechanism::{CryptMechanismKind, classify_crypt_mechanism, resolve_oaep_params};
+use common::mechanism::{
+    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
+};
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 

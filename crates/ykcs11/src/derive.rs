@@ -18,6 +18,7 @@ use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{find_private_key, store_secret_key};
 use crate::template::find_attr;
 use common::backend::Slot;
+use common::mechanism::MechanismParam;
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 use yubikit::piv::KeyType;
@@ -125,7 +126,7 @@ pub fn derive_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkcs11_common::mechanism::Ecdh1DeriveParams;
+    use common::mechanism::Ecdh1DeriveParams;
     use yubikit::keys::{
         EcCurve, EcPublicKey, Ed25519PublicKey, RsaKeySize, RsaPublicKey, X25519PublicKey,
     };

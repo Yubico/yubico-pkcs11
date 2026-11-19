@@ -17,7 +17,9 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use common::backend::Slot;
 use common::decrypt::{eme_oaep_unpad, eme_pkcs1_v15_unpad};
-use common::mechanism::{CryptMechanismKind, classify_crypt_mechanism, resolve_oaep_params};
+use common::mechanism::{
+    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
+};
 use common::session::LoginState;
 use common::sign::zero_pad;
 use pkcs11_sys::*;

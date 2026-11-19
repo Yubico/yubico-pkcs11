@@ -17,7 +17,7 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use common::backend::Slot;
 use common::digest::DigestOp;
-use common::mechanism::{MechanismKind, classify_mechanism, resolve_pss_params};
+use common::mechanism::{MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params};
 use common::session::LoginState;
 use common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;

@@ -21,6 +21,7 @@ use crate::pkcs11_slot::Pkcs11SlotData;
 use common::backend::{
     Backend, Engine, LibraryInfo, MechanismInfo, ModuleState, Slot, SlotInfo, TokenInfo,
 };
+use common::mechanism::MechanismParam;
 use common::session::LoginState;
 use pkcs11_sys::*;
 use yubikit::piv::{ManagementKey, PivError, PivPin};
