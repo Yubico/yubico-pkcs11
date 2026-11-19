@@ -86,15 +86,17 @@ enum SignAlgorithm {
     MlDsaExternalMu,
 }
 
-/// Validates the optional `CK_SIGN_ADDITIONAL_CONTEXT` for `CKM_ML_DSA`
-pub(crate) fn resolve_ml_dsa_context(parameter: &MechanismParam) -> Result<(), CK_RV> {
+/// Validates and resolves the optional `CK_SIGN_ADDITIONAL_CONTEXT` for
+/// `CKM_ML_DSA`, returning the context bytes (empty when the caller supplied
+/// none). Callers that require an empty context (`CKM_ML_DSA_EXTERNAL_MU`)
+/// check the result's `is_empty()` themselves.
+pub(crate) fn resolve_ml_dsa_context(parameter: &MechanismParam) -> Result<Vec<u8>, CK_RV> {
     match parameter {
-        p if p.is_empty() => Ok(()),
+        p if p.is_empty() => Ok(Vec::new()),
         MechanismParam::SignAdditionalContext(ctx)
-            if ctx.context.is_empty()
-                && ctx.hedge_variant != CKH_DETERMINISTIC_REQUIRED as CK_HEDGE_TYPE =>
+            if ctx.hedge_variant != CKH_DETERMINISTIC_REQUIRED as CK_HEDGE_TYPE =>
         {
-            Ok(())
+            Ok(ctx.context.clone())
         }
         _ => Err(CKR_MECHANISM_PARAM_INVALID.into()),
     }
