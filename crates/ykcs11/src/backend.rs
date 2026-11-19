@@ -21,6 +21,7 @@ use crate::piv_slot::PivSlotData;
 use pkcs11_common::backend::{
     Backend, Engine, LibraryInfo, MechanismInfo, ModuleState, Slot, SlotInfo, TokenInfo,
 };
+use pkcs11_common::mechanism::MechanismParam;
 use pkcs11_common::session::LoginState;
 use pkcs11_sys::*;
 use yubikit::piv::{ManagementKey, PivError, PivPin};
@@ -290,7 +291,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         key_handle: CK_OBJECT_HANDLE,
     ) -> Result<CK_ULONG, CK_RV> {
         crate::sign::sign_init(slot, h_session, mechanism, parameter, key_handle)
@@ -312,7 +313,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         key_handle: CK_OBJECT_HANDLE,
     ) -> Result<(), CK_RV> {
         crate::verify::verify_init(slot, h_session, mechanism, parameter, key_handle)
@@ -338,7 +339,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         key_handle: CK_OBJECT_HANDLE,
     ) -> Result<CK_ULONG, CK_RV> {
         crate::encrypt::encrypt_init(slot, h_session, mechanism, parameter, key_handle)
@@ -363,7 +364,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         key_handle: CK_OBJECT_HANDLE,
     ) -> Result<(), CK_RV> {
         crate::decrypt::decrypt_init(slot, h_session, mechanism, parameter, key_handle)
@@ -412,7 +413,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         base_key_handle: CK_OBJECT_HANDLE,
         template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
@@ -458,7 +459,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         h_public_key: CK_OBJECT_HANDLE,
         template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
     ) -> Result<(Vec<u8>, CK_OBJECT_HANDLE), CK_RV> {
@@ -476,7 +477,7 @@ impl Backend for PivBackend {
         slot: &mut Slot<Self>,
         h_session: CK_SESSION_HANDLE,
         mechanism: CK_MECHANISM_TYPE,
-        parameter: &[u8],
+        parameter: &MechanismParam,
         h_private_key: CK_OBJECT_HANDLE,
         ciphertext: &[u8],
         template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],

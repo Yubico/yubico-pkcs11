@@ -18,6 +18,7 @@ use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{find_private_key, store_secret_key};
 use crate::template::find_attr;
 use pkcs11_common::backend::Slot;
+use pkcs11_common::mechanism::MechanismParam;
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 use yubikit::piv::KeyType;
@@ -35,36 +36,21 @@ fn ecdh_key_type(public_key: &PublicKey) -> Result<(KeyType, usize), CK_RV> {
     }
 }
 
-/// Parses `CK_ECDH1_DERIVE_PARAMS` and validates it
+/// Validates `CK_ECDH1_DERIVE_PARAMS` and returns the peer's public point
 fn resolve_ecdh1_derive_params(
-    parameter: &[u8],
+    parameter: &MechanismParam,
     expected_point_len: usize,
 ) -> Result<Vec<u8>, CK_RV> {
-    if parameter.len() != std::mem::size_of::<CK_ECDH1_DERIVE_PARAMS>() {
-        return Err(CKR_MECHANISM_PARAM_INVALID.into());
+    match parameter {
+        MechanismParam::Ecdh1Derive(params)
+            if params.kdf == CKD_NULL as CK_EC_KDF_TYPE
+                && params.shared_data.is_empty()
+                && params.public_data.len() == expected_point_len =>
+        {
+            Ok(params.public_data.clone())
+        }
+        _ => Err(CKR_MECHANISM_PARAM_INVALID.into()),
     }
-    // SAFETY: length checked above; read_unaligned since a PKCS#11
-    // caller isn't guaranteed to send a suitably aligned pointer
-    let params: CK_ECDH1_DERIVE_PARAMS =
-        unsafe { std::ptr::read_unaligned(parameter.as_ptr() as *const CK_ECDH1_DERIVE_PARAMS) };
-
-    if params.kdf != CKD_NULL as CK_ULONG
-        || params.ulSharedDataLen != 0
-        || params.pPublicData.is_null()
-        || params.ulPublicDataLen as usize != expected_point_len
-    {
-        return Err(CKR_MECHANISM_PARAM_INVALID.into());
-    }
-
-    // SAFETY: `pPublicData`/`ulPublicDataLen` are a caller-supplied
-    // pointer+length pair, out-of-line from `parameter` itself.
-    Ok(unsafe {
-        std::slice::from_raw_parts(
-            params.pPublicData as *const u8,
-            params.ulPublicDataLen as usize,
-        )
-        .to_vec()
-    })
 }
 
 pub(crate) fn validate_derive_template(
@@ -108,7 +94,7 @@ pub fn derive_key(
     slot: &mut Slot<PivBackend>,
     _h_session: CK_SESSION_HANDLE,
     mechanism: CK_MECHANISM_TYPE,
-    parameter: &[u8],
+    parameter: &MechanismParam,
     base_key_handle: CK_OBJECT_HANDLE,
     template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
@@ -140,6 +126,7 @@ pub fn derive_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkcs11_common::mechanism::Ecdh1DeriveParams;
     use yubikit::keys::{
         EcCurve, EcPublicKey, Ed25519PublicKey, RsaKeySize, RsaPublicKey, X25519PublicKey,
     };
@@ -188,98 +175,42 @@ mod tests {
         );
     }
 
-    fn params_bytes(params: CK_ECDH1_DERIVE_PARAMS) -> Vec<u8> {
-        let size = std::mem::size_of::<CK_ECDH1_DERIVE_PARAMS>();
-        unsafe { std::slice::from_raw_parts(&params as *const _ as *const u8, size).to_vec() }
+    fn ecdh_params(kdf: u32, shared_data: &[u8], public_data: &[u8]) -> MechanismParam {
+        MechanismParam::Ecdh1Derive(Ecdh1DeriveParams {
+            kdf: kdf as CK_EC_KDF_TYPE,
+            shared_data: shared_data.to_vec(),
+            public_data: public_data.to_vec(),
+        })
     }
 
     #[test]
     fn resolve_ecdh1_derive_params_accepts_a_well_formed_p256_request() {
         let peer = vec![0x04u8; 65];
-        let params = CK_ECDH1_DERIVE_PARAMS {
-            kdf: CKD_NULL as CK_ULONG,
-            ulSharedDataLen: 0,
-            pSharedData: std::ptr::null_mut(),
-            ulPublicDataLen: peer.len() as CK_ULONG,
-            pPublicData: peer.as_ptr() as *mut u8,
-        };
-        let bytes = params_bytes(params);
-        assert_eq!(resolve_ecdh1_derive_params(&bytes, 65), Ok(peer));
+        let params = ecdh_params(CKD_NULL, &[], &peer);
+        assert_eq!(resolve_ecdh1_derive_params(&params, 65), Ok(peer));
     }
 
     #[test]
-    fn resolve_ecdh1_derive_params_rejects_a_non_null_kdf() {
-        let peer = vec![0x04u8; 65];
-        let params = CK_ECDH1_DERIVE_PARAMS {
-            kdf: CKD_SHA1_KDF as CK_ULONG,
-            ulSharedDataLen: 0,
-            pSharedData: std::ptr::null_mut(),
-            ulPublicDataLen: peer.len() as CK_ULONG,
-            pPublicData: peer.as_ptr() as *mut u8,
-        };
-        let bytes = params_bytes(params);
-        assert_eq!(
-            resolve_ecdh1_derive_params(&bytes, 65),
-            Err(CKR_MECHANISM_PARAM_INVALID.into())
-        );
-    }
-
-    #[test]
-    fn resolve_ecdh1_derive_params_rejects_shared_data() {
-        let peer = vec![0x04u8; 65];
-        let shared = vec![0x01u8; 4];
-        let params = CK_ECDH1_DERIVE_PARAMS {
-            kdf: CKD_NULL as CK_ULONG,
-            ulSharedDataLen: shared.len() as CK_ULONG,
-            pSharedData: shared.as_ptr() as *mut u8,
-            ulPublicDataLen: peer.len() as CK_ULONG,
-            pPublicData: peer.as_ptr() as *mut u8,
-        };
-        let bytes = params_bytes(params);
-        assert_eq!(
-            resolve_ecdh1_derive_params(&bytes, 65),
-            Err(CKR_MECHANISM_PARAM_INVALID.into())
-        );
+    fn resolve_ecdh1_derive_params_rejects_unsupported_parameters() {
+        let peer = [0x04u8; 65];
+        for params in [
+            ecdh_params(CKD_SHA1_KDF, &[], &peer),
+            ecdh_params(CKD_NULL, &[0x01; 4], &peer),
+            MechanismParam::Bytes(vec![0u8; 4]),
+        ] {
+            assert_eq!(
+                resolve_ecdh1_derive_params(&params, 65),
+                Err(CKR_MECHANISM_PARAM_INVALID.into())
+            );
+        }
     }
 
     #[test]
     fn resolve_ecdh1_derive_params_rejects_a_mismatched_point_length() {
-        let peer = vec![0x04u8; 65];
-        let params = CK_ECDH1_DERIVE_PARAMS {
-            kdf: CKD_NULL as CK_ULONG,
-            ulSharedDataLen: 0,
-            pSharedData: std::ptr::null_mut(),
-            ulPublicDataLen: peer.len() as CK_ULONG,
-            pPublicData: peer.as_ptr() as *mut u8,
-        };
-        let bytes = params_bytes(params);
         // Base key is P-384 (expects a 97-byte point), caller sent 65.
+        let params = ecdh_params(CKD_NULL, &[], &[0x04; 65]);
         assert_eq!(
-            resolve_ecdh1_derive_params(&bytes, 97),
-            Err(CKR_MECHANISM_PARAM_INVALID.into())
-        );
-    }
-
-    #[test]
-    fn resolve_ecdh1_derive_params_rejects_a_null_public_data_pointer() {
-        let params = CK_ECDH1_DERIVE_PARAMS {
-            kdf: CKD_NULL as CK_ULONG,
-            ulSharedDataLen: 0,
-            pSharedData: std::ptr::null_mut(),
-            ulPublicDataLen: 65,
-            pPublicData: std::ptr::null_mut(),
-        };
-        let bytes = params_bytes(params);
-        assert_eq!(
-            resolve_ecdh1_derive_params(&bytes, 65),
-            Err(CKR_MECHANISM_PARAM_INVALID.into())
-        );
-    }
-
-    #[test]
-    fn resolve_ecdh1_derive_params_rejects_a_truncated_buffer() {
-        assert_eq!(
-            resolve_ecdh1_derive_params(&[0u8; 4], 65),
+            resolve_ecdh1_derive_params(&params, 97),
             Err(CKR_MECHANISM_PARAM_INVALID.into())
         );
     }
