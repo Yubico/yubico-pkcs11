@@ -122,12 +122,17 @@ jobs:
           cache-save-if: ${{ github.event_name == 'push' }}
 
       - name: Build yubihsm-pkcs11
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           set -e -o pipefail
           set -x
 
           brew update
           brew reinstall openssl@3
+          if [ "X$ARCH" = "Xamd" ]; then
+            brew postinstall openssl@3
+          fi
 
           cd ..
           curl -L --max-redirs 2 -o yubihsm-shell-installer.pkg https://developers.yubico.com/yubihsm-shell/Releases/yubihsm-shell-$LIBYUBIHSM_VERSION-mac-universal.pkg
