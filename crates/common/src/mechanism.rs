@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use crate::ffi::in_slice_or_empty;
+use crate::ffi::input_slice_or_empty;
 use pkcs11_sys::*;
 
 /// A mechanism parameter as seen by a backend.
@@ -67,7 +67,7 @@ pub struct SignAdditionalContext {
 /// Copies a pointer/length pair nested inside a parameter structure. A null
 /// pointer with a non-zero length is reported as an invalid parameter.
 unsafe fn copy_nested(ptr: *const u8, len: CK_ULONG) -> Result<Vec<u8>, CK_RV> {
-    unsafe { crate::ffi::in_slice(ptr, len) }
+    unsafe { crate::ffi::input_slice(ptr, len) }
         .map(<[u8]>::to_vec)
         .map_err(|_| CKR_MECHANISM_PARAM_INVALID.into())
 }
@@ -90,7 +90,7 @@ fn read_struct<T: Copy>(raw: &[u8]) -> Option<T> {
 ///
 /// # Safety
 ///
-/// `ptr`/`len` must satisfy [`in_slice_or_empty`]'s contract, and every
+/// `ptr`/`len` must satisfy [`input_slice_or_empty`]'s contract, and every
 /// non-null pointer/length pair nested inside a decoded structure must be
 /// valid for reads of that many bytes.
 pub unsafe fn decode_mechanism_param(
@@ -98,7 +98,7 @@ pub unsafe fn decode_mechanism_param(
     ptr: *const u8,
     len: CK_ULONG,
 ) -> Result<MechanismParam, CK_RV> {
-    let raw = unsafe { in_slice_or_empty(ptr, len)? };
+    let raw = unsafe { input_slice_or_empty(ptr, len)? };
     let decoded = match mechanism as u32 {
         CKM_RSA_PKCS_OAEP => read_struct::<CK_RSA_PKCS_OAEP_PARAMS>(raw).map(|p| {
             let source_data = if p.source != CKZ_DATA_SPECIFIED as CK_RSA_PKCS_OAEP_SOURCE_TYPE {

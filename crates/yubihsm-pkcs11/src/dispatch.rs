@@ -179,7 +179,7 @@ pub unsafe extern "C" fn C_Login(
 ) -> CK_RV {
     unsafe {
         let mut username_len: CK_ULONG = 0;
-        let pin_bytes = match common::ffi::in_slice_or_empty(pPin as *const u8, ulPinLen) {
+        let pin_bytes = match common::ffi::input_slice_or_empty(pPin as *const u8, ulPinLen) {
             Ok(b) => b,
             Err(rv) => return rv,
         };

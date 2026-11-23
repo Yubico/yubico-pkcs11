@@ -28,7 +28,7 @@ use std::marker::PhantomData;
 fn slice_len<T>(len: CK_ULONG) -> Result<usize, CK_RV> {
     let len = usize::try_from(len).map_err(|_| CK_RV::from(CKR_ARGUMENTS_BAD))?;
     match len.checked_mul(size_of::<T>()) {
-        Some(bytes) if bytes <= isize::MAX as usize => Ok(len),
+        Some(l) if l <= isize::MAX as usize => Ok(len),
         _ => Err(CKR_ARGUMENTS_BAD.into()),
     }
 }
@@ -41,7 +41,7 @@ fn slice_len<T>(len: CK_ULONG) -> Result<usize, CK_RV> {
 /// When `len` is non-zero and `ptr` is non-null, `ptr` must be properly
 /// aligned and valid for reads of `len` initialized elements of `T`, and the
 /// memory must not be written to while the returned slice is in use.
-pub unsafe fn in_slice<'a, T>(ptr: *const T, len: CK_ULONG) -> Result<&'a [T], CK_RV> {
+pub unsafe fn input_slice<'a, T>(ptr: *const T, len: CK_ULONG) -> Result<&'a [T], CK_RV> {
     if len == 0 {
         return Ok(&[]);
     }
@@ -54,22 +54,22 @@ pub unsafe fn in_slice<'a, T>(ptr: *const T, len: CK_ULONG) -> Result<&'a [T], C
     Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
-/// Like [`in_slice`], but treats a null `ptr` as an empty input regardless of
+/// Like [`input_slice`], but treats a null `ptr` as an empty input regardless of
 /// `len`, for optional parameters such as PINs and attribute values.
 ///
 /// # Safety
 ///
-/// Same as [`in_slice`].
-pub unsafe fn in_slice_or_empty<'a, T>(ptr: *const T, len: CK_ULONG) -> Result<&'a [T], CK_RV> {
+/// Same as [`input_slice`].
+pub unsafe fn input_slice_or_empty<'a, T>(ptr: *const T, len: CK_ULONG) -> Result<&'a [T], CK_RV> {
     if ptr.is_null() {
         return Ok(&[]);
     }
-    unsafe { in_slice(ptr, len) }
+    unsafe { input_slice(ptr, len) }
 }
 
 /// Mutably borrows `len` caller-initialized elements at `ptr`, such as a
 /// `CK_ATTRIBUTE` template the engine fills in. Null handling is as for
-/// [`in_slice`].
+/// [`input_slice`].
 ///
 /// # Safety
 ///
@@ -77,7 +77,7 @@ pub unsafe fn in_slice_or_empty<'a, T>(ptr: *const T, len: CK_ULONG) -> Result<&
 /// aligned and valid for reads and writes of `len` initialized elements of
 /// `T`, and must not be accessed through any other pointer while the returned
 /// slice is in use.
-pub unsafe fn inout_slice<'a, T>(ptr: *mut T, len: CK_ULONG) -> Result<&'a mut [T], CK_RV> {
+pub unsafe fn output_slice<'a, T>(ptr: *mut T, len: CK_ULONG) -> Result<&'a mut [T], CK_RV> {
     if len == 0 {
         return Ok(&mut []);
     }
@@ -97,7 +97,7 @@ pub unsafe fn inout_slice<'a, T>(ptr: *mut T, len: CK_ULONG) -> Result<&'a mut [
 /// When `len` is non-zero, `ptr` must be valid for writes of `len` bytes and
 /// must not be accessed through any other pointer while the returned slice is
 /// in use.
-pub unsafe fn out_bytes_zeroed<'a>(ptr: *mut u8, len: CK_ULONG) -> Result<&'a mut [u8], CK_RV> {
+pub unsafe fn output_zero_filled<'a>(ptr: *mut u8, len: CK_ULONG) -> Result<&'a mut [u8], CK_RV> {
     if len == 0 {
         return Ok(&mut []);
     }
@@ -148,7 +148,7 @@ impl<T: Copy> OutBuf<'_, T> {
     }
 
     /// Whether the caller only asked for the required length.
-    pub fn is_query(&self) -> bool {
+    pub fn is_length_query(&self) -> bool {
         self.ptr.is_null()
     }
 
@@ -161,8 +161,8 @@ impl<T: Copy> OutBuf<'_, T> {
     /// Reports `needed` and settles the call early when it cannot produce
     /// output: `Some(CKR_OK)` for a length query, `Some(CKR_BUFFER_TOO_SMALL)`
     /// for an undersized buffer, and `None` when `needed` elements fit.
-    pub fn check(&mut self, needed: usize) -> Option<CK_RV> {
-        if self.is_query() {
+    pub fn check_length(&mut self, needed: usize) -> Option<CK_RV> {
+        if self.is_length_query() {
             self.set_len(needed);
             return Some(CKR_OK.into());
         }
@@ -178,9 +178,9 @@ impl<T: Copy> OutBuf<'_, T> {
     /// Copies `data` into the buffer, or reports its length as [`check`]
     /// does when the buffer is absent or too small.
     ///
-    /// [`check`]: OutBuf::check
+    /// [`check`]: OutBuf::check_length
     pub fn write(mut self, data: &[T]) -> CK_RV {
-        if let Some(rv) = self.check(data.len()) {
+        if let Some(rv) = self.check_length(data.len()) {
             return rv;
         }
         // SAFETY: `check` established that `ptr` is non-null with capacity
@@ -202,15 +202,15 @@ mod tests {
 
     #[test]
     fn in_slice_rejects_null_with_length() {
-        let r = unsafe { in_slice::<u8>(std::ptr::null(), 4) };
+        let r = unsafe { input_slice::<u8>(std::ptr::null(), 4) };
         assert_eq!(r.unwrap_err(), rv(CKR_ARGUMENTS_BAD));
         assert!(
-            unsafe { in_slice::<u8>(std::ptr::null(), 0) }
+            unsafe { input_slice::<u8>(std::ptr::null(), 0) }
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            unsafe { in_slice_or_empty::<u8>(std::ptr::null(), 4) }
+            unsafe { input_slice_or_empty::<u8>(std::ptr::null(), 4) }
                 .unwrap()
                 .is_empty()
         );
@@ -223,7 +223,7 @@ mod tests {
     fn in_slice_rejects_oversized_length() {
         let data = [0u64; 1];
         let huge = CK_ULONG::MAX;
-        let r = unsafe { in_slice(data.as_ptr(), huge) };
+        let r = unsafe { input_slice(data.as_ptr(), huge) };
         assert_eq!(r.unwrap_err(), rv(CKR_ARGUMENTS_BAD));
     }
 
@@ -247,7 +247,7 @@ mod tests {
         let mut buf = [0u8; 4];
         let mut len = buf.len() as CK_ULONG;
         let mut out = unsafe { OutBuf::new(buf.as_mut_ptr(), &mut len) }.unwrap();
-        assert_eq!(out.check(4), None);
+        assert_eq!(out.check_length(4), None);
         assert_eq!(out.write(&[7, 8]), rv(CKR_OK));
         assert_eq!(len, 2);
         assert_eq!(buf, [7, 8, 0, 0]);
@@ -259,7 +259,7 @@ mod tests {
         let mut len: CK_ULONG = 2;
         let mut out = unsafe { OutBuf::new(buf.as_mut_ptr(), &mut len) }.unwrap();
         // The estimate fits, but the produced result does not.
-        assert_eq!(out.check(2), None);
+        assert_eq!(out.check_length(2), None);
         assert_eq!(out.write(&[1, 2, 3]), rv(CKR_BUFFER_TOO_SMALL));
         assert_eq!(len, 3);
         assert_eq!(buf, [0; 4]);
