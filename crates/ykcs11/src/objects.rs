@@ -34,34 +34,6 @@ pub(crate) const CKA_YUBICO_PIN_POLICY: u32 = CKA_YUBICO + 2;
 /// carries its origin slot's PIN/touch policy in.
 const OID_USAGE_POLICY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
 
-const ALL_SLOTS: [Slot; 25] = [
-    Slot::Authentication,
-    Slot::Signature,
-    Slot::KeyManagement,
-    Slot::CardAuth,
-    Slot::Retired1,
-    Slot::Retired2,
-    Slot::Retired3,
-    Slot::Retired4,
-    Slot::Retired5,
-    Slot::Retired6,
-    Slot::Retired7,
-    Slot::Retired8,
-    Slot::Retired9,
-    Slot::Retired10,
-    Slot::Retired11,
-    Slot::Retired12,
-    Slot::Retired13,
-    Slot::Retired14,
-    Slot::Retired15,
-    Slot::Retired16,
-    Slot::Retired17,
-    Slot::Retired18,
-    Slot::Retired19,
-    Slot::Retired20,
-    Slot::Attestation,
-];
-
 /// `CKA_ID` for every object derived from this container
 fn slot_cka_id(slot: Slot) -> u8 {
     match slot {
@@ -1057,7 +1029,7 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
 
 pub fn read_objects(piv: &mut ActivePivSession) -> Vec<PivObject> {
     let mut found = Vec::new();
-    for slot in ALL_SLOTS {
+    for slot in Slot::key_slots().chain(std::iter::once(Slot::Attestation)) {
         found.extend(read_slot_objects(piv, slot));
     }
 
