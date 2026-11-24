@@ -33,6 +33,7 @@ mod generate;
 mod init_token;
 mod mechanisms;
 mod objects;
+mod piv_key_slot;
 mod pkcs11_slot;
 mod set_pin;
 mod sign;

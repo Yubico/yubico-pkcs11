@@ -15,13 +15,14 @@
  */
 
 use crate::discovery::ActivePivSession;
+use crate::piv_key_slot::{PivObjectClass, PivObjectId, slot_to_ckaid};
 use common::yk_dbg;
 use der::asn1::ObjectIdentifier;
 use der::{Decode, Encode};
 use pkcs11_sys::*;
 use x509_cert::Certificate;
 use yubikit::keys::{MlDsaParameterSet, MlKemParameterSet, PublicKey};
-use yubikit::piv::{ObjectId, PinPolicy, PivError, Slot, TouchPolicy};
+use yubikit::piv::{ObjectId as PivSlotId, PinPolicy, PivError, Slot, TouchPolicy};
 use yubikit::smartcard::{SmartCardError, Sw};
 
 /// Yubico defined attributes
@@ -34,724 +35,10 @@ pub(crate) const CKA_YUBICO_PIN_POLICY: u32 = CKA_YUBICO + 2;
 /// carries its origin slot's PIN/touch policy in.
 const OID_USAGE_POLICY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
 
-/// `CKA_ID` for every object derived from this container
-fn slot_cka_id(slot: Slot) -> u8 {
-    match slot {
-        Slot::Authentication => 1,
-        Slot::Signature => 2,
-        Slot::KeyManagement => 3,
-        Slot::CardAuth => 4,
-        Slot::Retired1 => 5,
-        Slot::Retired2 => 6,
-        Slot::Retired3 => 7,
-        Slot::Retired4 => 8,
-        Slot::Retired5 => 9,
-        Slot::Retired6 => 10,
-        Slot::Retired7 => 11,
-        Slot::Retired8 => 12,
-        Slot::Retired9 => 13,
-        Slot::Retired10 => 14,
-        Slot::Retired11 => 15,
-        Slot::Retired12 => 16,
-        Slot::Retired13 => 17,
-        Slot::Retired14 => 18,
-        Slot::Retired15 => 19,
-        Slot::Retired16 => 20,
-        Slot::Retired17 => 21,
-        Slot::Retired18 => 22,
-        Slot::Retired19 => 23,
-        Slot::Retired20 => 24,
-        Slot::Attestation => 25,
-        _ => 0,
-    }
-}
-
-pub(crate) fn slot_from_cka_id(id: u8) -> Option<Slot> {
-    Some(match id {
-        1 => Slot::Authentication,
-        2 => Slot::Signature,
-        3 => Slot::KeyManagement,
-        4 => Slot::CardAuth,
-        5 => Slot::Retired1,
-        6 => Slot::Retired2,
-        7 => Slot::Retired3,
-        8 => Slot::Retired4,
-        9 => Slot::Retired5,
-        10 => Slot::Retired6,
-        11 => Slot::Retired7,
-        12 => Slot::Retired8,
-        13 => Slot::Retired9,
-        14 => Slot::Retired10,
-        15 => Slot::Retired11,
-        16 => Slot::Retired12,
-        17 => Slot::Retired13,
-        18 => Slot::Retired14,
-        19 => Slot::Retired15,
-        20 => Slot::Retired16,
-        21 => Slot::Retired17,
-        22 => Slot::Retired18,
-        23 => Slot::Retired19,
-        24 => Slot::Retired20,
-        _ => return None,
-    })
-}
-
-// fn slot_label(slot: Slot) -> &'static str {
-//     match slot {
-//         Slot::Authentication => "9a",
-//         Slot::Signature => "9c",
-//         Slot::KeyManagement => "9d",
-//         Slot::CardAuth => "9e",
-//         _ => "",
-//     }
-// }
-
-/// Which PKCS#11 object a given [`PivObject`] represents.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ObjectClass {
-    Certificate,
-    PublicKey,
-    PrivateKey,
-    Data,
-    AttestationCertificate,
-    /// the ECDH shared secret `C_DeriveKey` produces.
-    /// Unlike the other classes, this isn't one-per-slot but a single
-    /// global object overwritten each time `C_DeriveKey` runs.
-    SecretKey,
-}
-
-/// A flat, per-(slot, class) enumeration whose value doubles as the
-/// `CK_OBJECT_HANDLE` for that object.
-// TODO: this is mostly from OpenSC, how to give credit?
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum PivObjectId {
-    PIV_DATA_OBJ_X509_PIV_AUTH = 1, // PIV authentication
-    PIV_DATA_OBJ_X509_DS,           // Digital signature
-    PIV_DATA_OBJ_X509_KM,           // Key management
-    PIV_DATA_OBJ_X509_CARD_AUTH,    // Card authentication
-    PIV_DATA_OBJ_X509_RETIRED1,     // Retired key 1
-    PIV_DATA_OBJ_X509_RETIRED2,     // Retired key 2
-    PIV_DATA_OBJ_X509_RETIRED3,     // Retired key 3
-    PIV_DATA_OBJ_X509_RETIRED4,     // Retired key 4
-    PIV_DATA_OBJ_X509_RETIRED5,     // Retired key 5
-    PIV_DATA_OBJ_X509_RETIRED6,     // Retired key 6
-    PIV_DATA_OBJ_X509_RETIRED7,     // Retired key 7
-    PIV_DATA_OBJ_X509_RETIRED8,     // Retired key 8
-    PIV_DATA_OBJ_X509_RETIRED9,     // Retired key 9
-    PIV_DATA_OBJ_X509_RETIRED10,    // Retired key 10
-    PIV_DATA_OBJ_X509_RETIRED11,    // Retired key 11
-    PIV_DATA_OBJ_X509_RETIRED12,    // Retired key 12
-    PIV_DATA_OBJ_X509_RETIRED13,    // Retired key 13
-    PIV_DATA_OBJ_X509_RETIRED14,    // Retired key 14
-    PIV_DATA_OBJ_X509_RETIRED15,    // Retired key 15
-    PIV_DATA_OBJ_X509_RETIRED16,    // Retired key 16
-    PIV_DATA_OBJ_X509_RETIRED17,    // Retired key 17
-    PIV_DATA_OBJ_X509_RETIRED18,    // Retired key 18
-    PIV_DATA_OBJ_X509_RETIRED19,    // Retired key 19
-    PIV_DATA_OBJ_X509_RETIRED20,    // Retired key 20
-    PIV_DATA_OBJ_X509_ATTESTATION,  // Attestation key
-    PIV_DATA_OBJ_CCC,               // Card capability container
-    PIV_DATA_OBJ_CHUI,              // Cardholder unique id
-    PIV_DATA_OBJ_CHF,               // Cardholder fingerprints
-    PIV_DATA_OBJ_SEC_OBJ,           // Security object
-    PIV_DATA_OBJ_CHFI,              // Cardholder facial images
-    PIV_DATA_OBJ_PI,                // Cardholder printed information
-    PIV_DATA_OBJ_DISCOVERY,         // Discovery object
-    PIV_DATA_OBJ_HISTORY,           // History object
-    PIV_DATA_OBJ_IRIS_IMAGE,        // Cardholder iris images
-    PIV_DATA_OBJ_BITGT,             // Biometric information templates group template
-    PIV_DATA_OBJ_SM_SIGNER,         // Secure messaging signer
-    PIV_DATA_OBJ_PC_REF_DATA,       // Pairing code reference data
-
-    PIV_CERT_OBJ_X509_PIV_AUTH,    // Certificate for PIV authentication
-    PIV_CERT_OBJ_X509_DS,          // Certificate for digital signature
-    PIV_CERT_OBJ_X509_KM,          // Certificate for key management
-    PIV_CERT_OBJ_X509_CARD_AUTH,   // Certificate for card authentication
-    PIV_CERT_OBJ_X509_RETIRED1,    // Certificate for retired key 1
-    PIV_CERT_OBJ_X509_RETIRED2,    // Certificate for retired key 2
-    PIV_CERT_OBJ_X509_RETIRED3,    // Certificate for retired key 3
-    PIV_CERT_OBJ_X509_RETIRED4,    // Certificate for retired key 4
-    PIV_CERT_OBJ_X509_RETIRED5,    // Certificate for retired key 5
-    PIV_CERT_OBJ_X509_RETIRED6,    // Certificate for retired key 6
-    PIV_CERT_OBJ_X509_RETIRED7,    // Certificate for retired key 7
-    PIV_CERT_OBJ_X509_RETIRED8,    // Certificate for retired key 8
-    PIV_CERT_OBJ_X509_RETIRED9,    // Certificate for retired key 9
-    PIV_CERT_OBJ_X509_RETIRED10,   // Certificate for retired key 10
-    PIV_CERT_OBJ_X509_RETIRED11,   // Certificate for retired key 11
-    PIV_CERT_OBJ_X509_RETIRED12,   // Certificate for retired key 12
-    PIV_CERT_OBJ_X509_RETIRED13,   // Certificate for retired key 13
-    PIV_CERT_OBJ_X509_RETIRED14,   // Certificate for retired key 14
-    PIV_CERT_OBJ_X509_RETIRED15,   // Certificate for retired key 15
-    PIV_CERT_OBJ_X509_RETIRED16,   // Certificate for retired key 16
-    PIV_CERT_OBJ_X509_RETIRED17,   // Certificate for retired key 17
-    PIV_CERT_OBJ_X509_RETIRED18,   // Certificate for retired key 18
-    PIV_CERT_OBJ_X509_RETIRED19,   // Certificate for retired key 19
-    PIV_CERT_OBJ_X509_RETIRED20,   // Certificate for retired key 20
-    PIV_CERT_OBJ_X509_ATTESTATION, // Certificate for attestation
-
-    PIV_CERT_OBJ_X509_ATTESTATION_PIV_AUTH, // Attestation certificate for PIV_AUTH
-    PIV_CERT_OBJ_X509_ATTESTATION_DS,       // Attestation certificate for DS
-    PIV_CERT_OBJ_X509_ATTESTATION_KM,       // Attestation certificate for KM
-    PIV_CERT_OBJ_X509_ATTESTATION_CARD_AUTH, // Attestation certificate for CARD_AUTH
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED1, // Attestation certificate for RETIRED1
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED2, // Attestation certificate for RETIRED2
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED3, // Attestation certificate for RETIRED3
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED4, // Attestation certificate for RETIRED4
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED5, // Attestation certificate for RETIRED5
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED6, // Attestation certificate for RETIRED6
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED7, // Attestation certificate for RETIRED7
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED8, // Attestation certificate for RETIRED8
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED9, // Attestation certificate for RETIRED9
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED10, // Attestation certificate for RETIRED10
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED11, // Attestation certificate for RETIRED11
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED12, // Attestation certificate for RETIRED12
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED13, // Attestation certificate for RETIRED13
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED14, // Attestation certificate for RETIRED14
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED15, // Attestation certificate for RETIRED15
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED16, // Attestation certificate for RETIRED16
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED17, // Attestation certificate for RETIRED17
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED18, // Attestation certificate for RETIRED18
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED19, // Attestation certificate for RETIRED19
-    PIV_CERT_OBJ_X509_ATTESTATION_RETIRED20, // Attestation certificate for RETIRED20
-
-    PIV_PVTK_OBJ_PIV_AUTH,    // Private key for PIV authentication
-    PIV_PVTK_OBJ_DS,          // Private key for digital signature
-    PIV_PVTK_OBJ_KM,          // Private key for key management
-    PIV_PVTK_OBJ_CARD_AUTH,   // Private key for card authentication
-    PIV_PVTK_OBJ_RETIRED1,    // Private key for retired key 1
-    PIV_PVTK_OBJ_RETIRED2,    // Private key for retired key 2
-    PIV_PVTK_OBJ_RETIRED3,    // Private key for retired key 3
-    PIV_PVTK_OBJ_RETIRED4,    // Private key for retired key 4
-    PIV_PVTK_OBJ_RETIRED5,    // Private key for retired key 5
-    PIV_PVTK_OBJ_RETIRED6,    // Private key for retired key 6
-    PIV_PVTK_OBJ_RETIRED7,    // Private key for retired key 7
-    PIV_PVTK_OBJ_RETIRED8,    // Private key for retired key 8
-    PIV_PVTK_OBJ_RETIRED9,    // Private key for retired key 9
-    PIV_PVTK_OBJ_RETIRED10,   // Private key for retired key 10
-    PIV_PVTK_OBJ_RETIRED11,   // Private key for retired key 11
-    PIV_PVTK_OBJ_RETIRED12,   // Private key for retired key 12
-    PIV_PVTK_OBJ_RETIRED13,   // Private key for retired key 13
-    PIV_PVTK_OBJ_RETIRED14,   // Private key for retired key 14
-    PIV_PVTK_OBJ_RETIRED15,   // Private key for retired key 15
-    PIV_PVTK_OBJ_RETIRED16,   // Private key for retired key 16
-    PIV_PVTK_OBJ_RETIRED17,   // Private key for retired key 17
-    PIV_PVTK_OBJ_RETIRED18,   // Private key for retired key 18
-    PIV_PVTK_OBJ_RETIRED19,   // Private key for retired key 19
-    PIV_PVTK_OBJ_RETIRED20,   // Private key for retired key 20
-    PIV_PVTK_OBJ_ATTESTATION, // Private key for Attestation
-
-    PIV_PUBK_OBJ_PIV_AUTH,    // Public key for PIV authentication
-    PIV_PUBK_OBJ_DS,          // Public key for digital signature
-    PIV_PUBK_OBJ_KM,          // Public key for key management
-    PIV_PUBK_OBJ_CARD_AUTH,   // Public key for card authentication
-    PIV_PUBK_OBJ_RETIRED1,    // Public key for retired key 1
-    PIV_PUBK_OBJ_RETIRED2,    // Public key for retired key 2
-    PIV_PUBK_OBJ_RETIRED3,    // Public key for retired key 3
-    PIV_PUBK_OBJ_RETIRED4,    // Public key for retired key 4
-    PIV_PUBK_OBJ_RETIRED5,    // Public key for retired key 5
-    PIV_PUBK_OBJ_RETIRED6,    // Public key for retired key 6
-    PIV_PUBK_OBJ_RETIRED7,    // Public key for retired key 7
-    PIV_PUBK_OBJ_RETIRED8,    // Public key for retired key 8
-    PIV_PUBK_OBJ_RETIRED9,    // Public key for retired key 9
-    PIV_PUBK_OBJ_RETIRED10,   // Public key for retired key 10
-    PIV_PUBK_OBJ_RETIRED11,   // Public key for retired key 11
-    PIV_PUBK_OBJ_RETIRED12,   // Public key for retired key 12
-    PIV_PUBK_OBJ_RETIRED13,   // Public key for retired key 13
-    PIV_PUBK_OBJ_RETIRED14,   // Public key for retired key 14
-    PIV_PUBK_OBJ_RETIRED15,   // Public key for retired key 15
-    PIV_PUBK_OBJ_RETIRED16,   // Public key for retired key 16
-    PIV_PUBK_OBJ_RETIRED17,   // Public key for retired key 17
-    PIV_PUBK_OBJ_RETIRED18,   // Public key for retired key 18
-    PIV_PUBK_OBJ_RETIRED19,   // Public key for retired key 19
-    PIV_PUBK_OBJ_RETIRED20,   // Public key for retired key 20
-    PIV_PUBK_OBJ_ATTESTATION, // Public key for Attestation
-    PIV_SECRET_OBJ,
-}
-
-impl PivObjectId {
-    pub(crate) fn from_slot_class(class: ObjectClass, slot: Slot) -> Self {
-        match slot {
-            Slot::Authentication => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_PIV_AUTH,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_PIV_AUTH,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_PIV_AUTH,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_PIV_AUTH,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_PIV_AUTH,
-            },
-            Slot::Signature => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_DS,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_DS,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_DS,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_DS,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_DS,
-            },
-            Slot::KeyManagement => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_KM,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_KM,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_KM,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_KM,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_KM,
-            },
-            Slot::CardAuth => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_CARD_AUTH,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_CARD_AUTH,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_CARD_AUTH,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_CARD_AUTH,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_CARD_AUTH
-                }
-            },
-            Slot::Retired1 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED1,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED1,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED1,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED1,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED1,
-            },
-
-            Slot::Retired2 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED2,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED2,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED2,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED2,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED2,
-            },
-            Slot::Retired3 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED3,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED3,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED3,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED3,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED3,
-            },
-            Slot::Retired4 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED4,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED4,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED4,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED4,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED4,
-            },
-            Slot::Retired5 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED5,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED5,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED5,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED5,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED5,
-            },
-            Slot::Retired6 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED6,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED6,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED6,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED6,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED6,
-            },
-            Slot::Retired7 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED7,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED7,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED7,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED7,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED7,
-            },
-            Slot::Retired8 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED8,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED8,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED8,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED8,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED8,
-            },
-            Slot::Retired9 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED9,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED9,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED9,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED9,
-                ObjectClass::AttestationCertificate => Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED9,
-            },
-            Slot::Retired10 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED10,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED10,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED10,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED10,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED10
-                }
-            },
-            Slot::Retired11 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED11,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED11,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED11,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED11,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED11
-                }
-            },
-            Slot::Retired12 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED12,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED12,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED12,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED12,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED12
-                }
-            },
-            Slot::Retired13 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED13,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED13,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED13,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED13,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED13
-                }
-            },
-            Slot::Retired14 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED14,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED14,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED14,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED14,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED14
-                }
-            },
-            Slot::Retired15 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED15,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED15,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED15,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED15,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED15
-                }
-            },
-            Slot::Retired16 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED16,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED16,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED16,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED16,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED16
-                }
-            },
-            Slot::Retired17 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED17,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED17,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED17,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED17,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED17
-                }
-            },
-            Slot::Retired18 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED18,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED18,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED18,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED18,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED18
-                }
-            },
-            Slot::Retired19 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED19,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED19,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED19,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED19,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED19
-                }
-            },
-            Slot::Retired20 => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_RETIRED20,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_RETIRED20,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_RETIRED20,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_RETIRED20,
-                ObjectClass::AttestationCertificate => {
-                    Self::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED20
-                }
-            },
-            Slot::Attestation => match class {
-                ObjectClass::SecretKey => {
-                    unreachable!("PIV_SECRET_OBJ is a singleton, not a per-slot object")
-                }
-                ObjectClass::Certificate => Self::PIV_CERT_OBJ_X509_ATTESTATION,
-                ObjectClass::PublicKey => Self::PIV_PUBK_OBJ_ATTESTATION,
-                ObjectClass::PrivateKey => Self::PIV_PVTK_OBJ_ATTESTATION,
-                ObjectClass::Data => Self::PIV_DATA_OBJ_X509_ATTESTATION,
-                ObjectClass::AttestationCertificate => unreachable!(),
-            },
-            _ => unreachable!("unsupported PIV slot"),
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            PivObjectId::PIV_DATA_OBJ_X509_PIV_AUTH => "X.509 Certificate for PIV Authentication",
-            PivObjectId::PIV_DATA_OBJ_X509_DS => "X.509 Certificate for Digital Signature",
-            PivObjectId::PIV_DATA_OBJ_X509_KM => "X.509 Certificate for Key Management",
-            PivObjectId::PIV_DATA_OBJ_X509_CARD_AUTH => "X.509 Certificate for Card Authentication",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED1 => "X.509 Certificate for Retired Key 1",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED2 => "X.509 Certificate for Retired Key 2",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED3 => "X.509 Certificate for Retired Key 3",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED4 => "X.509 Certificate for Retired Key 4",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED5 => "X.509 Certificate for Retired Key 5",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED6 => "X.509 Certificate for Retired Key 6",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED7 => "X.509 Certificate for Retired Key 7",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED8 => "X.509 Certificate for Retired Key 8",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED9 => "X.509 Certificate for Retired Key 9",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED10 => "X.509 Certificate for Retired Key 10",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED11 => "X.509 Certificate for Retired Key 11",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED12 => "X.509 Certificate for Retired Key 12",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED13 => "X.509 Certificate for Retired Key 13",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED14 => "X.509 Certificate for Retired Key 14",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED15 => "X.509 Certificate for Retired Key 15",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED16 => "X.509 Certificate for Retired Key 16",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED17 => "X.509 Certificate for Retired Key 17",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED18 => "X.509 Certificate for Retired Key 18",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED19 => "X.509 Certificate for Retired Key 19",
-            PivObjectId::PIV_DATA_OBJ_X509_RETIRED20 => "X.509 Certificate for Retired Key 20",
-            PivObjectId::PIV_DATA_OBJ_X509_ATTESTATION => "X.509 Certificate for PIV Attestation",
-
-            PivObjectId::PIV_DATA_OBJ_CCC => "Card Capability Container",
-            PivObjectId::PIV_DATA_OBJ_CHUI => "Card Holder Unique Identifier",
-            PivObjectId::PIV_DATA_OBJ_CHF => "Card Holder Fingerprints",
-            PivObjectId::PIV_DATA_OBJ_SEC_OBJ => "Security Object",
-            PivObjectId::PIV_DATA_OBJ_CHFI => "Cardholder Facial Images",
-            PivObjectId::PIV_DATA_OBJ_PI => "Printed Information",
-            PivObjectId::PIV_DATA_OBJ_DISCOVERY => "Discovery Object",
-            PivObjectId::PIV_DATA_OBJ_HISTORY => "Key History Object",
-            PivObjectId::PIV_DATA_OBJ_IRIS_IMAGE => "Cardholder Iris Images",
-            PivObjectId::PIV_DATA_OBJ_BITGT => "Biometric Information Templates Group Template",
-            PivObjectId::PIV_DATA_OBJ_SM_SIGNER => "Secure Messaging Certificate Signer",
-            PivObjectId::PIV_DATA_OBJ_PC_REF_DATA => "Pairing Code Reference Data Container",
-
-            PivObjectId::PIV_CERT_OBJ_X509_PIV_AUTH => "X.509 Certificate for PIV Authentication",
-            PivObjectId::PIV_CERT_OBJ_X509_DS => "X.509 Certificate for Digital Signature",
-            PivObjectId::PIV_CERT_OBJ_X509_KM => "X.509 Certificate for Key Management",
-            PivObjectId::PIV_CERT_OBJ_X509_CARD_AUTH => "X.509 Certificate for Card Authentication",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED1 => "X.509 Certificate for Retired Key 1",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED2 => "X.509 Certificate for Retired Key 2",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED3 => "X.509 Certificate for Retired Key 3",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED4 => "X.509 Certificate for Retired Key 4",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED5 => "X.509 Certificate for Retired Key 5",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED6 => "X.509 Certificate for Retired Key 6",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED7 => "X.509 Certificate for Retired Key 7",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED8 => "X.509 Certificate for Retired Key 8",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED9 => "X.509 Certificate for Retired Key 9",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED10 => "X.509 Certificate for Retired Key 10",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED11 => "X.509 Certificate for Retired Key 11",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED12 => "X.509 Certificate for Retired Key 12",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED13 => "X.509 Certificate for Retired Key 13",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED14 => "X.509 Certificate for Retired Key 14",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED15 => "X.509 Certificate for Retired Key 15",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED16 => "X.509 Certificate for Retired Key 16",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED17 => "X.509 Certificate for Retired Key 17",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED18 => "X.509 Certificate for Retired Key 18",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED19 => "X.509 Certificate for Retired Key 19",
-            PivObjectId::PIV_CERT_OBJ_X509_RETIRED20 => "X.509 Certificate for Retired Key 20",
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION => "X.509 Certificate for PIV Attestation",
-
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_PIV_AUTH => {
-                "X.509 Certificate for PIV Attestation 9a"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_DS => {
-                "X.509 Certificate for PIV Attestation 9c"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_KM => {
-                "X.509 Certificate for PIV Attestation 9d"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_CARD_AUTH => {
-                "X.509 Certificate for PIV Attestation 9e"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED1 => {
-                "X.509 Certificate for PIV Attestation 82"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED2 => {
-                "X.509 Certificate for PIV Attestation 83"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED3 => {
-                "X.509 Certificate for PIV Attestation 84"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED4 => {
-                "X.509 Certificate for PIV Attestation 85"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED5 => {
-                "X.509 Certificate for PIV Attestation 86"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED6 => {
-                "X.509 Certificate for PIV Attestation 87"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED7 => {
-                "X.509 Certificate for PIV Attestation 88"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED8 => {
-                "X.509 Certificate for PIV Attestation 89"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED9 => {
-                "X.509 Certificate for PIV Attestation 8a"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED10 => {
-                "X.509 Certificate for PIV Attestation 8b"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED11 => {
-                "X.509 Certificate for PIV Attestation 8c"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED12 => {
-                "X.509 Certificate for PIV Attestation 8d"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED13 => {
-                "X.509 Certificate for PIV Attestation 8e"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED14 => {
-                "X.509 Certificate for PIV Attestation 8f"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED15 => {
-                "X.509 Certificate for PIV Attestation 90"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED16 => {
-                "X.509 Certificate for PIV Attestation 91"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED17 => {
-                "X.509 Certificate for PIV Attestation 92"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED18 => {
-                "X.509 Certificate for PIV Attestation 93"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED19 => {
-                "X.509 Certificate for PIV Attestation 94"
-            }
-            PivObjectId::PIV_CERT_OBJ_X509_ATTESTATION_RETIRED20 => {
-                "X.509 Certificate for PIV Attestation 95"
-            }
-
-            PivObjectId::PIV_PVTK_OBJ_PIV_AUTH => "Private key for PIV Authentication",
-            PivObjectId::PIV_PVTK_OBJ_DS => "Private key for Digital Signature",
-            PivObjectId::PIV_PVTK_OBJ_KM => "Private key for Key Management",
-            PivObjectId::PIV_PVTK_OBJ_CARD_AUTH => "Private key for Card Authentication",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED1 => "Private key for Retired Key 1",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED2 => "Private key for Retired Key 2",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED3 => "Private key for Retired Key 3",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED4 => "Private key for Retired Key 4",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED5 => "Private key for Retired Key 5",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED6 => "Private key for Retired Key 6",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED7 => "Private key for Retired Key 7",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED8 => "Private key for Retired Key 8",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED9 => "Private key for Retired Key 9",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED10 => "Private key for Retired Key 10",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED11 => "Private key for Retired Key 11",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED12 => "Private key for Retired Key 12",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED13 => "Private key for Retired Key 13",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED14 => "Private key for Retired Key 14",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED15 => "Private key for Retired Key 15",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED16 => "Private key for Retired Key 16",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED17 => "Private key for Retired Key 17",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED18 => "Private key for Retired Key 18",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED19 => "Private key for Retired Key 19",
-            PivObjectId::PIV_PVTK_OBJ_RETIRED20 => "Private key for Retired Key 20",
-            PivObjectId::PIV_PVTK_OBJ_ATTESTATION => "Private key for PIV Attestation",
-
-            PivObjectId::PIV_PUBK_OBJ_PIV_AUTH => "Public key for PIV Authentication",
-            PivObjectId::PIV_PUBK_OBJ_DS => "Public key for Digital Signature",
-            PivObjectId::PIV_PUBK_OBJ_KM => "Public key for Key Management",
-            PivObjectId::PIV_PUBK_OBJ_CARD_AUTH => "Public key for Card Authentication",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED1 => "Public key for Retired Key 1",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED2 => "Public key for Retired Key 2",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED3 => "Public key for Retired Key 3",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED4 => "Public key for Retired Key 4",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED5 => "Public key for Retired Key 5",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED6 => "Public key for Retired Key 6",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED7 => "Public key for Retired Key 7",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED8 => "Public key for Retired Key 8",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED9 => "Public key for Retired Key 9",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED10 => "Public key for Retired Key 10",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED11 => "Public key for Retired Key 11",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED12 => "Public key for Retired Key 12",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED13 => "Public key for Retired Key 13",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED14 => "Public key for Retired Key 14",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED15 => "Public key for Retired Key 15",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED16 => "Public key for Retired Key 16",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED17 => "Public key for Retired Key 17",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED18 => "Public key for Retired Key 18",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED19 => "Public key for Retired Key 19",
-            PivObjectId::PIV_PUBK_OBJ_RETIRED20 => "Public key for Retired Key 20",
-            PivObjectId::PIV_PUBK_OBJ_ATTESTATION => "Public key for PIV Attestation",
-
-            PivObjectId::PIV_SECRET_OBJ => "Generic secret key",
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct PivObject {
     pub id: PivObjectId,
-    pub(crate) class: ObjectClass,
+    pub(crate) class: PivObjectClass,
     pub(crate) slot: Slot,
     pin_policy: PinPolicy,
     touch_policy: TouchPolicy,
@@ -763,6 +50,29 @@ pub struct PivObject {
     serial_der: Option<Vec<u8>>,
     ec_params_der: Option<Vec<u8>>,
     data: Option<Vec<u8>>,
+}
+
+impl PivObject {
+    /// A minimal object with every optional field unset — a base for
+    /// struct-update syntax at each call site that only overrides what's
+    /// relevant to that object.
+    fn new(id: PivObjectId, class: PivObjectClass, slot: Slot) -> Self {
+        Self {
+            id,
+            class,
+            slot,
+            pin_policy: PinPolicy::Default,
+            touch_policy: TouchPolicy::Default,
+            generated: false,
+            public_key: None,
+            cert_der: None,
+            subject_der: None,
+            issuer_der: None,
+            serial_der: None,
+            ec_params_der: None,
+            data: None,
+        }
+    }
 }
 
 /// Reads the PIN/touch policy an attestation certificate asserts for its key
@@ -802,6 +112,7 @@ fn is_key_absent(err: &PivError) -> bool {
 
 /// Figures out whether `slot` actually has a key in it, independent of
 /// whether it also has a certificate
+/// Return (KeyPresence, PinPolicy, TouchPolicy, generated, Option<attestation cert>)
 fn detect_key(
     piv: &mut ActivePivSession,
     slot: Slot,
@@ -877,25 +188,17 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
     let (key_presence, pin_policy, touch_policy, generated, attestation_der) =
         detect_key(piv, slot);
 
-    // The raw data object backing this container — same bytes CKO_DATA's
-    // CKA_VALUE exposes (ykcs11.c:1041-1055). Independent of both the
+    // The raw data object backing this container, same bytes CKO_DATA's
+    // CKA_VALUE exposes. Independent of both the
     // key and the certificate below.
-    if let Ok(raw) = piv.get_object(ObjectId::from_slot(slot)) {
-        let id = PivObjectId::from_slot_class(ObjectClass::Data, slot);
+    if let Ok(raw) = piv.get_object(PivSlotId::from_slot(slot)) {
+        let id = PivObjectId::from_slot_class(PivObjectClass::Data, slot);
         found.push(PivObject {
-            id,
-            class: ObjectClass::Data,
-            slot,
             pin_policy,
             touch_policy,
             generated,
-            public_key: None,
-            cert_der: None,
-            subject_der: None,
-            issuer_der: None,
-            serial_der: None,
-            ec_params_der: None,
             data: Some(raw),
+            ..PivObject::new(id, PivObjectClass::Data, slot)
         });
     }
 
@@ -920,28 +223,26 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
                             | PublicKey::MlDsa(_)
                             | PublicKey::MlKem(_)
                     ) {
-                        ec_params_der = tbs
-                            .subject_public_key_info()
-                            .algorithm
-                            .parameters
-                            .as_ref()
-                            .and_then(|p| p.to_der().ok());
+                        if let PublicKey::Ec(_) = &pk {
+                            ec_params_der = tbs
+                                .subject_public_key_info()
+                                .algorithm
+                                .parameters
+                                .as_ref()
+                                .and_then(|p| p.to_der().ok());
+                        }
                         cert_public_key = Some(pk);
-                        let id = PivObjectId::from_slot_class(ObjectClass::Certificate, slot);
+                        let id = PivObjectId::from_slot_class(PivObjectClass::Certificate, slot);
                         found.push(PivObject {
-                            id,
-                            class: ObjectClass::Certificate,
-                            slot,
                             pin_policy,
                             touch_policy,
                             generated,
-                            public_key: None,
                             cert_der: Some(cert_der),
                             subject_der: Some(subject_der),
                             issuer_der: Some(issuer_der),
                             serial_der: Some(serial_der),
                             ec_params_der: ec_params_der.clone(),
-                            data: None,
+                            ..PivObject::new(id, PivObjectClass::Certificate, slot)
                         });
                     }
                 }
@@ -965,21 +266,16 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
             })
             .unwrap_or((None, None, None));
 
-        let id = PivObjectId::from_slot_class(ObjectClass::AttestationCertificate, slot);
+        let id = PivObjectId::from_slot_class(PivObjectClass::AttestationCertificate, slot);
         found.push(PivObject {
-            id,
-            class: ObjectClass::AttestationCertificate,
-            slot,
             pin_policy,
             touch_policy,
             generated,
-            public_key: None,
             cert_der: Some(attestation_der),
             subject_der,
             issuer_der,
             serial_der,
-            ec_params_der: None,
-            data: None,
+            ..PivObject::new(id, PivObjectClass::AttestationCertificate, slot)
         });
     }
 
@@ -1004,22 +300,15 @@ fn read_slot_objects(piv: &mut ActivePivSession, slot: Slot) -> Vec<PivObject> {
     };
 
     if let Some(public_key) = key_public_key {
-        for class in [ObjectClass::PublicKey, ObjectClass::PrivateKey] {
+        for class in [PivObjectClass::PublicKey, PivObjectClass::PrivateKey] {
             let id = PivObjectId::from_slot_class(class, slot);
             found.push(PivObject {
-                id,
-                class,
-                slot,
                 pin_policy,
                 touch_policy,
                 generated,
                 public_key: Some(public_key.clone()),
-                cert_der: None,
-                subject_der: None,
-                issuer_der: None,
-                serial_der: None,
                 ec_params_der: ec_params_der.clone(),
-                data: None,
+                ..PivObject::new(id, class, slot)
             });
         }
     }
@@ -1040,19 +329,19 @@ pub fn read_objects(piv: &mut ActivePivSession) -> Vec<PivObject> {
     // They only ever produce a `Data`-class object, their
     // sub_ids never appear in find_cert_object/find_pvtk_object/
     // find_pubk_object's lookup tables
-    if let Ok(raw) = piv.get_object(ObjectId::Capability) {
+    if let Ok(raw) = piv.get_object(PivSlotId::Capability) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_CCC, raw);
     }
-    if let Ok(raw) = piv.get_object(ObjectId::Chuid) {
+    if let Ok(raw) = piv.get_object(PivSlotId::Chuid) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_CHUI, raw);
     }
-    if let Ok(raw) = piv.get_object(ObjectId::Security) {
+    if let Ok(raw) = piv.get_object(PivSlotId::Security) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_SEC_OBJ, raw);
     }
-    if let Ok(raw) = piv.get_object(ObjectId::Discovery) {
+    if let Ok(raw) = piv.get_object(PivSlotId::Discovery) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_DISCOVERY, raw);
     }
-    if let Ok(raw) = piv.get_object(ObjectId::KeyHistory) {
+    if let Ok(raw) = piv.get_object(PivSlotId::KeyHistory) {
         push_data_object(&mut found, PivObjectId::PIV_DATA_OBJ_HISTORY, raw);
     }
     // yubikit's ObjectId enum doesn't have these two (yet). Raw numeric
@@ -1074,11 +363,11 @@ pub(crate) fn refresh_slot_objects(
     slot: Slot,
 ) {
     let stale_ids = [
-        ObjectClass::Certificate,
-        ObjectClass::PublicKey,
-        ObjectClass::PrivateKey,
-        ObjectClass::Data,
-        ObjectClass::AttestationCertificate,
+        PivObjectClass::Certificate,
+        PivObjectClass::PublicKey,
+        PivObjectClass::PrivateKey,
+        PivObjectClass::Data,
+        PivObjectClass::AttestationCertificate,
     ]
     .map(|class| PivObjectId::from_slot_class(class, slot));
     objects.retain(|o| !stale_ids.contains(&o.id));
@@ -1087,19 +376,8 @@ pub(crate) fn refresh_slot_objects(
 
 fn push_data_object(found: &mut Vec<PivObject>, id: PivObjectId, raw: Vec<u8>) {
     found.push(PivObject {
-        id,
-        class: ObjectClass::Data,
-        slot: Slot::Authentication,
-        pin_policy: PinPolicy::Default,
-        touch_policy: TouchPolicy::Default,
-        generated: false,
-        public_key: None,
-        cert_der: None,
-        subject_der: None,
-        issuer_der: None,
-        serial_der: None,
-        ec_params_der: None,
         data: Some(raw),
+        ..PivObject::new(id, PivObjectClass::Data, Slot::Authentication)
     });
 }
 
@@ -1108,35 +386,39 @@ fn push_data_object(found: &mut Vec<PivObject>, id: PivObjectId, raw: Vec<u8>) {
 pub fn object_handles(objects: &[PivObject], include_private: bool) -> Vec<CK_OBJECT_HANDLE> {
     objects
         .iter()
-        .filter(|o| include_private || o.class != ObjectClass::PrivateKey)
+        .filter(|o| include_private || o.class != PivObjectClass::PrivateKey)
         .map(|o| o.id as CK_OBJECT_HANDLE)
         .collect()
+}
+
+fn find_object(objects: &[PivObject], handle: CK_OBJECT_HANDLE) -> Option<&PivObject> {
+    objects.iter().find(|o| o.id as CK_OBJECT_HANDLE == handle)
+}
+
+fn find_key(
+    objects: &[PivObject],
+    handle: CK_OBJECT_HANDLE,
+    class: PivObjectClass,
+) -> Option<(Slot, &PublicKey)> {
+    let obj = find_object(objects, handle)?;
+    if obj.class != class {
+        return None;
+    }
+    Some((obj.slot, obj.public_key.as_ref()?))
 }
 
 pub fn find_private_key(
     objects: &[PivObject],
     handle: CK_OBJECT_HANDLE,
 ) -> Option<(Slot, &PublicKey)> {
-    let obj = objects
-        .iter()
-        .find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
-    if obj.class != ObjectClass::PrivateKey {
-        return None;
-    }
-    Some((obj.slot, obj.public_key.as_ref()?))
+    find_key(objects, handle, PivObjectClass::PrivateKey)
 }
 
 pub fn find_public_key(
     objects: &[PivObject],
     handle: CK_OBJECT_HANDLE,
 ) -> Option<(Slot, &PublicKey)> {
-    let obj = objects
-        .iter()
-        .find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
-    if obj.class != ObjectClass::PublicKey {
-        return None;
-    }
-    Some((obj.slot, obj.public_key.as_ref()?))
+    find_key(objects, handle, PivObjectClass::PublicKey)
 }
 
 pub fn get_attribute(
@@ -1144,16 +426,14 @@ pub fn get_attribute(
     handle: CK_OBJECT_HANDLE,
     attr_type: CK_ATTRIBUTE_TYPE,
 ) -> Option<Vec<u8>> {
-    let obj = objects
-        .iter()
-        .find(|o| o.id as CK_OBJECT_HANDLE == handle)?;
+    let obj = find_object(objects, handle)?;
     match obj.class {
-        ObjectClass::Certificate => get_cert_attribute(obj, attr_type, true),
-        ObjectClass::PublicKey => get_pubkey_attribute(obj, attr_type),
-        ObjectClass::PrivateKey => get_privkey_attribute(obj, attr_type),
-        ObjectClass::Data => get_data_attribute(obj, attr_type),
-        ObjectClass::AttestationCertificate => get_cert_attribute(obj, attr_type, false),
-        ObjectClass::SecretKey => get_secret_key_attribute(obj, attr_type),
+        PivObjectClass::Certificate => get_cert_attribute(obj, attr_type, true),
+        PivObjectClass::PublicKey => get_pubkey_attribute(obj, attr_type),
+        PivObjectClass::PrivateKey => get_privkey_attribute(obj, attr_type),
+        PivObjectClass::Data => get_data_attribute(obj, attr_type),
+        PivObjectClass::AttestationCertificate => get_cert_attribute(obj, attr_type, false),
+        PivObjectClass::SecretKey => get_secret_key_attribute(obj, attr_type),
     }
 }
 
@@ -1218,21 +498,10 @@ fn get_secret_key_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Op
 /// Builds (or replaces) the single `PIV_SECRET_OBJ` object with a freshly
 /// derived ECDH shared secret.
 pub(crate) fn store_secret_key(objects: &mut Vec<PivObject>, slot: Slot, secret: Vec<u8>) {
-    objects.retain(|o| o.class != ObjectClass::SecretKey);
+    objects.retain(|o| o.class != PivObjectClass::SecretKey);
     objects.push(PivObject {
-        id: PivObjectId::PIV_SECRET_OBJ,
-        class: ObjectClass::SecretKey,
-        slot,
-        pin_policy: PinPolicy::Default,
-        touch_policy: TouchPolicy::Default,
-        generated: false,
-        public_key: None,
-        cert_der: None,
-        subject_der: None,
-        issuer_der: None,
-        serial_der: None,
-        ec_params_der: None,
         data: Some(secret),
+        ..PivObject::new(PivObjectId::PIV_SECRET_OBJ, PivObjectClass::SecretKey, slot)
     });
 }
 
@@ -1374,7 +643,7 @@ fn get_cert_attribute(
         }
         CKA_ID => {
             yk_dbg!("ID");
-            Some(vec![slot_cka_id(obj.slot)])
+            Some(vec![slot_to_ckaid(obj.slot)])
         }
         CKA_MODIFIABLE => {
             yk_dbg!("MODIFIABLE");
@@ -1453,7 +722,7 @@ fn get_pubkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option
         }
         CKA_ID => {
             yk_dbg!("ID");
-            Some(vec![slot_cka_id(obj.slot)])
+            Some(vec![slot_to_ckaid(obj.slot)])
         }
         CKA_TRUSTED => {
             yk_dbg!("TRUSTED");
@@ -1587,7 +856,7 @@ fn get_privkey_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Optio
         }
         CKA_ID => {
             yk_dbg!("ID");
-            Some(vec![slot_cka_id(obj.slot)])
+            Some(vec![slot_to_ckaid(obj.slot)])
         }
         CKA_SENSITIVE => {
             yk_dbg!("SENSITIVE");
@@ -1892,7 +1161,7 @@ fn get_data_attribute(obj: &PivObject, attr_type: CK_ATTRIBUTE_TYPE) -> Option<V
                 PivObjectId::PIV_DATA_OBJ_HISTORY => 33,
                 PivObjectId::PIV_DATA_OBJ_SM_SIGNER => 36,
                 PivObjectId::PIV_DATA_OBJ_PC_REF_DATA => 37,
-                _ => slot_cka_id(obj.slot),
+                _ => slot_to_ckaid(obj.slot),
             };
             Some(vec![cka_id])
         }
@@ -1935,22 +1204,8 @@ mod tests {
     use common::backend::Slot as EngineSlot;
     use common::session::LoginState;
 
-    fn test_object(id: PivObjectId, class: ObjectClass, slot: Slot) -> PivObject {
-        PivObject {
-            id,
-            class,
-            slot,
-            pin_policy: PinPolicy::Default,
-            touch_policy: TouchPolicy::Default,
-            generated: false,
-            public_key: None,
-            cert_der: None,
-            subject_der: None,
-            issuer_der: None,
-            serial_der: None,
-            ec_params_der: None,
-            data: None,
-        }
+    fn test_object(id: PivObjectId, class: PivObjectClass, slot: Slot) -> PivObject {
+        PivObject::new(id, class, slot)
     }
 
     fn test_slot(objects: Vec<PivObject>, login_state: LoginState) -> EngineSlot<PivBackend> {
@@ -1976,7 +1231,7 @@ mod tests {
     fn destroy_object_removes_the_secret_key_singleton_without_login() {
         let obj = test_object(
             PivObjectId::PIV_SECRET_OBJ,
-            ObjectClass::SecretKey,
+            PivObjectClass::SecretKey,
             Slot::Authentication,
         );
         let mut slot = test_slot(vec![obj], LoginState::Public);
@@ -1995,7 +1250,7 @@ mod tests {
     fn destroy_object_requires_so_login_for_a_private_key_handle() {
         let obj = test_object(
             PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
-            ObjectClass::PrivateKey,
+            PivObjectClass::PrivateKey,
             Slot::Authentication,
         );
         let handle = obj.id as CK_OBJECT_HANDLE;
@@ -2010,7 +1265,7 @@ mod tests {
     fn destroy_object_treats_a_private_key_handle_like_its_slots_certificate() {
         let obj = test_object(
             PivObjectId::PIV_PVTK_OBJ_PIV_AUTH,
-            ObjectClass::PrivateKey,
+            PivObjectClass::PrivateKey,
             Slot::Authentication,
         );
         let handle = obj.id as CK_OBJECT_HANDLE;
@@ -2025,7 +1280,7 @@ mod tests {
     fn destroy_object_rejects_a_data_object_as_a_deliberate_scope_limit() {
         let obj = test_object(
             PivObjectId::PIV_DATA_OBJ_CHUI,
-            ObjectClass::Data,
+            PivObjectClass::Data,
             Slot::Authentication,
         );
         let handle = obj.id as CK_OBJECT_HANDLE;
@@ -2040,7 +1295,7 @@ mod tests {
     fn destroy_object_requires_so_login_for_a_certificate_handle() {
         let obj = test_object(
             PivObjectId::PIV_CERT_OBJ_X509_PIV_AUTH,
-            ObjectClass::Certificate,
+            PivObjectClass::Certificate,
             Slot::Authentication,
         );
         let handle = obj.id as CK_OBJECT_HANDLE;

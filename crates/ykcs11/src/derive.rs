@@ -120,7 +120,7 @@ pub fn derive_key(
 
     store_secret_key(&mut slot.data.objects, piv_slot, secret);
 
-    Ok(crate::objects::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
+    Ok(crate::piv_key_slot::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
 }
 
 #[cfg(test)]

@@ -132,7 +132,7 @@ pub fn encapsulate_key(
     let (ciphertext, shared_secret) = ml_kem_encapsulate(k.parameter_set, &k.key)?;
 
     store_secret_key(&mut slot.data.objects, piv_slot, shared_secret);
-    let handle = crate::objects::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE;
+    let handle = crate::piv_key_slot::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE;
 
     Ok((ciphertext, handle))
 }
@@ -171,5 +171,5 @@ pub fn decapsulate_key(
 
     store_secret_key(&mut slot.data.objects, piv_slot, shared_secret);
 
-    Ok(crate::objects::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
+    Ok(crate::piv_key_slot::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
 }

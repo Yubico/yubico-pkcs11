@@ -216,7 +216,7 @@ pub fn create_object(
             CK_RV::from(CKR_TEMPLATE_INCOMPLETE)
         })?;
     let piv_slot =
-        crate::objects::slot_from_cka_id(id).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
+        crate::piv_key_slot::slot_from_ckaid(id).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
 
     match class as u32 {
         CKO_CERTIFICATE => {
@@ -236,8 +236,8 @@ pub fn create_object(
                 .map_err(piv_error_to_rv)?;
             refresh_slot_objects(&mut slot.data.objects, piv, piv_slot);
 
-            Ok(crate::objects::PivObjectId::from_slot_class(
-                crate::objects::ObjectClass::Certificate,
+            Ok(crate::piv_key_slot::PivObjectId::from_slot_class(
+                crate::piv_key_slot::PivObjectClass::Certificate,
                 piv_slot,
             ) as CK_OBJECT_HANDLE)
         }
@@ -254,8 +254,8 @@ pub fn create_object(
                 .map_err(piv_error_to_rv)?;
             refresh_slot_objects(&mut slot.data.objects, piv, piv_slot);
 
-            Ok(crate::objects::PivObjectId::from_slot_class(
-                crate::objects::ObjectClass::PrivateKey,
+            Ok(crate::piv_key_slot::PivObjectId::from_slot_class(
+                crate::piv_key_slot::PivObjectClass::PrivateKey,
                 piv_slot,
             ) as CK_OBJECT_HANDLE)
         }

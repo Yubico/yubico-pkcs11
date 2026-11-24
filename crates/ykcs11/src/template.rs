@@ -50,6 +50,34 @@ pub(crate) fn find_byte(
 }
 
 /// Parse `CKA_YUBICO_PIN_POLICY`, `CKA_YUBICO_TOUCH_POLICY` and `CKA_ALWAYS_AUTHENTICATE`
+pub(crate) fn parse_policies(
+    pin_policy_value: Option<u8>,
+    touch_policy_value: Option<u8>,
+    always_authenticate_value: Option<u8>,
+) -> Result<(PinPolicy, TouchPolicy), CK_RV> {
+    let mut pin_policy = match pin_policy_value {
+        Some(b) => PinPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+        None => PinPolicy::Default,
+    };
+    let touch_policy = match touch_policy_value {
+        Some(b) => TouchPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+        None => TouchPolicy::Default,
+    };
+    if let Some(always) = always_authenticate_value {
+        if always != 0 {
+            match pin_policy {
+                PinPolicy::Default => pin_policy = PinPolicy::Always,
+                PinPolicy::Always => {}
+                _ => return Err(CKR_TEMPLATE_INCONSISTENT.into()),
+            }
+        } else if matches!(pin_policy, PinPolicy::Always) {
+            return Err(CKR_TEMPLATE_INCONSISTENT.into());
+        }
+    }
+    Ok((pin_policy, touch_policy))
+}
+
+/// Parse `CKA_YUBICO_PIN_POLICY`, `CKA_YUBICO_TOUCH_POLICY` and `CKA_ALWAYS_AUTHENTICATE`
 pub(crate) fn resolve_policies(
     private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<(PinPolicy, TouchPolicy), CK_RV> {
