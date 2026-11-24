@@ -134,14 +134,17 @@ pub unsafe fn decode_mechanism_param(
     decoded.unwrap_or_else(|| Ok(MechanismParam::Bytes(raw.to_vec())))
 }
 
-pub enum MechanismKind {
+pub enum SignatureMechanism {
     RsaX509,
-    RsaPkcs1Raw,
-    RsaPkcs1Hashed(CK_MECHANISM_TYPE),
-    RsaPssRaw,
-    RsaPssHashed(CK_MECHANISM_TYPE),
-    EcdsaRaw,
-    EcdsaHashed(CK_MECHANISM_TYPE),
+    /// `CKM_RSA_PKCS` (`None`) or one of the `CKM_SHA*_RSA_PKCS` variants
+    /// (`Some` the hash mechanism).
+    RsaPkcs1(Option<CK_MECHANISM_TYPE>),
+    /// `CKM_RSA_PKCS_PSS` (`None`) or one of the `CKM_SHA*_RSA_PKCS_PSS`
+    /// variants (`Some` the outer hash mechanism).
+    RsaPss(Option<CK_MECHANISM_TYPE>),
+    /// `CKM_ECDSA` (`None`) or one of the `CKM_ECDSA_SHA*` variants (`Some`
+    /// the hash mechanism).
+    Ecdsa(Option<CK_MECHANISM_TYPE>),
     Eddsa,
     MlDsa,
     /// `CKM_ML_DSA_EXTERNAL_MU` (PKCS#11 3.3): the data is the 64-byte
@@ -150,27 +153,33 @@ pub enum MechanismKind {
     MlDsaExternalMu,
 }
 
-pub fn classify_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<MechanismKind> {
+pub fn parse_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<SignatureMechanism> {
     Some(match mechanism as u32 {
-        CKM_RSA_X_509 => MechanismKind::RsaX509,
-        CKM_RSA_PKCS => MechanismKind::RsaPkcs1Raw,
-        CKM_SHA1_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA_1 as CK_MECHANISM_TYPE),
-        CKM_SHA256_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA256 as CK_MECHANISM_TYPE),
-        CKM_SHA384_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA384 as CK_MECHANISM_TYPE),
-        CKM_SHA512_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA512 as CK_MECHANISM_TYPE),
-        CKM_RSA_PKCS_PSS => MechanismKind::RsaPssRaw,
-        CKM_SHA1_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA_1 as CK_MECHANISM_TYPE),
-        CKM_SHA256_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA256 as CK_MECHANISM_TYPE),
-        CKM_SHA384_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA384 as CK_MECHANISM_TYPE),
-        CKM_SHA512_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA512 as CK_MECHANISM_TYPE),
-        CKM_ECDSA => MechanismKind::EcdsaRaw,
-        CKM_ECDSA_SHA1 => MechanismKind::EcdsaHashed(CKM_SHA_1 as CK_MECHANISM_TYPE),
-        CKM_ECDSA_SHA256 => MechanismKind::EcdsaHashed(CKM_SHA256 as CK_MECHANISM_TYPE),
-        CKM_ECDSA_SHA384 => MechanismKind::EcdsaHashed(CKM_SHA384 as CK_MECHANISM_TYPE),
-        CKM_ECDSA_SHA512 => MechanismKind::EcdsaHashed(CKM_SHA512 as CK_MECHANISM_TYPE),
-        CKM_EDDSA => MechanismKind::Eddsa,
-        CKM_ML_DSA => MechanismKind::MlDsa,
-        CKM_ML_DSA_EXTERNAL_MU => MechanismKind::MlDsaExternalMu,
+        CKM_RSA_X_509 => SignatureMechanism::RsaX509,
+        CKM_RSA_PKCS => SignatureMechanism::RsaPkcs1(None),
+        CKM_SHA1_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA_1 as CK_MECHANISM_TYPE)),
+        CKM_SHA256_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA256 as CK_MECHANISM_TYPE)),
+        CKM_SHA384_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA384 as CK_MECHANISM_TYPE)),
+        CKM_SHA512_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA512 as CK_MECHANISM_TYPE)),
+        CKM_RSA_PKCS_PSS => SignatureMechanism::RsaPss(None),
+        CKM_SHA1_RSA_PKCS_PSS => SignatureMechanism::RsaPss(Some(CKM_SHA_1 as CK_MECHANISM_TYPE)),
+        CKM_SHA256_RSA_PKCS_PSS => {
+            SignatureMechanism::RsaPss(Some(CKM_SHA256 as CK_MECHANISM_TYPE))
+        }
+        CKM_SHA384_RSA_PKCS_PSS => {
+            SignatureMechanism::RsaPss(Some(CKM_SHA384 as CK_MECHANISM_TYPE))
+        }
+        CKM_SHA512_RSA_PKCS_PSS => {
+            SignatureMechanism::RsaPss(Some(CKM_SHA512 as CK_MECHANISM_TYPE))
+        }
+        CKM_ECDSA => SignatureMechanism::Ecdsa(None),
+        CKM_ECDSA_SHA1 => SignatureMechanism::Ecdsa(Some(CKM_SHA_1 as CK_MECHANISM_TYPE)),
+        CKM_ECDSA_SHA256 => SignatureMechanism::Ecdsa(Some(CKM_SHA256 as CK_MECHANISM_TYPE)),
+        CKM_ECDSA_SHA384 => SignatureMechanism::Ecdsa(Some(CKM_SHA384 as CK_MECHANISM_TYPE)),
+        CKM_ECDSA_SHA512 => SignatureMechanism::Ecdsa(Some(CKM_SHA512 as CK_MECHANISM_TYPE)),
+        CKM_EDDSA => SignatureMechanism::Eddsa,
+        CKM_ML_DSA => SignatureMechanism::MlDsa,
+        CKM_ML_DSA_EXTERNAL_MU => SignatureMechanism::MlDsaExternalMu,
         _ => return None,
     })
 }

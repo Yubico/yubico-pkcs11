@@ -17,41 +17,41 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use common::backend::Slot;
 use common::digest::DigestOp;
-use common::mechanism::{MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params};
+use common::mechanism::{MechanismParam, SignatureMechanism, parse_mechanism, resolve_pss_params};
 use common::session::LoginState;
 use common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
 use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey, RsaKeySize};
-use yubikit::piv::{KeyType, Slot as PivSlot};
+use yubikit::piv::{KeyType as KeyAlgorithm, Slot as PivSlot};
 
 // TODO Read return error code from the YubiKey/yubikit when message size is too long
 const MAX_RAW_SIGN_DATA_LEN: usize = 4900;
 
 pub struct SignState {
     slot: PivSlot,
-    key_type: KeyType,
+    key_algorithm: KeyAlgorithm,
     algo: SignAlgorithm,
-    acc: Accumulator,
+    data: ProcessedData,
 }
 
 /// Collects the data from `C_SignUpdate` before it reaches the device
-pub(crate) enum Accumulator {
+pub(crate) enum ProcessedData {
     Hash(DigestOp),
     Raw(Vec<u8>),
 }
 
-impl Accumulator {
+impl ProcessedData {
     pub(crate) fn update(&mut self, data: &[u8]) {
         match self {
-            Accumulator::Hash(h) => h.update(data),
-            Accumulator::Raw(buf) => buf.extend_from_slice(data),
+            ProcessedData::Hash(h) => h.update(data),
+            ProcessedData::Raw(buf) => buf.extend_from_slice(data),
         }
     }
 
     pub(crate) fn finalize(self) -> Vec<u8> {
         match self {
-            Accumulator::Hash(h) => h.finalize(),
-            Accumulator::Raw(buf) => buf,
+            ProcessedData::Hash(h) => h.finalize(),
+            ProcessedData::Raw(buf) => buf,
         }
     }
 }
@@ -65,8 +65,6 @@ enum SignAlgorithm {
         hash_mechanism: Option<CK_MECHANISM_TYPE>,
         modulus_len: usize,
     },
-    /// `CKM_ECDSA` (raw) and `CKM_ECDSA_SHAx` (hashed)
-    Ecdsa { curve_byte_len: usize },
     /// `CKM_RSA_PKCS_PSS` (raw) or one of the `CKM_SHAx_RSA_PKCS_PSS`
     /// combined mechanisms
     RsaPss {
@@ -76,6 +74,8 @@ enum SignAlgorithm {
         modulus_len: usize,
         modulus_bits: usize,
     },
+    /// `CKM_ECDSA` (raw) and `CKM_ECDSA_SHAx` (hashed)
+    Ecdsa { curve_byte_len: usize },
     /// `CKM_EDDSA`
     Eddsa,
     /// `CKM_ML_DSA`
@@ -88,7 +88,7 @@ enum SignAlgorithm {
 /// `CKM_ML_DSA`, returning the context bytes (empty when the caller supplied
 /// none). Callers that require an empty context (`CKM_ML_DSA_EXTERNAL_MU`)
 /// check the result's `is_empty()` themselves.
-pub(crate) fn resolve_ml_dsa_context(parameter: &MechanismParam) -> Result<Vec<u8>, CK_RV> {
+pub(crate) fn parse_ml_dsa_context(parameter: &MechanismParam) -> Result<Vec<u8>, CK_RV> {
     match parameter {
         p if p.is_empty() => Ok(Vec::new()),
         MechanismParam::SignAdditionalContext(ctx)
@@ -109,20 +109,20 @@ fn ml_dsa_signature_len(parameter_set: MlDsaParameterSet) -> Result<CK_ULONG, CK
     })
 }
 
-fn rsa_key_type(size: RsaKeySize) -> Result<KeyType, CK_RV> {
+fn rsa_key_algorithm(size: RsaKeySize) -> Result<KeyAlgorithm, CK_RV> {
     Ok(match size {
-        RsaKeySize::Rsa1024 => KeyType::Rsa1024,
-        RsaKeySize::Rsa2048 => KeyType::Rsa2048,
-        RsaKeySize::Rsa3072 => KeyType::Rsa3072,
-        RsaKeySize::Rsa4096 => KeyType::Rsa4096,
+        RsaKeySize::Rsa1024 => KeyAlgorithm::Rsa1024,
+        RsaKeySize::Rsa2048 => KeyAlgorithm::Rsa2048,
+        RsaKeySize::Rsa3072 => KeyAlgorithm::Rsa3072,
+        RsaKeySize::Rsa4096 => KeyAlgorithm::Rsa4096,
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
 
-fn ec_key_type(curve: EcCurve) -> Result<(KeyType, usize), CK_RV> {
+fn ec_key_algorithm(curve: EcCurve) -> Result<(KeyAlgorithm, usize), CK_RV> {
     Ok(match curve {
-        EcCurve::P256 => (KeyType::EccP256, 32),
-        EcCurve::P384 => (KeyType::EccP384, 48),
+        EcCurve::P256 => (KeyAlgorithm::EccP256, 32),
+        EcCurve::P384 => (KeyAlgorithm::EccP384, 48),
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
 }
@@ -144,47 +144,36 @@ pub fn sign_init(
         return Err(CKR_USER_NOT_LOGGED_IN.into());
     }
 
-    let Some(mech_kind) = classify_mechanism(mechanism) else {
+    let Some(mech) = parse_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
-    let (key_type, algo, out_len) = match (&mech_kind, public_key) {
-        (MechanismKind::RsaX509, PublicKey::Rsa(k)) => {
+    let (key_algo, sign_algo, out_len) = match (&mech, public_key) {
+        (SignatureMechanism::RsaX509, PublicKey::Rsa(k)) => {
             let modulus_len = k.key_size.bit_len() / 8;
             (
-                rsa_key_type(k.key_size)?,
+                rsa_key_algorithm(k.key_size)?,
                 SignAlgorithm::RsaX509 { modulus_len },
                 modulus_len as CK_ULONG,
             )
         }
-        (MechanismKind::RsaPkcs1Raw, PublicKey::Rsa(k)) => {
+        (SignatureMechanism::RsaPkcs1(hash_mechanism), PublicKey::Rsa(k)) => {
             let modulus_len = k.key_size.bit_len() / 8;
             (
-                rsa_key_type(k.key_size)?,
+                rsa_key_algorithm(k.key_size)?,
                 SignAlgorithm::RsaPkcs1 {
-                    hash_mechanism: None,
+                    hash_mechanism: *hash_mechanism,
                     modulus_len,
                 },
                 modulus_len as CK_ULONG,
             )
         }
-        (MechanismKind::RsaPkcs1Hashed(hash_mechanism), PublicKey::Rsa(k)) => {
-            let modulus_len = k.key_size.bit_len() / 8;
-            (
-                rsa_key_type(k.key_size)?,
-                SignAlgorithm::RsaPkcs1 {
-                    hash_mechanism: Some(*hash_mechanism),
-                    modulus_len,
-                },
-                modulus_len as CK_ULONG,
-            )
-        }
-        (MechanismKind::RsaPssRaw, PublicKey::Rsa(k)) => {
+        (SignatureMechanism::RsaPss(outer_hash), PublicKey::Rsa(k)) => {
             let (hash_mechanism, mgf_hash_mechanism, salt_len) =
-                resolve_pss_params(parameter, None)?;
+                resolve_pss_params(parameter, *outer_hash)?;
             let modulus_len = k.key_size.bit_len() / 8;
             (
-                rsa_key_type(k.key_size)?,
+                rsa_key_algorithm(k.key_size)?,
                 SignAlgorithm::RsaPss {
                     hash_mechanism,
                     mgf_hash_mechanism,
@@ -195,36 +184,20 @@ pub fn sign_init(
                 modulus_len as CK_ULONG,
             )
         }
-        (MechanismKind::RsaPssHashed(outer_hash), PublicKey::Rsa(k)) => {
-            let (hash_mechanism, mgf_hash_mechanism, salt_len) =
-                resolve_pss_params(parameter, Some(*outer_hash))?;
-            let modulus_len = k.key_size.bit_len() / 8;
-            (
-                rsa_key_type(k.key_size)?,
-                SignAlgorithm::RsaPss {
-                    hash_mechanism,
-                    mgf_hash_mechanism,
-                    salt_len,
-                    modulus_len,
-                    modulus_bits: k.key_size.bit_len(),
-                },
-                modulus_len as CK_ULONG,
-            )
-        }
-        (MechanismKind::EcdsaRaw | MechanismKind::EcdsaHashed(_), PublicKey::Ec(k)) => {
-            let (key_type, curve_byte_len) = ec_key_type(k.curve.clone())?;
+        (SignatureMechanism::Ecdsa(_), PublicKey::Ec(k)) => {
+            let (key_type, curve_byte_len) = ec_key_algorithm(k.curve.clone())?;
             (
                 key_type,
                 SignAlgorithm::Ecdsa { curve_byte_len },
                 (curve_byte_len * 2) as CK_ULONG,
             )
         }
-        (MechanismKind::Eddsa, PublicKey::Ed25519(_)) => {
-            (KeyType::Ed25519, SignAlgorithm::Eddsa, 64)
+        (SignatureMechanism::Eddsa, PublicKey::Ed25519(_)) => {
+            (KeyAlgorithm::Ed25519, SignAlgorithm::Eddsa, 64)
         }
-        (MechanismKind::MlDsa, PublicKey::MlDsa(k)) => {
-            let context = resolve_ml_dsa_context(parameter)?;
-            let key_type = KeyType::try_from(&public_key.algorithm())
+        (SignatureMechanism::MlDsa, PublicKey::MlDsa(k)) => {
+            let context = parse_ml_dsa_context(parameter)?;
+            let key_type = KeyAlgorithm::try_from(&public_key.algorithm())
                 .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
             (
                 key_type,
@@ -232,16 +205,16 @@ pub fn sign_init(
                 ml_dsa_signature_len(k.parameter_set)?,
             )
         }
-        (MechanismKind::MlDsaExternalMu, PublicKey::MlDsa(k)) => {
+        (SignatureMechanism::MlDsaExternalMu, PublicKey::MlDsa(k)) => {
             // CK_SIGN_ADDITIONAL_CONTEXT is optional here, and the spec
             // requires `ulContextLen` to be zero: the context, if any, is
             // already folded into `mu` by the caller. `resolve_ml_dsa_context`
             // enforces the rest -- struct size, and the device's inability to
             // honour CKH_DETERMINISTIC_REQUIRED.
-            if !resolve_ml_dsa_context(parameter)?.is_empty() {
+            if !parse_ml_dsa_context(parameter)?.is_empty() {
                 return Err(CKR_MECHANISM_PARAM_INVALID.into());
             }
-            let key_type = KeyType::try_from(&public_key.algorithm())
+            let key_type = KeyAlgorithm::try_from(&public_key.algorithm())
                 .map_err(|_| CK_RV::from(CKR_KEY_TYPE_INCONSISTENT))?;
             (
                 key_type,
@@ -252,19 +225,19 @@ pub fn sign_init(
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     };
 
-    let acc = match mech_kind {
-        MechanismKind::RsaPkcs1Hashed(h)
-        | MechanismKind::EcdsaHashed(h)
-        | MechanismKind::RsaPssHashed(h) => {
-            Accumulator::Hash(DigestOp::new(h).map_err(|_| CK_RV::from(CKR_MECHANISM_INVALID))?)
+    let data = match mech {
+        SignatureMechanism::RsaPkcs1(Some(h))
+        | SignatureMechanism::Ecdsa(Some(h))
+        | SignatureMechanism::RsaPss(Some(h)) => {
+            ProcessedData::Hash(DigestOp::new(h).map_err(|_| CK_RV::from(CKR_MECHANISM_INVALID))?)
         }
-        MechanismKind::RsaX509
-        | MechanismKind::RsaPkcs1Raw
-        | MechanismKind::RsaPssRaw
-        | MechanismKind::EcdsaRaw
-        | MechanismKind::Eddsa
-        | MechanismKind::MlDsa
-        | MechanismKind::MlDsaExternalMu => Accumulator::Raw(Vec::new()),
+        SignatureMechanism::RsaX509
+        | SignatureMechanism::RsaPkcs1(None)
+        | SignatureMechanism::RsaPss(None)
+        | SignatureMechanism::Ecdsa(None)
+        | SignatureMechanism::Eddsa
+        | SignatureMechanism::MlDsa
+        | SignatureMechanism::MlDsaExternalMu => ProcessedData::Raw(Vec::new()),
     };
 
     let session = slot
@@ -273,9 +246,9 @@ pub fn sign_init(
         .ok_or(CK_RV::from(CKR_SESSION_HANDLE_INVALID))?;
     session.data.sign = Some(SignState {
         slot: piv_slot,
-        key_type,
-        algo,
-        acc,
+        key_algorithm: key_algo,
+        algo: sign_algo,
+        data,
     });
 
     Ok(out_len)
@@ -295,7 +268,7 @@ pub fn sign_update(
         .sign
         .as_mut()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
-    state.acc.update(data);
+    state.data.update(data);
     Ok(())
 }
 
@@ -313,7 +286,7 @@ pub fn sign_final(
         .take()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
 
-    let message = state.acc.finalize();
+    let message = state.data.finalize();
     let piv = slot
         .data
         .piv_session
@@ -324,7 +297,7 @@ pub fn sign_final(
         SignAlgorithm::RsaX509 { modulus_len } => {
             // No PKCS#1 structure, just left-zero-padding.
             let padded = zero_pad(&message, modulus_len)?;
-            piv.sign(state.slot, state.key_type, &padded)
+            piv.sign(state.slot, state.key_algorithm, &padded)
                 .map_err(piv_error_to_rv)
         }
         SignAlgorithm::RsaPkcs1 {
@@ -344,7 +317,7 @@ pub fn sign_final(
             };
             let padded = pkcs1_v15_pad(&to_pad, modulus_len)?;
 
-            piv.sign(state.slot, state.key_type, &padded)
+            piv.sign(state.slot, state.key_algorithm, &padded)
                 .map_err(piv_error_to_rv)
         }
         SignAlgorithm::RsaPss {
@@ -364,7 +337,7 @@ pub fn sign_final(
                 mgf_hash_mechanism,
             )?;
 
-            piv.sign(state.slot, state.key_type, &em)
+            piv.sign(state.slot, state.key_algorithm, &em)
                 .map_err(piv_error_to_rv)
         }
         SignAlgorithm::Ecdsa { curve_byte_len } => {
@@ -376,7 +349,7 @@ pub fn sign_final(
                 &message[..]
             };
             let der_sig = piv
-                .sign(state.slot, state.key_type, truncated)
+                .sign(state.slot, state.key_algorithm, truncated)
                 .map_err(piv_error_to_rv)?;
             strip_ecdsa_der(&der_sig, curve_byte_len)
         }
@@ -384,14 +357,14 @@ pub fn sign_final(
             if message.len() > MAX_RAW_SIGN_DATA_LEN {
                 return Err(CKR_DATA_LEN_RANGE.into());
             }
-            piv.sign(state.slot, state.key_type, &message)
+            piv.sign(state.slot, state.key_algorithm, &message)
                 .map_err(piv_error_to_rv)
         }
         SignAlgorithm::MlDsa { context } => {
             if message.len() + context.len() > MAX_RAW_SIGN_DATA_LEN {
                 return Err(CKR_DATA_LEN_RANGE.into());
             }
-            piv.sign_with_context(state.slot, state.key_type, &message, &context)
+            piv.sign_with_context(state.slot, state.key_algorithm, &message, &context)
                 .map_err(piv_error_to_rv)
         }
         SignAlgorithm::MlDsaExternalMu => {
@@ -400,7 +373,7 @@ pub fn sign_final(
             if message.len() != 64 {
                 return Err(CKR_DATA_LEN_RANGE.into());
             }
-            piv.sign_external_mu(state.slot, state.key_type, &message)
+            piv.sign_external_mu(state.slot, state.key_algorithm, &message)
                 .map_err(piv_error_to_rv)
         }
     }
