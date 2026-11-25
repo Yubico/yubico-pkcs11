@@ -25,16 +25,6 @@ pub(crate) const P256_CURVE_OID: &[u8] =
 /// `secp384r1`/P-384 (1.3.132.0.34) as a DER `OBJECT IDENTIFIER`
 pub(crate) const P384_CURVE_OID: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
 
-pub(crate) fn find_attr<'a>(
-    template: &'a [(CK_ATTRIBUTE_TYPE, Vec<u8>)],
-    attr: u32,
-) -> Option<&'a [u8]> {
-    template
-        .iter()
-        .find(|(t, _)| *t == attr as CK_ATTRIBUTE_TYPE)
-        .map(|(_, v)| v.as_slice())
-}
-
 /// Parse `CKA_YUBICO_PIN_POLICY`, `CKA_YUBICO_TOUCH_POLICY` and `CKA_ALWAYS_AUTHENTICATE`
 pub(crate) fn parse_policies(
     pin_policy_value: Option<u8>,

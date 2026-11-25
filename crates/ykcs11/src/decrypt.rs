@@ -18,7 +18,7 @@ use crate::backend::{PivBackend, piv_error_to_rv};
 use common::backend::Slot;
 use common::decrypt::{eme_oaep_unpad, eme_pkcs1_v15_unpad};
 use common::mechanism::{
-    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
+    EncryptionMechanism, MechanismParam, parse_encryption_mechanism, parse_oaep_params,
 };
 use common::session::LoginState;
 use common::sign::zero_pad;
@@ -33,7 +33,7 @@ pub struct DecryptState {
     buf: Vec<u8>,
 }
 
-enum DecryptAlgorithm {
+pub(crate) enum DecryptAlgorithm {
     /// `CKM_RSA_X_509`
     RsaX509,
     /// `CKM_RSA_PKCS`
@@ -63,7 +63,7 @@ pub fn decrypt_init(
         return Err(CKR_USER_NOT_LOGGED_IN.into());
     }
 
-    let Some(mech_kind) = classify_crypt_mechanism(mechanism) else {
+    let Some(mech) = parse_encryption_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
@@ -72,11 +72,11 @@ pub fn decrypt_init(
     };
     let modulus_len = k.key_size.bit_len() / 8;
 
-    let algo = match mech_kind {
-        CryptMechanismKind::RsaX509 => DecryptAlgorithm::RsaX509,
-        CryptMechanismKind::RsaPkcs1 => DecryptAlgorithm::RsaPkcs1,
-        CryptMechanismKind::RsaOaep => {
-            let (hash_mechanism, mgf_hash_mechanism, label) = resolve_oaep_params(parameter)?;
+    let algo = match mech {
+        EncryptionMechanism::RsaX509 => DecryptAlgorithm::RsaX509,
+        EncryptionMechanism::RsaPkcs1 => DecryptAlgorithm::RsaPkcs1,
+        EncryptionMechanism::RsaOaep => {
+            let (hash_mechanism, mgf_hash_mechanism, label) = parse_oaep_params(parameter)?;
             DecryptAlgorithm::RsaOaep {
                 hash_mechanism,
                 mgf_hash_mechanism,

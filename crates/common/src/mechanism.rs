@@ -153,7 +153,7 @@ pub enum SignatureMechanism {
     MlDsaExternalMu,
 }
 
-pub fn parse_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<SignatureMechanism> {
+pub fn parse_signature_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<SignatureMechanism> {
     Some(match mechanism as u32 {
         CKM_RSA_X_509 => SignatureMechanism::RsaX509,
         CKM_RSA_PKCS => SignatureMechanism::RsaPkcs1(None),
@@ -225,22 +225,22 @@ pub fn resolve_pss_params(
     Ok((pss.hashAlg, mgf_hash, pss.sLen as usize))
 }
 
-pub enum CryptMechanismKind {
+pub enum EncryptionMechanism {
     RsaX509,
     RsaPkcs1,
     RsaOaep,
 }
 
-pub fn classify_crypt_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<CryptMechanismKind> {
+pub fn parse_encryption_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<EncryptionMechanism> {
     Some(match mechanism as u32 {
-        CKM_RSA_X_509 => CryptMechanismKind::RsaX509,
-        CKM_RSA_PKCS => CryptMechanismKind::RsaPkcs1,
-        CKM_RSA_PKCS_OAEP => CryptMechanismKind::RsaOaep,
+        CKM_RSA_X_509 => EncryptionMechanism::RsaX509,
+        CKM_RSA_PKCS => EncryptionMechanism::RsaPkcs1,
+        CKM_RSA_PKCS_OAEP => EncryptionMechanism::RsaOaep,
         _ => return None,
     })
 }
 
-pub fn resolve_oaep_params(
+pub fn parse_oaep_params(
     parameter: &MechanismParam,
 ) -> Result<(CK_MECHANISM_TYPE, CK_MECHANISM_TYPE, Vec<u8>), CK_RV> {
     let MechanismParam::RsaOaep(oaep) = parameter else {
@@ -292,7 +292,7 @@ mod tests {
         let decoded = decode(CKM_RSA_PKCS_OAEP, &params).unwrap();
         drop(label);
         assert_eq!(
-            resolve_oaep_params(&decoded),
+            parse_oaep_params(&decoded),
             Ok((
                 CKM_SHA256 as CK_MECHANISM_TYPE,
                 CKM_SHA256 as CK_MECHANISM_TYPE,
@@ -345,7 +345,7 @@ mod tests {
         .unwrap();
         assert_eq!(truncated, MechanismParam::Bytes(raw.to_vec()));
         assert_eq!(
-            resolve_oaep_params(&truncated),
+            parse_oaep_params(&truncated),
             Err(CKR_MECHANISM_PARAM_INVALID.into())
         );
     }

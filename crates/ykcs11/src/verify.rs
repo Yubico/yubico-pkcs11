@@ -18,7 +18,9 @@ use crate::backend::PivBackend;
 use crate::sign::{ProcessedData, parse_ml_dsa_context};
 use common::backend::Slot;
 use common::digest::DigestOp;
-use common::mechanism::{MechanismParam, SignatureMechanism, parse_mechanism, resolve_pss_params};
+use common::mechanism::{
+    MechanismParam, SignatureMechanism, parse_signature_mechanism, resolve_pss_params,
+};
 use common::verify::{
     verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509,
 };
@@ -27,7 +29,7 @@ use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey};
 
 pub struct VerifyState {
     algo: VerifyAlgorithm,
-    acc: ProcessedData,
+    data: ProcessedData,
 }
 
 enum VerifyAlgorithm {
@@ -89,7 +91,7 @@ pub fn verify_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    let Some(mech_kind) = parse_mechanism(mechanism) else {
+    let Some(mech_kind) = parse_signature_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
@@ -168,7 +170,7 @@ pub fn verify_init(
         .sessions
         .get_mut(&h_session)
         .ok_or(CK_RV::from(CKR_SESSION_HANDLE_INVALID))?;
-    session.data.verify = Some(VerifyState { algo, acc });
+    session.data.verify = Some(VerifyState { algo, data: acc });
 
     Ok(())
 }
@@ -187,7 +189,7 @@ pub fn verify_update(
         .verify
         .as_mut()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
-    state.acc.update(data);
+    state.data.update(data);
     Ok(())
 }
 
@@ -206,7 +208,7 @@ pub fn verify_final(
         .take()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
 
-    let message = state.acc.finalize();
+    let message = state.data.finalize();
 
     match state.algo {
         VerifyAlgorithm::RsaX509 { n, e, modulus_len } => {

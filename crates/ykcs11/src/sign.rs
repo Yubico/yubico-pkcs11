@@ -17,7 +17,9 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use common::backend::Slot;
 use common::digest::DigestOp;
-use common::mechanism::{MechanismParam, SignatureMechanism, parse_mechanism, resolve_pss_params};
+use common::mechanism::{
+    MechanismParam, SignatureMechanism, parse_signature_mechanism, resolve_pss_params,
+};
 use common::session::LoginState;
 use common::sign::{digest_info_prefix, emsa_pss_encode, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
@@ -144,7 +146,7 @@ pub fn sign_init(
         return Err(CKR_USER_NOT_LOGGED_IN.into());
     }
 
-    let Some(mech) = parse_mechanism(mechanism) else {
+    let Some(mech) = parse_signature_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
