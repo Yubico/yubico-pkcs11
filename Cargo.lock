@@ -199,6 +199,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
+name = "common"
+version = "0.1.0"
+dependencies = [
+ "crypto-bigint",
+ "digest 0.11.3",
+ "ed25519-dalek",
+ "p256",
+ "p384",
+ "parking_lot",
+ "pkcs11-sys",
+ "rsa 0.10.0",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1055,22 +1071,6 @@ checksum = "6250dd7321adbe93d12b750aee0ced159fd13e77f625edcdf1cb6f83cd99f650"
 dependencies = [
  "der 0.8.3",
  "spki 0.8.1",
-]
-
-[[package]]
-name = "pkcs11-common"
-version = "0.1.0"
-dependencies = [
- "crypto-bigint",
- "digest 0.11.3",
- "ed25519-dalek",
- "p256",
- "p384",
- "parking_lot",
- "pkcs11-sys",
- "rsa 0.10.0",
- "sha1 0.11.0",
- "sha2 0.11.1",
 ]
 
 [[package]]
@@ -1975,6 +1975,7 @@ dependencies = [
 name = "ykcs11"
 version = "0.0.1"
 dependencies = [
+ "common",
  "der 0.8.3",
  "getrandom 0.4.3",
  "hybrid-array",
@@ -1984,7 +1985,6 @@ dependencies = [
  "p256",
  "p384",
  "parking_lot",
- "pkcs11-common",
  "pkcs11-sys",
  "sha2 0.11.1",
  "shake",
@@ -1996,8 +1996,8 @@ dependencies = [
 name = "yubihsm-pkcs11"
 version = "0.0.1"
 dependencies = [
+ "common",
  "log",
- "pkcs11-common",
  "pkcs11-sys",
  "yubihsmrs",
 ]

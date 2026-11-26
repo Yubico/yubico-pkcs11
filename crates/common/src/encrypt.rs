@@ -29,6 +29,39 @@ pub fn rsa_x509_encrypt(
     rsa_public_raw_op(n, e, &padded, modulus_len)
 }
 
+pub fn rsa_pkcs1_encrypt(
+    n: &[u8],
+    e: &[u8],
+    modulus_len: usize,
+    message: &[u8],
+    ps: &[u8],
+) -> Result<Vec<u8>, CK_RV> {
+    let em = eme_pkcs1_v15_encode(message, ps, modulus_len)?;
+    rsa_public_raw_op(n, e, &em, modulus_len)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn rsa_oaep_encrypt(
+    n: &[u8],
+    e: &[u8],
+    modulus_len: usize,
+    message: &[u8],
+    label: &[u8],
+    seed: &[u8],
+    hash_mechanism: CK_MECHANISM_TYPE,
+    mgf_hash_mechanism: CK_MECHANISM_TYPE,
+) -> Result<Vec<u8>, CK_RV> {
+    let em = eme_oaep_encode(
+        message,
+        label,
+        seed,
+        modulus_len,
+        hash_mechanism,
+        mgf_hash_mechanism,
+    )?;
+    rsa_public_raw_op(n, e, &em, modulus_len)
+}
+
 fn eme_pkcs1_v15_encode(message: &[u8], ps: &[u8], modulus_len: usize) -> Result<Vec<u8>, CK_RV> {
     if message.len() + 11 > modulus_len {
         return Err(CKR_DATA_LEN_RANGE.into());
@@ -45,17 +78,6 @@ fn eme_pkcs1_v15_encode(message: &[u8], ps: &[u8], modulus_len: usize) -> Result
     em.push(0x00);
     em.extend_from_slice(message);
     Ok(em)
-}
-
-pub fn rsa_pkcs1_encrypt(
-    n: &[u8],
-    e: &[u8],
-    modulus_len: usize,
-    message: &[u8],
-    ps: &[u8],
-) -> Result<Vec<u8>, CK_RV> {
-    let em = eme_pkcs1_v15_encode(message, ps, modulus_len)?;
-    rsa_public_raw_op(n, e, &em, modulus_len)
 }
 
 fn eme_oaep_encode(
@@ -98,28 +120,6 @@ fn eme_oaep_encode(
     em.extend(masked_seed);
     em.extend(masked_db);
     Ok(em)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn rsa_oaep_encrypt(
-    n: &[u8],
-    e: &[u8],
-    modulus_len: usize,
-    message: &[u8],
-    label: &[u8],
-    seed: &[u8],
-    hash_mechanism: CK_MECHANISM_TYPE,
-    mgf_hash_mechanism: CK_MECHANISM_TYPE,
-) -> Result<Vec<u8>, CK_RV> {
-    let em = eme_oaep_encode(
-        message,
-        label,
-        seed,
-        modulus_len,
-        hash_mechanism,
-        mgf_hash_mechanism,
-    )?;
-    rsa_public_raw_op(n, e, &em, modulus_len)
 }
 
 #[cfg(test)]
@@ -190,7 +190,7 @@ mod tests {
     }
 
     // 2048-bit RSA test key, same one `verify.rs`'s tests use.
-    include!("verify_test_key.rs");
+    use crate::sign::tests::{TEST_RSA_D, TEST_RSA_E, TEST_RSA_N};
 
     fn modexp(input: &[u8], exp: &[u8]) -> Vec<u8> {
         let base = rsa::BoxedUint::from_be_slice_vartime(input);

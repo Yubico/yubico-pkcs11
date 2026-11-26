@@ -15,12 +15,12 @@
  */
 
 /// PKCS#11 C_xxx dispatch entry points. Session/slot bookkeeping lives in
-/// the shared `pkcs11_common::backend::Engine` (`crate::backend::G_ENGINE`);
+/// the shared `common::backend::Engine` (`crate::backend::G_ENGINE`);
 /// this file only wires the fixed C ABI entry points to it.
 use crate::backend::G_ENGINE;
 use crate::{din, dout};
-use pkcs11_common::function_list::{RealFunctions, build_function_list};
-use pkcs11_common::stubs;
+use common::function_list::{RealFunctions, build_function_list};
+use common::stubs;
 use pkcs11_sys::*;
 
 /// Brackets a call into `G_ENGINE` with the an entry/exit debug tracing
@@ -179,7 +179,7 @@ pub unsafe extern "C" fn C_Login(
 ) -> CK_RV {
     unsafe {
         let mut username_len: CK_ULONG = 0;
-        let pin_bytes = match pkcs11_common::ffi::in_slice_or_empty(pPin as *const u8, ulPinLen) {
+        let pin_bytes = match common::ffi::input_slice_or_empty(pPin as *const u8, ulPinLen) {
             Ok(b) => b,
             Err(rv) => return rv,
         };

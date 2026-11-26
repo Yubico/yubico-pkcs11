@@ -26,3 +26,11 @@ pub fn hex_decode(input: &[u8]) -> Option<Vec<u8>> {
     }
     Some(out)
 }
+
+pub fn is_public_exponent_65537(e: &[u8]) -> bool {
+    let trimmed = match e.iter().position(|&b| b != 0) {
+        Some(i) => &e[i..],
+        None => &[][..],
+    };
+    trimmed == [0x01, 0x00, 0x01]
+}

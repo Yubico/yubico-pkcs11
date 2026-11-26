@@ -75,7 +75,7 @@ jobs:
           YUBIHSM_LIB_DIR=$GITHUB_WORKSPACE/../yubihsm-shell/build/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.so" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.so was not produced"; exit 1; }
 
-          cargo test --locked -p pkcs11-common
+          cargo test --locked -p common
 
           YUBIHSM_LIB_DIR="$GITHUB_WORKSPACE/../yubihsm-shell/build/lib" \
             LD_LIBRARY_PATH="$GITHUB_WORKSPACE/../yubihsm-shell/build/lib" \
@@ -137,8 +137,8 @@ jobs:
           cd yubico-pkcs11
           YUBIHSM_LIB_DIR=/usr/local/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
-
-          cargo test --locked -p pkcs11-common
+          
+          cargo test --locked -p common
           YUBIHSM_LIB_DIR=/usr/local/lib cargo test --locked -p yubihsm-pkcs11
 
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
@@ -174,7 +174,7 @@ jobs:
           YUBIHSM_LIB_DIR=/usr/local/lib cargo build --locked -p yubihsm-pkcs11 --verbose
           test -f "target/debug/libyubihsm_pkcs11.dylib" || { echo "::error::expected artifact target/debug/libyubihsm_pkcs11.dylib was not produced"; exit 1; }
 
-          cargo test --locked -p pkcs11-common
+          cargo test --locked -p common
           YUBIHSM_LIB_DIR=/usr/local/lib cargo test --locked -p yubihsm-pkcs11
 
           echo "connector=http://127.0.0.1:12345" > yubihsm_pkcs11.conf
@@ -249,7 +249,7 @@ jobs:
           cargo.exe build --locked -p yubihsm-pkcs11 --verbose
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-          cargo.exe test --locked -p pkcs11-common
+          cargo.exe test --locked -p common
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           cargo.exe test --locked -p yubihsm-pkcs11

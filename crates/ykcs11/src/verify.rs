@@ -15,13 +15,13 @@
  */
 
 use crate::backend::PivBackend;
-use crate::sign::{Accumulator, resolve_ml_dsa_context};
-use pkcs11_common::backend::Slot;
-use pkcs11_common::digest::DigestOp;
-use pkcs11_common::mechanism::{
-    MechanismKind, MechanismParam, classify_mechanism, resolve_pss_params,
+use crate::sign::{ProcessedData, parse_ml_dsa_context};
+use common::backend::Slot;
+use common::digest::DigestOp;
+use common::mechanism::{
+    MechanismParam, SignatureMechanism, parse_signature_mechanism, resolve_pss_params,
 };
-use pkcs11_common::verify::{
+use common::verify::{
     verify_ecdsa, verify_eddsa, verify_rsa_pkcs1v15, verify_rsa_pss, verify_rsa_x509,
 };
 use pkcs11_sys::*;
@@ -29,7 +29,7 @@ use yubikit::keys::{EcCurve, MlDsaParameterSet, PublicKey};
 
 pub struct VerifyState {
     algo: VerifyAlgorithm,
-    acc: Accumulator,
+    data: ProcessedData,
 }
 
 enum VerifyAlgorithm {
@@ -91,31 +91,27 @@ pub fn verify_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    let Some(mech_kind) = classify_mechanism(mechanism) else {
+    let Some(mech_kind) = parse_signature_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
     let algo = match (&mech_kind, public_key) {
-        (MechanismKind::RsaX509, PublicKey::Rsa(k)) => VerifyAlgorithm::RsaX509 {
+        (SignatureMechanism::RsaX509, PublicKey::Rsa(k)) => VerifyAlgorithm::RsaX509 {
             n: k.n.clone(),
             e: k.e.clone(),
             modulus_len: k.key_size.bit_len() / 8,
         },
-        (MechanismKind::RsaPkcs1Raw, PublicKey::Rsa(k)) => VerifyAlgorithm::RsaPkcs1 {
-            n: k.n.clone(),
-            e: k.e.clone(),
-            modulus_len: k.key_size.bit_len() / 8,
-            hash_mechanism: None,
-        },
-        (MechanismKind::RsaPkcs1Hashed(h), PublicKey::Rsa(k)) => VerifyAlgorithm::RsaPkcs1 {
-            n: k.n.clone(),
-            e: k.e.clone(),
-            modulus_len: k.key_size.bit_len() / 8,
-            hash_mechanism: Some(*h),
-        },
-        (MechanismKind::RsaPssRaw, PublicKey::Rsa(k)) => {
+        (SignatureMechanism::RsaPkcs1(hash_mechanism), PublicKey::Rsa(k)) => {
+            VerifyAlgorithm::RsaPkcs1 {
+                n: k.n.clone(),
+                e: k.e.clone(),
+                modulus_len: k.key_size.bit_len() / 8,
+                hash_mechanism: *hash_mechanism,
+            }
+        }
+        (SignatureMechanism::RsaPss(outer_hash), PublicKey::Rsa(k)) => {
             let (hash_mechanism, mgf_hash_mechanism, salt_len) =
-                resolve_pss_params(parameter, None)?;
+                resolve_pss_params(parameter, *outer_hash)?;
             VerifyAlgorithm::RsaPss {
                 n: k.n.clone(),
                 e: k.e.clone(),
@@ -126,40 +122,25 @@ pub fn verify_init(
                 salt_len,
             }
         }
-        (MechanismKind::RsaPssHashed(outer_hash), PublicKey::Rsa(k)) => {
-            let (hash_mechanism, mgf_hash_mechanism, salt_len) =
-                resolve_pss_params(parameter, Some(*outer_hash))?;
-            VerifyAlgorithm::RsaPss {
-                n: k.n.clone(),
-                e: k.e.clone(),
-                modulus_len: k.key_size.bit_len() / 8,
-                modulus_bits: k.key_size.bit_len(),
-                hash_mechanism,
-                mgf_hash_mechanism,
-                salt_len,
-            }
-        }
-        (MechanismKind::EcdsaRaw | MechanismKind::EcdsaHashed(_), PublicKey::Ec(k)) => {
-            VerifyAlgorithm::Ecdsa {
-                curve_byte_len: curve_byte_len(k.curve.clone())?,
-                point: k.point.clone(),
-            }
-        }
-        (MechanismKind::Eddsa, PublicKey::Ed25519(k)) => {
+        (SignatureMechanism::Ecdsa(_), PublicKey::Ec(k)) => VerifyAlgorithm::Ecdsa {
+            curve_byte_len: curve_byte_len(k.curve.clone())?,
+            point: k.point.clone(),
+        },
+        (SignatureMechanism::Eddsa, PublicKey::Ed25519(k)) => {
             VerifyAlgorithm::Eddsa { key: k.key.clone() }
         }
-        (MechanismKind::MlDsa, PublicKey::MlDsa(k)) => {
-            let context = resolve_ml_dsa_context(parameter)?;
+        (SignatureMechanism::MlDsa, PublicKey::MlDsa(k)) => {
+            let context = parse_ml_dsa_context(parameter)?;
             VerifyAlgorithm::MlDsa {
                 key: k.key.clone(),
                 parameter_set: k.parameter_set,
                 context,
             }
         }
-        (MechanismKind::MlDsaExternalMu, PublicKey::MlDsa(k)) => {
+        (SignatureMechanism::MlDsaExternalMu, PublicKey::MlDsa(k)) => {
             // The spec requires ulContextLen == 0 here (context is already folded into mu by
             // the caller)
-            if !resolve_ml_dsa_context(parameter)?.is_empty() {
+            if !parse_ml_dsa_context(parameter)?.is_empty() {
                 return Err(CKR_MECHANISM_PARAM_INVALID.into());
             }
             VerifyAlgorithm::MlDsaExternalMu {
@@ -171,25 +152,25 @@ pub fn verify_init(
     };
 
     let acc = match mech_kind {
-        MechanismKind::RsaPkcs1Hashed(h)
-        | MechanismKind::EcdsaHashed(h)
-        | MechanismKind::RsaPssHashed(h) => {
-            Accumulator::Hash(DigestOp::new(h).map_err(|_| CK_RV::from(CKR_MECHANISM_INVALID))?)
+        SignatureMechanism::RsaPkcs1(Some(h))
+        | SignatureMechanism::Ecdsa(Some(h))
+        | SignatureMechanism::RsaPss(Some(h)) => {
+            ProcessedData::Hash(DigestOp::new(h).map_err(|_| CK_RV::from(CKR_MECHANISM_INVALID))?)
         }
-        MechanismKind::RsaX509
-        | MechanismKind::RsaPkcs1Raw
-        | MechanismKind::RsaPssRaw
-        | MechanismKind::EcdsaRaw
-        | MechanismKind::Eddsa
-        | MechanismKind::MlDsa
-        | MechanismKind::MlDsaExternalMu => Accumulator::Raw(Vec::new()),
+        SignatureMechanism::RsaX509
+        | SignatureMechanism::RsaPkcs1(None)
+        | SignatureMechanism::RsaPss(None)
+        | SignatureMechanism::Ecdsa(None)
+        | SignatureMechanism::Eddsa
+        | SignatureMechanism::MlDsa
+        | SignatureMechanism::MlDsaExternalMu => ProcessedData::Raw(Vec::new()),
     };
 
     let session = slot
         .sessions
         .get_mut(&h_session)
         .ok_or(CK_RV::from(CKR_SESSION_HANDLE_INVALID))?;
-    session.data.verify = Some(VerifyState { algo, acc });
+    session.data.verify = Some(VerifyState { algo, data: acc });
 
     Ok(())
 }
@@ -208,7 +189,7 @@ pub fn verify_update(
         .verify
         .as_mut()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
-    state.acc.update(data);
+    state.data.update(data);
     Ok(())
 }
 
@@ -227,7 +208,7 @@ pub fn verify_final(
         .take()
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
 
-    let message = state.acc.finalize();
+    let message = state.data.finalize();
 
     match state.algo {
         VerifyAlgorithm::RsaX509 { n, e, modulus_len } => {

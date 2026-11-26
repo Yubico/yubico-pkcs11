@@ -50,7 +50,7 @@ jobs:
         run: |
           cargo check --locked -p ykcs11 --all-targets --all-features
           cargo build --locked -p ykcs11 --verbose
-          cargo test --locked -p pkcs11-common
+          cargo test --locked -p common
           cargo test --locked -p ykcs11
           
           test -f "target/debug/libykcs11.so" || { echo "::error::expected artifact target/debug/libykcs11.so was not produced"; exit 1; }
@@ -89,7 +89,7 @@ jobs:
       - name: Build ykcs11
         run: |
           cargo build --locked  -p ykcs11 --verbose
-          cargo test --locked -p pkcs11-common
+          cargo test --locked -p common
           cargo test --locked -p ykcs11
           
           test -f "target/debug/libykcs11.dylib" || { echo "::error::expected artifact target/debug/libykcs11.dylib was not produced"; exit 1; }
@@ -134,7 +134,7 @@ jobs:
           cargo build --locked -p ykcs11 --verbose
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           
-          cargo test --locked -p pkcs11-common
+          cargo test --locked -p common
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           
           cargo test --locked -p ykcs11

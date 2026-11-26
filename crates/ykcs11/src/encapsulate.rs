@@ -17,11 +17,22 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::derive::validate_derive_template;
 use crate::objects::{find_private_key, find_public_key, store_secret_key};
-use pkcs11_common::backend::Slot;
-use pkcs11_common::mechanism::MechanismParam;
+use common::backend::Slot;
+use common::mechanism::MechanismParam;
 use pkcs11_sys::*;
 use yubikit::keys::{MlKemParameterSet, PublicKey};
 use yubikit::piv::KeyType;
+
+fn check_mechanism(mechanism: CK_MECHANISM_TYPE, parameter: &MechanismParam) -> Result<(), CK_RV> {
+    if mechanism as u32 != CKM_ML_KEM {
+        return Err(CKR_MECHANISM_INVALID.into());
+    }
+    // PKCS#11 3.2 defines no mechanism parameter for CKM_ML_KEM.
+    if !parameter.is_empty() {
+        return Err(CKR_MECHANISM_PARAM_INVALID.into());
+    }
+    Ok(())
+}
 
 /// FIPS 203 Table 3 is fixed ciphertext length per parameter set
 /// independent of any encapsulation randomness, so this can answer
@@ -33,6 +44,21 @@ fn ml_kem_ciphertext_len(parameter_set: MlKemParameterSet) -> Result<usize, CK_R
         MlKemParameterSet::MlKem1024 => 1568,
         _ => return Err(CKR_KEY_TYPE_INCONSISTENT.into()),
     })
+}
+
+/// The ciphertext length `encapsulate_key` will produce for `h_public_key`,
+/// without performing the (randomized) encapsulation
+pub fn encapsulate_key_len(
+    slot: &mut Slot<PivBackend>,
+    h_public_key: CK_OBJECT_HANDLE,
+) -> Result<usize, CK_RV> {
+    let Some((_, public_key)) = find_public_key(&slot.data.objects, h_public_key) else {
+        return Err(CKR_KEY_HANDLE_INVALID.into());
+    };
+    let PublicKey::MlKem(k) = public_key else {
+        return Err(CKR_KEY_TYPE_INCONSISTENT.into());
+    };
+    ml_kem_ciphertext_len(k.parameter_set)
 }
 
 fn ml_kem_encapsulate(
@@ -85,32 +111,6 @@ fn ml_kem_encapsulate(
     }
 }
 
-fn check_mechanism(mechanism: CK_MECHANISM_TYPE, parameter: &MechanismParam) -> Result<(), CK_RV> {
-    if mechanism as u32 != CKM_ML_KEM {
-        return Err(CKR_MECHANISM_INVALID.into());
-    }
-    // PKCS#11 3.2 defines no mechanism parameter for CKM_ML_KEM.
-    if !parameter.is_empty() {
-        return Err(CKR_MECHANISM_PARAM_INVALID.into());
-    }
-    Ok(())
-}
-
-/// The ciphertext length `encapsulate_key` will produce for `h_public_key`,
-/// without performing the (randomized) encapsulation
-pub fn encapsulate_key_len(
-    slot: &mut Slot<PivBackend>,
-    h_public_key: CK_OBJECT_HANDLE,
-) -> Result<usize, CK_RV> {
-    let Some((_, public_key)) = find_public_key(&slot.data.objects, h_public_key) else {
-        return Err(CKR_KEY_HANDLE_INVALID.into());
-    };
-    let PublicKey::MlKem(k) = public_key else {
-        return Err(CKR_KEY_TYPE_INCONSISTENT.into());
-    };
-    ml_kem_ciphertext_len(k.parameter_set)
-}
-
 pub fn encapsulate_key(
     slot: &mut Slot<PivBackend>,
     _h_session: CK_SESSION_HANDLE,
@@ -132,7 +132,7 @@ pub fn encapsulate_key(
     let (ciphertext, shared_secret) = ml_kem_encapsulate(k.parameter_set, &k.key)?;
 
     store_secret_key(&mut slot.data.objects, piv_slot, shared_secret);
-    let handle = crate::objects::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE;
+    let handle = crate::piv_key_slot::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE;
 
     Ok((ciphertext, handle))
 }
@@ -171,5 +171,5 @@ pub fn decapsulate_key(
 
     store_secret_key(&mut slot.data.objects, piv_slot, shared_secret);
 
-    Ok(crate::objects::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
+    Ok(crate::piv_key_slot::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
 }

@@ -15,9 +15,10 @@
  */
 
 use crate::backend::{PivBackend, piv_error_to_rv};
-use crate::objects::{ObjectClass, refresh_slot_objects};
-use crate::template::require_so_login;
-use pkcs11_common::backend::Slot;
+use crate::objects::refresh_slot_objects;
+use crate::piv_key_slot::PivObjectClass;
+use crate::util::require_so_login;
+use common::backend::Slot;
 use pkcs11_sys::*;
 
 /// PIV has no APDU to erase just the private key material (it's only ever replaced
@@ -39,17 +40,17 @@ pub fn destroy_object(
     };
 
     match obj.class {
-        ObjectClass::SecretKey => {
+        PivObjectClass::SecretKey => {
             slot.data
                 .objects
-                .retain(|o| o.class != ObjectClass::SecretKey);
+                .retain(|o| o.class != PivObjectClass::SecretKey);
             Ok(())
         }
-        ObjectClass::Data => Err(CKR_ACTION_PROHIBITED.into()),
-        ObjectClass::PrivateKey
-        | ObjectClass::Certificate
-        | ObjectClass::PublicKey
-        | ObjectClass::AttestationCertificate => {
+        PivObjectClass::Data => Err(CKR_ACTION_PROHIBITED.into()),
+        PivObjectClass::PrivateKey
+        | PivObjectClass::Certificate
+        | PivObjectClass::PublicKey
+        | PivObjectClass::AttestationCertificate => {
             require_so_login(slot.login_state)?;
             let piv_slot = obj.slot;
 

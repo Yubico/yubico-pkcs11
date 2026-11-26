@@ -14,32 +14,23 @@
  * limitations under the License.
  */
 
-use pkcs11_common::backend::Slot;
-use pkcs11_common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
-use pkcs11_common::mechanism::{
-    CryptMechanismKind, MechanismParam, classify_crypt_mechanism, resolve_oaep_params,
+use common::backend::Slot;
+use common::encrypt::{rsa_oaep_encrypt, rsa_pkcs1_encrypt, rsa_x509_encrypt};
+use common::mechanism::{
+    EncryptionMechanism, MechanismParam, parse_encryption_mechanism, parse_oaep_params,
 };
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
 
 use crate::backend::PivBackend;
+use crate::decrypt::DecryptAlgorithm;
 
 pub struct EncryptState {
     n: Vec<u8>,
     e: Vec<u8>,
     modulus_len: usize,
-    algo: EncryptAlgorithm,
+    algo: DecryptAlgorithm,
     buf: Vec<u8>,
-}
-
-enum EncryptAlgorithm {
-    RsaX509,
-    RsaPkcs1,
-    RsaOaep {
-        hash_mechanism: CK_MECHANISM_TYPE,
-        mgf_hash_mechanism: CK_MECHANISM_TYPE,
-        label: Vec<u8>,
-    },
 }
 
 pub fn encrypt_init(
@@ -54,7 +45,7 @@ pub fn encrypt_init(
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
 
-    let Some(mech_kind) = classify_crypt_mechanism(mechanism) else {
+    let Some(mech_kind) = parse_encryption_mechanism(mechanism) else {
         return Err(CKR_MECHANISM_INVALID.into());
     };
 
@@ -64,11 +55,11 @@ pub fn encrypt_init(
     let modulus_len = k.key_size.bit_len() / 8;
 
     let algo = match mech_kind {
-        CryptMechanismKind::RsaX509 => EncryptAlgorithm::RsaX509,
-        CryptMechanismKind::RsaPkcs1 => EncryptAlgorithm::RsaPkcs1,
-        CryptMechanismKind::RsaOaep => {
-            let (hash_mechanism, mgf_hash_mechanism, label) = resolve_oaep_params(parameter)?;
-            EncryptAlgorithm::RsaOaep {
+        EncryptionMechanism::RsaX509 => DecryptAlgorithm::RsaX509,
+        EncryptionMechanism::RsaPkcs1 => DecryptAlgorithm::RsaPkcs1,
+        EncryptionMechanism::RsaOaep => {
+            let (hash_mechanism, mgf_hash_mechanism, label) = parse_oaep_params(parameter)?;
+            DecryptAlgorithm::RsaOaep {
                 hash_mechanism,
                 mgf_hash_mechanism,
                 label,
@@ -124,10 +115,10 @@ pub fn encrypt_final(
         .ok_or(CK_RV::from(CKR_OPERATION_NOT_INITIALIZED))?;
 
     match state.algo {
-        EncryptAlgorithm::RsaX509 => {
+        DecryptAlgorithm::RsaX509 => {
             rsa_x509_encrypt(&state.n, &state.e, state.modulus_len, &state.buf)
         }
-        EncryptAlgorithm::RsaPkcs1 => {
+        DecryptAlgorithm::RsaPkcs1 => {
             let ps_len = state
                 .modulus_len
                 .checked_sub(state.buf.len() + 3)
@@ -135,12 +126,12 @@ pub fn encrypt_final(
             let ps = non_zero_random_bytes(ps_len)?;
             rsa_pkcs1_encrypt(&state.n, &state.e, state.modulus_len, &state.buf, &ps)
         }
-        EncryptAlgorithm::RsaOaep {
+        DecryptAlgorithm::RsaOaep {
             hash_mechanism,
             mgf_hash_mechanism,
             label,
         } => {
-            let h_len = pkcs11_common::digest::DigestOp::new(hash_mechanism)?.output_len();
+            let h_len = common::digest::DigestOp::new(hash_mechanism)?.output_len();
             let seed = random_bytes(h_len)?;
             rsa_oaep_encrypt(
                 &state.n,

@@ -15,7 +15,7 @@
  */
 
 use crate::digest::DigestOp;
-use crate::ffi::{OutBuf, in_slice, in_slice_or_empty, inout_slice, out_bytes_zeroed};
+use crate::ffi::{OutBuf, input_slice, input_slice_or_empty, output_slice, output_zero_filled};
 use crate::mechanism::{MechanismParam, decode_mechanism_param};
 use crate::session::{LoginState, compute_state};
 use crate::str_pad;
@@ -74,7 +74,6 @@ pub struct MechanismInfo {
 /// `C_FindObjectsInit`/`C_FindObjects`/`C_FindObjectsFinal` state for one session.
 #[derive(Default)]
 pub struct FindOp {
-    pub active: bool,
     pub matches: Vec<CK_OBJECT_HANDLE>,
     pub returned_offset: usize,
 }
@@ -82,40 +81,52 @@ pub struct FindOp {
 /// `C_SignInit`/`C_Sign`/`C_SignUpdate`/`C_SignFinal` state for one session
 #[derive(Default)]
 pub struct SignOp {
-    pub active: bool,
     pub out_len: CK_ULONG,
-}
-
-/// `C_VerifyInit`/`C_Verify`/`C_VerifyUpdate`/`C_VerifyFinal` state for one session
-#[derive(Default)]
-pub struct VerifyOp {
-    pub active: bool,
 }
 
 /// `C_EncryptInit`/`C_Encrypt`/`C_EncryptUpdate`/`C_EncryptFinal` state for one session
 #[derive(Default)]
 pub struct EncryptOp {
-    pub active: bool,
     pub out_len: CK_ULONG,
 }
 
 /// `C_DecryptInit`/`C_Decrypt`/`C_DecryptUpdate`/`C_DecryptFinal` state for one session.
 #[derive(Default)]
 pub struct DecryptOp {
-    pub active: bool,
     pub pending: Option<Vec<u8>>,
+}
+
+/// Which single search/cryptographic operation, if any, is active on a
+/// session. PKCS#11 permits at most one at a time: `CKR_OPERATION_ACTIVE`'s
+/// own definition gives "an active object-searching operation would prevent
+/// Cryptoki from activating an encryption operation" as its example, so one
+/// slot (rather than one independent flag per operation type) is both
+/// simpler and the behavior the spec actually calls for. The four
+/// dual-function combinations the spec separately allows
+/// (`C_DigestEncryptUpdate` and friends) aren't implemented by this module.
+#[derive(Default)]
+pub enum ActiveOp {
+    #[default]
+    None,
+    Find(FindOp),
+    Digest(DigestOp),
+    Sign(SignOp),
+    Verify,
+    Encrypt(EncryptOp),
+    Decrypt(DecryptOp),
+}
+
+impl ActiveOp {
+    pub fn is_active(&self) -> bool {
+        !matches!(self, ActiveOp::None)
+    }
 }
 
 /// A single open session on a slot.
 pub struct Session<S> {
     pub handle: CK_SESSION_HANDLE,
     pub flags: CK_FLAGS,
-    pub find_op: FindOp,
-    pub digest_op: Option<DigestOp>,
-    pub sign_op: SignOp,
-    pub verify_op: VerifyOp,
-    pub encrypt_op: EncryptOp,
-    pub decrypt_op: DecryptOp,
+    pub active_op: ActiveOp,
     pub data: S,
 }
 
@@ -442,17 +453,17 @@ pub trait Backend: Sized + 'static {
 ///
 /// # Safety
 ///
-/// `p` and every non-null `pValue` must satisfy [`in_slice`]'s contract for
+/// `p` and every non-null `pValue` must satisfy [`input_slice`]'s contract for
 /// their respective lengths.
 unsafe fn extract_attribute_template(
     p: CK_ATTRIBUTE_PTR,
     count: CK_ULONG,
 ) -> Result<Vec<(CK_ATTRIBUTE_TYPE, Vec<u8>)>, CK_RV> {
     unsafe {
-        in_slice(p, count)?
+        input_slice(p, count)?
             .iter()
             .map(|a| {
-                let value = in_slice_or_empty(a.pValue as *const u8, a.ulValueLen)?;
+                let value = input_slice_or_empty(a.pValue as *const u8, a.ulValueLen)?;
                 Ok((a.type_, value.to_vec()))
             })
             .collect()
@@ -898,12 +909,7 @@ impl<B: Backend> Engine<B> {
                 Session {
                     handle,
                     flags,
-                    find_op: FindOp::default(),
-                    digest_op: None,
-                    sign_op: SignOp::default(),
-                    verify_op: VerifyOp::default(),
-                    encrypt_op: EncryptOp::default(),
-                    decrypt_op: DecryptOp::default(),
+                    active_op: ActiveOp::None,
                     data,
                 },
             );
@@ -1011,8 +1017,11 @@ impl<B: Backend> Engine<B> {
                 return CKR_TOKEN_NOT_PRESENT.into();
             }
 
-            let pin = try_rv!(in_slice_or_empty(p_pin as *const u8, ul_pin_len));
-            let username = try_rv!(in_slice_or_empty(p_username as *const u8, ul_username_len));
+            let pin = try_rv!(input_slice_or_empty(p_pin as *const u8, ul_pin_len));
+            let username = try_rv!(input_slice_or_empty(
+                p_username as *const u8,
+                ul_username_len
+            ));
 
             match B::login(&mut slot_guard, h_session, user_type, pin, username) {
                 Ok(()) => CKR_OK.into(),
@@ -1064,7 +1073,7 @@ impl<B: Backend> Engine<B> {
             if ul_random_len == 0 {
                 return CKR_OK.into();
             }
-            let buf = try_rv!(out_bytes_zeroed(p_random_data, ul_random_len));
+            let buf = try_rv!(output_zero_filled(p_random_data, ul_random_len));
 
             match B::generate_random(&slot_guard, buf) {
                 Ok(()) => CKR_OK.into(),
@@ -1092,7 +1101,7 @@ impl<B: Backend> Engine<B> {
             let slot = state.slots[slot_id as usize].clone();
             let slot_guard = slot.lock();
 
-            let seed = try_rv!(in_slice(p_seed as *const u8, ul_seed_len));
+            let seed = try_rv!(input_slice(p_seed as *const u8, ul_seed_len));
 
             match B::seed_random(&slot_guard, seed) {
                 Ok(()) => CKR_OK.into(),
@@ -1122,15 +1131,18 @@ impl<B: Backend> Engine<B> {
             if !slot_guard.sessions.contains_key(&h_session) {
                 return CKR_SESSION_HANDLE_INVALID.into();
             }
-            if slot_guard.sessions[&h_session].find_op.active {
+            if slot_guard.sessions[&h_session].active_op.is_active() {
                 return CKR_OPERATION_ACTIVE.into();
             }
-            let template = try_rv!(in_slice(p_template as *const CK_ATTRIBUTE, ul_count));
+            let template = try_rv!(input_slice(p_template as *const CK_ATTRIBUTE, ul_count));
             let mut values = Vec::with_capacity(template.len());
             for attr in template {
                 values.push((
                     attr.type_,
-                    try_rv!(in_slice_or_empty(attr.pValue as *const u8, attr.ulValueLen)),
+                    try_rv!(input_slice_or_empty(
+                        attr.pValue as *const u8,
+                        attr.ulValueLen
+                    )),
                 ));
             }
 
@@ -1147,11 +1159,10 @@ impl<B: Backend> Engine<B> {
             }
 
             let session = slot_guard.sessions.get_mut(&h_session).unwrap();
-            session.find_op = FindOp {
-                active: true,
+            session.active_op = ActiveOp::Find(FindOp {
                 matches,
                 returned_offset: 0,
-            };
+            });
             CKR_OK.into()
         }
     }
@@ -1179,19 +1190,19 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.find_op.active {
+            let ActiveOp::Find(find_op) = &mut session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             if p_object.is_null() || pul_object_count.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let remaining = &session.find_op.matches[session.find_op.returned_offset..];
+            let remaining = &find_op.matches[find_op.returned_offset..];
             let n = remaining.len().min(ul_max_object_count as usize);
             for (i, h) in remaining[..n].iter().enumerate() {
                 *p_object.add(i) = *h;
             }
-            session.find_op.returned_offset += n;
+            find_op.returned_offset += n;
             *pul_object_count = n as CK_ULONG;
             CKR_OK.into()
         }
@@ -1213,10 +1224,10 @@ impl<B: Backend> Engine<B> {
             Some(s) => s,
             None => return CKR_SESSION_HANDLE_INVALID.into(),
         };
-        if !session.find_op.active {
+        if !matches!(session.active_op, ActiveOp::Find(_)) {
             return CKR_OPERATION_NOT_INITIALIZED.into();
         }
-        session.find_op = FindOp::default();
+        session.active_op = ActiveOp::None;
         CKR_OK.into()
     }
 
@@ -1249,7 +1260,7 @@ impl<B: Backend> Engine<B> {
                 return CKR_OBJECT_HANDLE_INVALID.into();
             }
 
-            let template = try_rv!(inout_slice(p_template, ul_count));
+            let template = try_rv!(output_slice(p_template, ul_count));
             let mut any_invalid = false;
             let mut any_too_small = false;
             for attr in template.iter_mut() {
@@ -1366,7 +1377,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.digest_op.is_some() {
+            if session.active_op.is_active() {
                 return CKR_OPERATION_ACTIVE.into();
             }
             if p_mechanism.is_null() {
@@ -1375,7 +1386,7 @@ impl<B: Backend> Engine<B> {
 
             match DigestOp::new((*p_mechanism).mechanism) {
                 Ok(op) => {
-                    session.digest_op = Some(op);
+                    session.active_op = ActiveOp::Digest(op);
                     CKR_OK.into()
                 }
                 Err(rv) => rv,
@@ -1409,16 +1420,18 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.digest_op.is_none() {
+            let ActiveOp::Digest(digest_op) = &session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             let mut out = try_rv!(OutBuf::new(p_digest, pul_digest_len));
-            if let Some(rv) = out.check(session.digest_op.as_ref().unwrap().output_len()) {
+            if let Some(rv) = out.check_length(digest_op.output_len()) {
                 return rv;
             }
-            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
+            let data = try_rv!(input_slice(p_data as *const u8, ul_data_len));
 
-            let mut op = session.digest_op.take().unwrap();
+            let ActiveOp::Digest(mut op) = std::mem::take(&mut session.active_op) else {
+                unreachable!("just matched ActiveOp::Digest above");
+            };
             op.update(data);
             out.write(&op.finalize())
         }
@@ -1446,14 +1459,14 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            let Some(digest_op) = session.digest_op.as_mut() else {
+            let ActiveOp::Digest(digest_op) = &mut session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             };
             if ul_part_len > 0 && p_part.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
+            let data = try_rv!(input_slice(p_part as *const u8, ul_part_len));
             digest_op.update(data);
             CKR_OK.into()
         }
@@ -1481,15 +1494,17 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.digest_op.is_none() {
+            let ActiveOp::Digest(digest_op) = &session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             let mut out = try_rv!(OutBuf::new(p_digest, pul_digest_len));
-            if let Some(rv) = out.check(session.digest_op.as_ref().unwrap().output_len()) {
+            if let Some(rv) = out.check_length(digest_op.output_len()) {
                 return rv;
             }
 
-            let op = session.digest_op.take().unwrap();
+            let ActiveOp::Digest(op) = std::mem::take(&mut session.active_op) else {
+                unreachable!("just matched ActiveOp::Digest above");
+            };
             out.write(&op.finalize())
         }
     }
@@ -1516,7 +1531,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.sign_op.active {
+            if session.active_op.is_active() {
                 return CKR_OPERATION_ACTIVE.into();
             }
             if p_mechanism.is_null() {
@@ -1528,10 +1543,7 @@ impl<B: Backend> Engine<B> {
             match B::sign_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
-                    session.sign_op = SignOp {
-                        active: true,
-                        out_len,
-                    };
+                    session.active_op = ActiveOp::Sign(SignOp { out_len });
                     CKR_OK.into()
                 }
                 Err(rv) => rv,
@@ -1565,26 +1577,26 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.sign_op.active {
+            let ActiveOp::Sign(sign_op) = &session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             if p_data.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
             let mut out = try_rv!(OutBuf::new(p_signature, pul_signature_len));
-            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
+            let data = try_rv!(input_slice(p_data as *const u8, ul_data_len));
 
-            if let Some(rv) = out.check(session.sign_op.out_len as usize) {
+            if let Some(rv) = out.check_length(sign_op.out_len as usize) {
                 return rv;
             }
             if slot_guard.login_state == LoginState::Public {
-                slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_USER_NOT_LOGGED_IN.into();
             }
 
             let result = B::sign_update(&mut slot_guard, h_session, data)
                 .and_then(|()| B::sign_final(&mut slot_guard, h_session));
-            slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
 
             match result {
                 Ok(signature) => out.write(&signature),
@@ -1615,19 +1627,19 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.sign_op.active {
+            if !matches!(session.active_op, ActiveOp::Sign(_)) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             if p_part.is_null() {
-                slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
+            let data = try_rv!(input_slice(p_part as *const u8, ul_part_len));
             match B::sign_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     rv
                 }
             }
@@ -1656,20 +1668,20 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.sign_op.active {
+            let ActiveOp::Sign(sign_op) = &session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             let mut out = try_rv!(OutBuf::new(p_signature, pul_signature_len));
-            if let Some(rv) = out.check(session.sign_op.out_len as usize) {
+            if let Some(rv) = out.check_length(sign_op.out_len as usize) {
                 return rv;
             }
             if slot_guard.login_state == LoginState::Public {
-                slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_USER_NOT_LOGGED_IN.into();
             }
 
             let result = B::sign_final(&mut slot_guard, h_session);
-            slot_guard.sessions.get_mut(&h_session).unwrap().sign_op = SignOp::default();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
 
             match result {
                 Ok(signature) => out.write(&signature),
@@ -1700,7 +1712,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.verify_op.active {
+            if session.active_op.is_active() {
                 return CKR_OPERATION_ACTIVE.into();
             }
             if p_mechanism.is_null() {
@@ -1712,7 +1724,7 @@ impl<B: Backend> Engine<B> {
             match B::verify_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
-                    session.verify_op = VerifyOp { active: true };
+                    session.active_op = ActiveOp::Verify;
                     CKR_OK.into()
                 }
                 Err(rv) => rv,
@@ -1746,21 +1758,21 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.verify_op.active {
+            if !matches!(session.active_op, ActiveOp::Verify) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             if (ul_data_len > 0 && p_data.is_null())
                 || (ul_signature_len > 0 && p_signature.is_null())
             {
-                slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
-            let signature = try_rv!(in_slice(p_signature as *const u8, ul_signature_len));
+            let data = try_rv!(input_slice(p_data as *const u8, ul_data_len));
+            let signature = try_rv!(input_slice(p_signature as *const u8, ul_signature_len));
             let result = B::verify_update(&mut slot_guard, h_session, data)
                 .and_then(|()| B::verify_final(&mut slot_guard, h_session, signature));
-            slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
 
             match result {
                 Ok(()) => CKR_OK.into(),
@@ -1791,20 +1803,19 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.verify_op.active {
+            if !matches!(session.active_op, ActiveOp::Verify) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             if p_part.is_null() {
-                slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
+            let data = try_rv!(input_slice(p_part as *const u8, ul_part_len));
             match B::verify_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().verify_op =
-                        VerifyOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     rv
                 }
             }
@@ -1833,17 +1844,17 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.verify_op.active {
+            if !matches!(session.active_op, ActiveOp::Verify) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             if ul_signature_len > 0 && p_signature.is_null() {
-                slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let signature = try_rv!(in_slice(p_signature as *const u8, ul_signature_len));
+            let signature = try_rv!(input_slice(p_signature as *const u8, ul_signature_len));
             let result = B::verify_final(&mut slot_guard, h_session, signature);
-            slot_guard.sessions.get_mut(&h_session).unwrap().verify_op = VerifyOp::default();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
 
             match result {
                 Ok(()) => CKR_OK.into(),
@@ -1874,7 +1885,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.encrypt_op.active {
+            if session.active_op.is_active() {
                 return CKR_OPERATION_ACTIVE.into();
             }
             if p_mechanism.is_null() {
@@ -1886,10 +1897,7 @@ impl<B: Backend> Engine<B> {
             match B::encrypt_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(out_len) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
-                    session.encrypt_op = EncryptOp {
-                        active: true,
-                        out_len,
-                    };
+                    session.active_op = ActiveOp::Encrypt(EncryptOp { out_len });
                     CKR_OK.into()
                 }
                 Err(rv) => rv,
@@ -1923,21 +1931,21 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.encrypt_op.active {
+            let ActiveOp::Encrypt(encrypt_op) = &session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             if p_data.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
             let mut out = try_rv!(OutBuf::new(p_encrypted_data, pul_encrypted_data_len));
-            if let Some(rv) = out.check(session.encrypt_op.out_len as usize) {
+            if let Some(rv) = out.check_length(encrypt_op.out_len as usize) {
                 return rv;
             }
 
-            let data = try_rv!(in_slice(p_data as *const u8, ul_data_len));
+            let data = try_rv!(input_slice(p_data as *const u8, ul_data_len));
             let result = B::encrypt_update(&mut slot_guard, h_session, data)
                 .and_then(|()| B::encrypt_final(&mut slot_guard, h_session));
-            slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
 
             match result {
                 Ok(ciphertext) => out.write(&ciphertext),
@@ -1970,7 +1978,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.encrypt_op.active {
+            if !matches!(session.active_op, ActiveOp::Encrypt(_)) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             if pul_encrypted_part_len.is_null() {
@@ -1978,16 +1986,15 @@ impl<B: Backend> Engine<B> {
             }
             *pul_encrypted_part_len = 0;
             if ul_part_len > 0 && p_part.is_null() {
-                slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data = try_rv!(in_slice(p_part as *const u8, ul_part_len));
+            let data = try_rv!(input_slice(p_part as *const u8, ul_part_len));
             match B::encrypt_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op =
-                        EncryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     rv
                 }
             }
@@ -2016,19 +2023,19 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.encrypt_op.active {
+            let ActiveOp::Encrypt(encrypt_op) = &session.active_op else {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
-            }
+            };
             let mut out = try_rv!(OutBuf::new(
                 p_last_encrypted_part,
                 pul_last_encrypted_part_len
             ));
-            if let Some(rv) = out.check(session.encrypt_op.out_len as usize) {
+            if let Some(rv) = out.check_length(encrypt_op.out_len as usize) {
                 return rv;
             }
 
             let result = B::encrypt_final(&mut slot_guard, h_session);
-            slot_guard.sessions.get_mut(&h_session).unwrap().encrypt_op = EncryptOp::default();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
 
             match result {
                 Ok(ciphertext) => out.write(&ciphertext),
@@ -2059,7 +2066,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if session.decrypt_op.active {
+            if session.active_op.is_active() {
                 return CKR_OPERATION_ACTIVE.into();
             }
             if p_mechanism.is_null() {
@@ -2071,10 +2078,7 @@ impl<B: Backend> Engine<B> {
             match B::decrypt_init(&mut slot_guard, h_session, mechanism, &parameter, h_key) {
                 Ok(()) => {
                     let session = slot_guard.sessions.get_mut(&h_session).unwrap();
-                    session.decrypt_op = DecryptOp {
-                        active: true,
-                        pending: None,
-                    };
+                    session.active_op = ActiveOp::Decrypt(DecryptOp { pending: None });
                     CKR_OK.into()
                 }
                 Err(rv) => rv,
@@ -2108,31 +2112,25 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.decrypt_op.active {
+            if !matches!(session.active_op, ActiveOp::Decrypt(_)) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             let mut out = try_rv!(OutBuf::new(p_data, pul_data_len));
 
-            if slot_guard
-                .sessions
-                .get(&h_session)
-                .unwrap()
-                .decrypt_op
-                .pending
-                .is_none()
-            {
+            if matches!(
+                slot_guard.sessions.get(&h_session).unwrap().active_op,
+                ActiveOp::Decrypt(DecryptOp { pending: None })
+            ) {
                 if ul_encrypted_data_len > 0 && p_encrypted_data.is_null() {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
-                        DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     return CKR_ARGUMENTS_BAD.into();
                 }
                 if slot_guard.login_state == LoginState::Public {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
-                        DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     return CKR_USER_NOT_LOGGED_IN.into();
                 }
 
-                let data = try_rv!(in_slice(
+                let data = try_rv!(input_slice(
                     p_encrypted_data as *const u8,
                     ul_encrypted_data_len
                 ));
@@ -2140,40 +2138,33 @@ impl<B: Backend> Engine<B> {
                     .and_then(|()| B::decrypt_final(&mut slot_guard, h_session));
                 match result {
                     Ok(plaintext) => {
-                        slot_guard
-                            .sessions
-                            .get_mut(&h_session)
-                            .unwrap()
-                            .decrypt_op
-                            .pending = Some(plaintext);
+                        slot_guard.sessions.get_mut(&h_session).unwrap().active_op =
+                            ActiveOp::Decrypt(DecryptOp {
+                                pending: Some(plaintext),
+                            });
                     }
                     Err(rv) => {
-                        slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
-                            DecryptOp::default();
+                        slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                         return rv;
                     }
                 }
             }
 
-            let out_len = slot_guard.sessions[&h_session]
-                .decrypt_op
-                .pending
-                .as_ref()
-                .unwrap()
-                .len();
-            if let Some(rv) = out.check(out_len) {
+            let ActiveOp::Decrypt(decrypt_op) = &slot_guard.sessions[&h_session].active_op else {
+                unreachable!("decrypt_op confirmed active above");
+            };
+            let out_len = decrypt_op.pending.as_ref().unwrap().len();
+            if let Some(rv) = out.check_length(out_len) {
                 return rv;
             }
 
-            let plaintext = slot_guard
-                .sessions
-                .get_mut(&h_session)
-                .unwrap()
-                .decrypt_op
-                .pending
-                .take()
-                .unwrap();
-            slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+            let ActiveOp::Decrypt(decrypt_op) =
+                &mut slot_guard.sessions.get_mut(&h_session).unwrap().active_op
+            else {
+                unreachable!("decrypt_op confirmed active above");
+            };
+            let plaintext = decrypt_op.pending.take().unwrap();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
             out.write(&plaintext)
         }
     }
@@ -2202,7 +2193,7 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.decrypt_op.active {
+            if !matches!(session.active_op, ActiveOp::Decrypt(_)) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             if pul_part_len.is_null() {
@@ -2210,19 +2201,18 @@ impl<B: Backend> Engine<B> {
             }
             *pul_part_len = 0;
             if ul_encrypted_part_len > 0 && p_encrypted_part.is_null() {
-                slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+                slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                 return CKR_ARGUMENTS_BAD.into();
             }
 
-            let data = try_rv!(in_slice(
+            let data = try_rv!(input_slice(
                 p_encrypted_part as *const u8,
                 ul_encrypted_part_len
             ));
             match B::decrypt_update(&mut slot_guard, h_session, data) {
                 Ok(()) => CKR_OK.into(),
                 Err(rv) => {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
-                        DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     rv
                 }
             }
@@ -2251,60 +2241,48 @@ impl<B: Backend> Engine<B> {
                 Some(s) => s,
                 None => return CKR_SESSION_HANDLE_INVALID.into(),
             };
-            if !session.decrypt_op.active {
+            if !matches!(session.active_op, ActiveOp::Decrypt(_)) {
                 return CKR_OPERATION_NOT_INITIALIZED.into();
             }
             let mut out = try_rv!(OutBuf::new(p_last_part, pul_last_part_len));
 
-            if slot_guard
-                .sessions
-                .get(&h_session)
-                .unwrap()
-                .decrypt_op
-                .pending
-                .is_none()
-            {
+            if matches!(
+                slot_guard.sessions.get(&h_session).unwrap().active_op,
+                ActiveOp::Decrypt(DecryptOp { pending: None })
+            ) {
                 if slot_guard.login_state == LoginState::Public {
-                    slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
-                        DecryptOp::default();
+                    slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                     return CKR_USER_NOT_LOGGED_IN.into();
                 }
                 match B::decrypt_final(&mut slot_guard, h_session) {
                     Ok(plaintext) => {
-                        slot_guard
-                            .sessions
-                            .get_mut(&h_session)
-                            .unwrap()
-                            .decrypt_op
-                            .pending = Some(plaintext);
+                        slot_guard.sessions.get_mut(&h_session).unwrap().active_op =
+                            ActiveOp::Decrypt(DecryptOp {
+                                pending: Some(plaintext),
+                            });
                     }
                     Err(rv) => {
-                        slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op =
-                            DecryptOp::default();
+                        slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
                         return rv;
                     }
                 }
             }
 
-            let out_len = slot_guard.sessions[&h_session]
-                .decrypt_op
-                .pending
-                .as_ref()
-                .unwrap()
-                .len();
-            if let Some(rv) = out.check(out_len) {
+            let ActiveOp::Decrypt(decrypt_op) = &slot_guard.sessions[&h_session].active_op else {
+                unreachable!("decrypt_op confirmed active above");
+            };
+            let out_len = decrypt_op.pending.as_ref().unwrap().len();
+            if let Some(rv) = out.check_length(out_len) {
                 return rv;
             }
 
-            let plaintext = slot_guard
-                .sessions
-                .get_mut(&h_session)
-                .unwrap()
-                .decrypt_op
-                .pending
-                .take()
-                .unwrap();
-            slot_guard.sessions.get_mut(&h_session).unwrap().decrypt_op = DecryptOp::default();
+            let ActiveOp::Decrypt(decrypt_op) =
+                &mut slot_guard.sessions.get_mut(&h_session).unwrap().active_op
+            else {
+                unreachable!("decrypt_op confirmed active above");
+            };
+            let plaintext = decrypt_op.pending.take().unwrap();
+            slot_guard.sessions.get_mut(&h_session).unwrap().active_op = ActiveOp::None;
             out.write(&plaintext)
         }
     }
@@ -2499,9 +2477,9 @@ impl<B: Backend> Engine<B> {
             }
             let mut out = try_rv!(OutBuf::new(p_ciphertext, pul_ciphertext_len));
 
-            if out.is_query() {
+            if out.is_length_query() {
                 return match B::encapsulate_key_len(&mut slot_guard, h_public_key) {
-                    Ok(len) => out.check(len).unwrap_or_else(|| CKR_OK.into()),
+                    Ok(len) => out.check_length(len).unwrap_or_else(|| CKR_OK.into()),
                     Err(rv) => rv,
                 };
             }
@@ -2567,7 +2545,7 @@ impl<B: Backend> Engine<B> {
 
             let mechanism = (*p_mechanism).mechanism;
             let parameter = try_rv!(mechanism_parameter(p_mechanism));
-            let ciphertext = try_rv!(in_slice(p_ciphertext as *const u8, ul_ciphertext_len));
+            let ciphertext = try_rv!(input_slice(p_ciphertext as *const u8, ul_ciphertext_len));
             let template = try_rv!(extract_attribute_template(p_template, ul_attribute_count));
 
             match B::decapsulate_key(
@@ -2638,8 +2616,8 @@ impl<B: Backend> Engine<B> {
                 return CKR_SESSION_HANDLE_INVALID.into();
             }
 
-            let old_pin = try_rv!(in_slice_or_empty(p_old_pin as *const u8, ul_old_len));
-            let new_pin = try_rv!(in_slice_or_empty(p_new_pin as *const u8, ul_new_len));
+            let old_pin = try_rv!(input_slice_or_empty(p_old_pin as *const u8, ul_old_len));
+            let new_pin = try_rv!(input_slice_or_empty(p_new_pin as *const u8, ul_new_len));
 
             match B::set_pin(&mut slot_guard, h_session, old_pin, new_pin) {
                 Ok(()) => CKR_OK.into(),
@@ -2676,7 +2654,7 @@ impl<B: Backend> Engine<B> {
             if p_pin.is_null() {
                 return CKR_ARGUMENTS_BAD.into();
             }
-            let pin = try_rv!(in_slice(p_pin as *const u8, ul_pin_len));
+            let pin = try_rv!(input_slice(p_pin as *const u8, ul_pin_len));
 
             match B::init_token(&mut slot_guard, pin) {
                 Ok(()) => CKR_OK.into(),

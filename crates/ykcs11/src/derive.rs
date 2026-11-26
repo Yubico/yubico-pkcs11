@@ -16,75 +16,100 @@
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::{find_private_key, store_secret_key};
-use crate::template::find_attr;
-use pkcs11_common::backend::Slot;
-use pkcs11_common::mechanism::MechanismParam;
+use common::backend::Slot;
+use common::mechanism::MechanismParam;
+use common::yk_dbg;
 use pkcs11_sys::*;
 use yubikit::keys::PublicKey;
-use yubikit::piv::KeyType;
+use yubikit::piv::KeyType as KeyAlgorithm;
 
-fn ecdh_key_type(public_key: &PublicKey) -> Result<(KeyType, usize), CK_RV> {
+fn ecdh_key_type(public_key: &PublicKey) -> Result<(KeyAlgorithm, usize), CK_RV> {
     match public_key {
         PublicKey::Ec(k) => match k.curve {
             // A raw uncompressed EC point is `2 * point_len + 1` bytes
-            yubikit::keys::EcCurve::P256 => Ok((KeyType::EccP256, 65)),
-            yubikit::keys::EcCurve::P384 => Ok((KeyType::EccP384, 97)),
-            _ => Err(CKR_KEY_TYPE_INCONSISTENT.into()),
+            yubikit::keys::EcCurve::P256 => Ok((KeyAlgorithm::EccP256, 65)),
+            yubikit::keys::EcCurve::P384 => Ok((KeyAlgorithm::EccP384, 97)),
+            _ => {
+                yk_dbg!("ecdh_key_type: unsupported EC curve for ECDH derive");
+                Err(CKR_KEY_TYPE_INCONSISTENT.into())
+            }
         },
-        PublicKey::X25519(_) => Ok((KeyType::X25519, 32)),
-        _ => Err(CKR_KEY_TYPE_INCONSISTENT.into()),
+        PublicKey::X25519(_) => Ok((KeyAlgorithm::X25519, 32)),
+        _ => {
+            yk_dbg!("ecdh_key_type: base key type does not support ECDH derive");
+            Err(CKR_KEY_TYPE_INCONSISTENT.into())
+        }
     }
 }
 
 /// Validates `CK_ECDH1_DERIVE_PARAMS` and returns the peer's public point
-fn resolve_ecdh1_derive_params(
+fn parse_ecdh1_derive_params(
     parameter: &MechanismParam,
-    expected_point_len: usize,
+    pubkey_len: usize,
 ) -> Result<Vec<u8>, CK_RV> {
     match parameter {
         MechanismParam::Ecdh1Derive(params)
             if params.kdf == CKD_NULL as CK_EC_KDF_TYPE
                 && params.shared_data.is_empty()
-                && params.public_data.len() == expected_point_len =>
+                && params.public_data.len() == pubkey_len =>
         {
             Ok(params.public_data.clone())
         }
-        _ => Err(CKR_MECHANISM_PARAM_INVALID.into()),
+        _ => {
+            yk_dbg!("parse_ecdh1_derive_params: invalid CK_ECDH1_DERIVE_PARAMS");
+            Err(CKR_MECHANISM_PARAM_INVALID.into())
+        }
     }
 }
 
 pub(crate) fn validate_derive_template(
     template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<(), CK_RV> {
-    if let Some(token) = find_attr(template, CKA_TOKEN).and_then(|b| b.first().copied()) {
-        if token != 0 {
-            return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
-        }
-    }
-    if let Some(class) = find_attr(template, CKA_CLASS) {
-        let class = CK_ULONG::from_ne_bytes(
-            class
-                .try_into()
-                .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        );
-        if class as u32 != CKO_SECRET_KEY {
-            return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
-        }
-    }
-    if let Some(key_type) = find_attr(template, CKA_KEY_TYPE) {
-        let key_type = CK_ULONG::from_ne_bytes(
-            key_type
-                .try_into()
-                .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        );
-        if key_type as u32 != CKK_GENERIC_SECRET {
-            return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
-        }
-    }
-    if let Some(extractable) = find_attr(template, CKA_EXTRACTABLE).and_then(|b| b.first().copied())
-    {
-        if extractable == 0 {
-            return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
+    for (attr_type, value) in template {
+        match *attr_type as u32 {
+            CKA_TOKEN => {
+                let token = *value
+                    .first()
+                    .ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
+                if token != 0 {
+                    yk_dbg!("validate_derive_template: CKA_TOKEN must be CK_FALSE");
+                    return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
+                }
+            }
+            CKA_CLASS => {
+                let class = CK_ULONG::from_ne_bytes(
+                    value
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+                );
+                if class as u32 != CKO_SECRET_KEY {
+                    yk_dbg!("validate_derive_template: CKA_CLASS must be CKO_SECRET_KEY");
+                    return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
+                }
+            }
+            CKA_KEY_TYPE => {
+                let kt = CK_ULONG::from_ne_bytes(
+                    value
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+                );
+                if kt as u32 != CKK_GENERIC_SECRET {
+                    yk_dbg!("validate_derive_template: CKA_KEY_TYPE must be CKK_GENERIC_SECRET");
+                    return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
+                }
+            }
+            CKA_EXTRACTABLE => {
+                let extractable = *value
+                    .first()
+                    .ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?;
+                if extractable == 0 {
+                    yk_dbg!("validate_derive_template: CKA_EXTRACTABLE must be CK_TRUE");
+                    return Err(CKR_ATTRIBUTE_VALUE_INVALID.into());
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -99,34 +124,38 @@ pub fn derive_key(
     template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
 ) -> Result<CK_OBJECT_HANDLE, CK_RV> {
     let Some((piv_slot, public_key)) = find_private_key(&slot.data.objects, base_key_handle) else {
+        yk_dbg!("derive_key: invalid base key handle {base_key_handle}");
         return Err(CKR_KEY_HANDLE_INVALID.into());
     };
     let (key_type, point_len) = ecdh_key_type(public_key)?;
 
     if mechanism != CKM_ECDH1_DERIVE as CK_MECHANISM_TYPE {
+        yk_dbg!("derive_key: unsupported mechanism {mechanism:#x}");
         return Err(CKR_MECHANISM_INVALID.into());
     }
-    let peer_point = resolve_ecdh1_derive_params(parameter, point_len)?;
+    let peer_point = parse_ecdh1_derive_params(parameter, point_len)?;
     validate_derive_template(template)?;
 
-    let piv = slot
-        .data
-        .piv_session
-        .as_mut()
-        .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
+    let piv = slot.data.piv_session.as_mut().ok_or_else(|| {
+        yk_dbg!("derive_key: no active PIV session");
+        CK_RV::from(CKR_TOKEN_NOT_PRESENT)
+    })?;
     let secret = piv
         .calculate_secret(piv_slot, key_type, &peer_point)
-        .map_err(piv_error_to_rv)?;
+        .map_err(|e| {
+            yk_dbg!("derive_key: calculate_secret failed: {e:?}");
+            piv_error_to_rv(e)
+        })?;
 
     store_secret_key(&mut slot.data.objects, piv_slot, secret);
 
-    Ok(crate::objects::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
+    Ok(crate::piv_key_slot::PivObjectId::PIV_SECRET_OBJ as CK_OBJECT_HANDLE)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkcs11_common::mechanism::Ecdh1DeriveParams;
+    use common::mechanism::Ecdh1DeriveParams;
     use yubikit::keys::{
         EcCurve, EcPublicKey, Ed25519PublicKey, RsaKeySize, RsaPublicKey, X25519PublicKey,
     };
@@ -147,16 +176,16 @@ mod tests {
             curve: EcCurve::P256,
             point: vec![0x04; 65],
         });
-        assert_eq!(ecdh_key_type(&p256), Ok((KeyType::EccP256, 65)));
+        assert_eq!(ecdh_key_type(&p256), Ok((KeyAlgorithm::EccP256, 65)));
 
         let p384 = PublicKey::Ec(EcPublicKey {
             curve: EcCurve::P384,
             point: vec![0x04; 97],
         });
-        assert_eq!(ecdh_key_type(&p384), Ok((KeyType::EccP384, 97)));
+        assert_eq!(ecdh_key_type(&p384), Ok((KeyAlgorithm::EccP384, 97)));
 
         let x25519 = PublicKey::X25519(X25519PublicKey { key: vec![0u8; 32] });
-        assert_eq!(ecdh_key_type(&x25519), Ok((KeyType::X25519, 32)));
+        assert_eq!(ecdh_key_type(&x25519), Ok((KeyAlgorithm::X25519, 32)));
     }
 
     #[test]
@@ -187,7 +216,7 @@ mod tests {
     fn resolve_ecdh1_derive_params_accepts_a_well_formed_p256_request() {
         let peer = vec![0x04u8; 65];
         let params = ecdh_params(CKD_NULL, &[], &peer);
-        assert_eq!(resolve_ecdh1_derive_params(&params, 65), Ok(peer));
+        assert_eq!(parse_ecdh1_derive_params(&params, 65), Ok(peer));
     }
 
     #[test]
@@ -199,7 +228,7 @@ mod tests {
             MechanismParam::Bytes(vec![0u8; 4]),
         ] {
             assert_eq!(
-                resolve_ecdh1_derive_params(&params, 65),
+                parse_ecdh1_derive_params(&params, 65),
                 Err(CKR_MECHANISM_PARAM_INVALID.into())
             );
         }
@@ -210,7 +239,7 @@ mod tests {
         // Base key is P-384 (expects a 97-byte point), caller sent 65.
         let params = ecdh_params(CKD_NULL, &[], &[0x04; 65]);
         assert_eq!(
-            resolve_ecdh1_derive_params(&params, 97),
+            parse_ecdh1_derive_params(&params, 97),
             Err(CKR_MECHANISM_PARAM_INVALID.into())
         );
     }

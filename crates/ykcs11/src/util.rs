@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use pkcs11_common::session::LoginState;
+use common::session::LoginState;
 use pkcs11_sys::*;
 use yubikit::piv::{PinPolicy, TouchPolicy};
 
@@ -25,47 +25,21 @@ pub(crate) const P256_CURVE_OID: &[u8] =
 /// `secp384r1`/P-384 (1.3.132.0.34) as a DER `OBJECT IDENTIFIER`
 pub(crate) const P384_CURVE_OID: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
 
-pub(crate) fn find_attr<'a>(
-    template: &'a [(CK_ATTRIBUTE_TYPE, Vec<u8>)],
-    attr: u32,
-) -> Option<&'a [u8]> {
-    template
-        .iter()
-        .find(|(t, _)| *t == attr as CK_ATTRIBUTE_TYPE)
-        .map(|(_, v)| v.as_slice())
-}
-
-pub(crate) fn find_byte(
-    template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
-    attr: u32,
-) -> Result<Option<u8>, CK_RV> {
-    match find_attr(template, attr) {
-        Some(bytes) => Ok(Some(
-            *bytes
-                .first()
-                .ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-        )),
-        None => Ok(None),
-    }
-}
-
 /// Parse `CKA_YUBICO_PIN_POLICY`, `CKA_YUBICO_TOUCH_POLICY` and `CKA_ALWAYS_AUTHENTICATE`
-pub(crate) fn resolve_policies(
-    private_key_template: &[(CK_ATTRIBUTE_TYPE, Vec<u8>)],
+pub(crate) fn parse_policies(
+    pin_policy_value: Option<u8>,
+    touch_policy_value: Option<u8>,
+    always_authenticate_value: Option<u8>,
 ) -> Result<(PinPolicy, TouchPolicy), CK_RV> {
-    let mut pin_policy =
-        match find_byte(private_key_template, crate::objects::CKA_YUBICO_PIN_POLICY)? {
-            Some(b) => PinPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
-            None => PinPolicy::Default,
-        };
-    let touch_policy = match find_byte(
-        private_key_template,
-        crate::objects::CKA_YUBICO_TOUCH_POLICY,
-    )? {
+    let mut pin_policy = match pin_policy_value {
+        Some(b) => PinPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
+        None => PinPolicy::Default,
+    };
+    let touch_policy = match touch_policy_value {
         Some(b) => TouchPolicy::from_u8(b).ok_or(CK_RV::from(CKR_ATTRIBUTE_VALUE_INVALID))?,
         None => TouchPolicy::Default,
     };
-    if let Some(always) = find_byte(private_key_template, CKA_ALWAYS_AUTHENTICATE)? {
+    if let Some(always) = always_authenticate_value {
         if always != 0 {
             match pin_policy {
                 PinPolicy::Default => pin_policy = PinPolicy::Always,
@@ -77,14 +51,6 @@ pub(crate) fn resolve_policies(
         }
     }
     Ok((pin_policy, touch_policy))
-}
-
-pub(crate) fn is_public_exponent_65537(e: &[u8]) -> bool {
-    let trimmed = match e.iter().position(|&b| b != 0) {
-        Some(i) => &e[i..],
-        None => &[][..],
-    };
-    trimmed == [0x01, 0x00, 0x01]
 }
 
 pub(crate) fn require_so_login(login_state: LoginState) -> Result<(), CK_RV> {

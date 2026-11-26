@@ -2119,7 +2119,7 @@ fn test_import_rsa_with_policy() {
     }
 
     // CKA_ALWAYS_AUTHENTICATE=TRUE with no explicit CKA_YUBICO_PIN_POLICY.
-    // template.rs's resolve_policies() deterministically upgrades a Default
+    // util's resolve_policies() deterministically upgrades a Default
     // PIN policy to Always in that case
     let privkey = import_rsa_key_with_policy(
         session,

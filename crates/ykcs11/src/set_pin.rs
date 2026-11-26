@@ -15,11 +15,14 @@
  */
 
 use crate::backend::{PivBackend, piv_error_to_rv};
-use pkcs11_common::backend::Slot;
-use pkcs11_common::session::LoginState;
-use pkcs11_common::util::hex_decode;
+use common::backend::Slot;
+use common::session::LoginState;
+use common::util::hex_decode;
 use pkcs11_sys::*;
 use yubikit::piv::{ManagementKey, PivPin, TouchPolicy};
+
+const PUK_PREFIX: &[u8] = b"puk:";
+const PIN_PREFIX: &[u8] = b"pin:";
 
 fn piv_pin(bytes: &[u8]) -> Result<PivPin, CK_RV> {
     std::str::from_utf8(bytes)
@@ -27,9 +30,6 @@ fn piv_pin(bytes: &[u8]) -> Result<PivPin, CK_RV> {
         .and_then(|s| PivPin::new(s).ok())
         .ok_or(CK_RV::from(CKR_PIN_LEN_RANGE))
 }
-
-const PUK_PREFIX: &[u8] = b"puk:";
-const PIN_PREFIX: &[u8] = b"pin:";
 
 enum UserPinRequest<'a> {
     ChangePin { old: &'a [u8], new: &'a [u8] },

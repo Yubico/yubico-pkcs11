@@ -15,11 +15,11 @@
  */
 
 use crate::backend::PivBackend;
-use crate::piv_slot::{PivSlotData, PivTokenInfo};
+use crate::pkcs11_slot::{Pkcs11SlotData, Pkcs11TokenInfo};
+use common::backend::{ModuleState, Slot};
+use common::session::LoginState;
+use common::yk_dbg;
 use parking_lot::Mutex;
-use pkcs11_common::backend::{ModuleState, Slot};
-use pkcs11_common::session::LoginState;
-use pkcs11_common::yk_dbg;
 use pkcs11_sys::{CK_RV, CK_ULONG};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -63,7 +63,7 @@ pub fn refresh_slots(state: &mut ModuleState<PivBackend>) -> Result<(), CK_RV> {
                 );
                 state
                     .slots
-                    .push(Arc::new(Mutex::new(Slot::new(PivSlotData::new(
+                    .push(Arc::new(Mutex::new(Slot::new(Pkcs11SlotData::new(
                         reader_name.clone(),
                     )))));
                 state.slots.len() - 1
@@ -149,10 +149,10 @@ fn connect_slot(slot: &Arc<Mutex<Slot<PivBackend>>>, reader_name: &str, card_pre
     s.data.token_present = true;
 }
 
-fn build_token_info(device: &LocalYubiKeyDevice) -> PivTokenInfo {
+fn build_token_info(device: &LocalYubiKeyDevice) -> Pkcs11TokenInfo {
     let info = device.info();
     let serial = info.serial.map(|s| s.to_string()).unwrap_or_default();
-    PivTokenInfo {
+    Pkcs11TokenInfo {
         label: format!("YubiKey PIV #{serial}"),
         manufacturer: YKCS11_MANUFACTURER.to_string(),
         model: yubikit::device::get_name(info),

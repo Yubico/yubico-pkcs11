@@ -9,7 +9,7 @@ A unified Rust workspace implementing PKCS#11 modules for both **YubiHSM 2** and
 ```
 crates/
 ├── pkcs11-sys/     Raw PKCS#11 FFI bindings generated from OASIS 3.1 headers
-├── pkcs11-common/     Shared PKCS#11 types, session state, attribute helpers
+├── common/     Shared PKCS#11 types, session state, attribute helpers
 ├── yubihsm-pkcs11/   YubiHSM 2 PKCS#11 module (uses yubihsmrs)
 └── ykcs11/            YubiKey PIV PKCS#11 module (uses yubikit)
 ```

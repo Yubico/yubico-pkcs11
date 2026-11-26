@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use crate::ffi::in_slice_or_empty;
+use crate::ffi::input_slice_or_empty;
 use pkcs11_sys::*;
 
 /// A mechanism parameter as seen by a backend.
@@ -67,7 +67,7 @@ pub struct SignAdditionalContext {
 /// Copies a pointer/length pair nested inside a parameter structure. A null
 /// pointer with a non-zero length is reported as an invalid parameter.
 unsafe fn copy_nested(ptr: *const u8, len: CK_ULONG) -> Result<Vec<u8>, CK_RV> {
-    unsafe { crate::ffi::in_slice(ptr, len) }
+    unsafe { crate::ffi::input_slice(ptr, len) }
         .map(<[u8]>::to_vec)
         .map_err(|_| CKR_MECHANISM_PARAM_INVALID.into())
 }
@@ -90,7 +90,7 @@ fn read_struct<T: Copy>(raw: &[u8]) -> Option<T> {
 ///
 /// # Safety
 ///
-/// `ptr`/`len` must satisfy [`in_slice_or_empty`]'s contract, and every
+/// `ptr`/`len` must satisfy [`input_slice_or_empty`]'s contract, and every
 /// non-null pointer/length pair nested inside a decoded structure must be
 /// valid for reads of that many bytes.
 pub unsafe fn decode_mechanism_param(
@@ -98,7 +98,7 @@ pub unsafe fn decode_mechanism_param(
     ptr: *const u8,
     len: CK_ULONG,
 ) -> Result<MechanismParam, CK_RV> {
-    let raw = unsafe { in_slice_or_empty(ptr, len)? };
+    let raw = unsafe { input_slice_or_empty(ptr, len)? };
     let decoded = match mechanism as u32 {
         CKM_RSA_PKCS_OAEP => read_struct::<CK_RSA_PKCS_OAEP_PARAMS>(raw).map(|p| {
             let source_data = if p.source != CKZ_DATA_SPECIFIED as CK_RSA_PKCS_OAEP_SOURCE_TYPE {
@@ -134,14 +134,17 @@ pub unsafe fn decode_mechanism_param(
     decoded.unwrap_or_else(|| Ok(MechanismParam::Bytes(raw.to_vec())))
 }
 
-pub enum MechanismKind {
+pub enum SignatureMechanism {
     RsaX509,
-    RsaPkcs1Raw,
-    RsaPkcs1Hashed(CK_MECHANISM_TYPE),
-    RsaPssRaw,
-    RsaPssHashed(CK_MECHANISM_TYPE),
-    EcdsaRaw,
-    EcdsaHashed(CK_MECHANISM_TYPE),
+    /// `CKM_RSA_PKCS` (`None`) or one of the `CKM_SHA*_RSA_PKCS` variants
+    /// (`Some` the hash mechanism).
+    RsaPkcs1(Option<CK_MECHANISM_TYPE>),
+    /// `CKM_RSA_PKCS_PSS` (`None`) or one of the `CKM_SHA*_RSA_PKCS_PSS`
+    /// variants (`Some` the outer hash mechanism).
+    RsaPss(Option<CK_MECHANISM_TYPE>),
+    /// `CKM_ECDSA` (`None`) or one of the `CKM_ECDSA_SHA*` variants (`Some`
+    /// the hash mechanism).
+    Ecdsa(Option<CK_MECHANISM_TYPE>),
     Eddsa,
     MlDsa,
     /// `CKM_ML_DSA_EXTERNAL_MU` (PKCS#11 3.3): the data is the 64-byte
@@ -150,27 +153,33 @@ pub enum MechanismKind {
     MlDsaExternalMu,
 }
 
-pub fn classify_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<MechanismKind> {
+pub fn parse_signature_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<SignatureMechanism> {
     Some(match mechanism as u32 {
-        CKM_RSA_X_509 => MechanismKind::RsaX509,
-        CKM_RSA_PKCS => MechanismKind::RsaPkcs1Raw,
-        CKM_SHA1_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA_1 as CK_MECHANISM_TYPE),
-        CKM_SHA256_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA256 as CK_MECHANISM_TYPE),
-        CKM_SHA384_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA384 as CK_MECHANISM_TYPE),
-        CKM_SHA512_RSA_PKCS => MechanismKind::RsaPkcs1Hashed(CKM_SHA512 as CK_MECHANISM_TYPE),
-        CKM_RSA_PKCS_PSS => MechanismKind::RsaPssRaw,
-        CKM_SHA1_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA_1 as CK_MECHANISM_TYPE),
-        CKM_SHA256_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA256 as CK_MECHANISM_TYPE),
-        CKM_SHA384_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA384 as CK_MECHANISM_TYPE),
-        CKM_SHA512_RSA_PKCS_PSS => MechanismKind::RsaPssHashed(CKM_SHA512 as CK_MECHANISM_TYPE),
-        CKM_ECDSA => MechanismKind::EcdsaRaw,
-        CKM_ECDSA_SHA1 => MechanismKind::EcdsaHashed(CKM_SHA_1 as CK_MECHANISM_TYPE),
-        CKM_ECDSA_SHA256 => MechanismKind::EcdsaHashed(CKM_SHA256 as CK_MECHANISM_TYPE),
-        CKM_ECDSA_SHA384 => MechanismKind::EcdsaHashed(CKM_SHA384 as CK_MECHANISM_TYPE),
-        CKM_ECDSA_SHA512 => MechanismKind::EcdsaHashed(CKM_SHA512 as CK_MECHANISM_TYPE),
-        CKM_EDDSA => MechanismKind::Eddsa,
-        CKM_ML_DSA => MechanismKind::MlDsa,
-        CKM_ML_DSA_EXTERNAL_MU => MechanismKind::MlDsaExternalMu,
+        CKM_RSA_X_509 => SignatureMechanism::RsaX509,
+        CKM_RSA_PKCS => SignatureMechanism::RsaPkcs1(None),
+        CKM_SHA1_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA_1 as CK_MECHANISM_TYPE)),
+        CKM_SHA256_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA256 as CK_MECHANISM_TYPE)),
+        CKM_SHA384_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA384 as CK_MECHANISM_TYPE)),
+        CKM_SHA512_RSA_PKCS => SignatureMechanism::RsaPkcs1(Some(CKM_SHA512 as CK_MECHANISM_TYPE)),
+        CKM_RSA_PKCS_PSS => SignatureMechanism::RsaPss(None),
+        CKM_SHA1_RSA_PKCS_PSS => SignatureMechanism::RsaPss(Some(CKM_SHA_1 as CK_MECHANISM_TYPE)),
+        CKM_SHA256_RSA_PKCS_PSS => {
+            SignatureMechanism::RsaPss(Some(CKM_SHA256 as CK_MECHANISM_TYPE))
+        }
+        CKM_SHA384_RSA_PKCS_PSS => {
+            SignatureMechanism::RsaPss(Some(CKM_SHA384 as CK_MECHANISM_TYPE))
+        }
+        CKM_SHA512_RSA_PKCS_PSS => {
+            SignatureMechanism::RsaPss(Some(CKM_SHA512 as CK_MECHANISM_TYPE))
+        }
+        CKM_ECDSA => SignatureMechanism::Ecdsa(None),
+        CKM_ECDSA_SHA1 => SignatureMechanism::Ecdsa(Some(CKM_SHA_1 as CK_MECHANISM_TYPE)),
+        CKM_ECDSA_SHA256 => SignatureMechanism::Ecdsa(Some(CKM_SHA256 as CK_MECHANISM_TYPE)),
+        CKM_ECDSA_SHA384 => SignatureMechanism::Ecdsa(Some(CKM_SHA384 as CK_MECHANISM_TYPE)),
+        CKM_ECDSA_SHA512 => SignatureMechanism::Ecdsa(Some(CKM_SHA512 as CK_MECHANISM_TYPE)),
+        CKM_EDDSA => SignatureMechanism::Eddsa,
+        CKM_ML_DSA => SignatureMechanism::MlDsa,
+        CKM_ML_DSA_EXTERNAL_MU => SignatureMechanism::MlDsaExternalMu,
         _ => return None,
     })
 }
@@ -216,22 +225,22 @@ pub fn resolve_pss_params(
     Ok((pss.hashAlg, mgf_hash, pss.sLen as usize))
 }
 
-pub enum CryptMechanismKind {
+pub enum EncryptionMechanism {
     RsaX509,
     RsaPkcs1,
     RsaOaep,
 }
 
-pub fn classify_crypt_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<CryptMechanismKind> {
+pub fn parse_encryption_mechanism(mechanism: CK_MECHANISM_TYPE) -> Option<EncryptionMechanism> {
     Some(match mechanism as u32 {
-        CKM_RSA_X_509 => CryptMechanismKind::RsaX509,
-        CKM_RSA_PKCS => CryptMechanismKind::RsaPkcs1,
-        CKM_RSA_PKCS_OAEP => CryptMechanismKind::RsaOaep,
+        CKM_RSA_X_509 => EncryptionMechanism::RsaX509,
+        CKM_RSA_PKCS => EncryptionMechanism::RsaPkcs1,
+        CKM_RSA_PKCS_OAEP => EncryptionMechanism::RsaOaep,
         _ => return None,
     })
 }
 
-pub fn resolve_oaep_params(
+pub fn parse_oaep_params(
     parameter: &MechanismParam,
 ) -> Result<(CK_MECHANISM_TYPE, CK_MECHANISM_TYPE, Vec<u8>), CK_RV> {
     let MechanismParam::RsaOaep(oaep) = parameter else {
@@ -283,7 +292,7 @@ mod tests {
         let decoded = decode(CKM_RSA_PKCS_OAEP, &params).unwrap();
         drop(label);
         assert_eq!(
-            resolve_oaep_params(&decoded),
+            parse_oaep_params(&decoded),
             Ok((
                 CKM_SHA256 as CK_MECHANISM_TYPE,
                 CKM_SHA256 as CK_MECHANISM_TYPE,
@@ -336,7 +345,7 @@ mod tests {
         .unwrap();
         assert_eq!(truncated, MechanismParam::Bytes(raw.to_vec()));
         assert_eq!(
-            resolve_oaep_params(&truncated),
+            parse_oaep_params(&truncated),
             Err(CKR_MECHANISM_PARAM_INVALID.into())
         );
     }
