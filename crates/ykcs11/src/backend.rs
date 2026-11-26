@@ -19,7 +19,7 @@
 use crate::discovery::ActivePivSession;
 use crate::pkcs11_slot::Pkcs11SlotData;
 use common::backend::{
-    Backend, Engine, LibraryInfo, MechanismInfo, ModuleState, Slot, SlotInfo, TokenInfo,
+    ActiveOp, Backend, Engine, LibraryInfo, MechanismInfo, ModuleState, Slot, SlotInfo, TokenInfo,
 };
 use common::mechanism::MechanismParam;
 use common::session::LoginState;
@@ -183,7 +183,7 @@ impl Backend for PivBackend {
             let op_in_progress = slot
                 .sessions
                 .get(&h_session)
-                .is_some_and(|s| s.sign_op.active || s.decrypt_op.active);
+                .is_some_and(|s| matches!(s.active_op, ActiveOp::Sign(_) | ActiveOp::Decrypt(_)));
             if !op_in_progress {
                 return Err(CKR_USER_TYPE_INVALID.into());
             }
@@ -595,32 +595,17 @@ pub static G_ENGINE: Engine<PivBackend> = Engine::new();
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::backend::{DecryptOp, EncryptOp, FindOp, Session, SignOp, VerifyOp};
+    use common::backend::{DecryptOp, Session, SignOp};
     use std::collections::HashMap;
 
-    fn slot_with_session(
-        h_session: CK_SESSION_HANDLE,
-        sign_active: bool,
-        decrypt_active: bool,
-    ) -> Slot<PivBackend> {
+    fn slot_with_session(h_session: CK_SESSION_HANDLE, active_op: ActiveOp) -> Slot<PivBackend> {
         let mut sessions = HashMap::new();
         sessions.insert(
             h_session,
             Session {
                 handle: h_session,
                 flags: 0,
-                find_op: FindOp::default(),
-                digest_op: None,
-                sign_op: SignOp {
-                    active: sign_active,
-                    ..Default::default()
-                },
-                verify_op: VerifyOp::default(),
-                encrypt_op: EncryptOp::default(),
-                decrypt_op: DecryptOp {
-                    active: decrypt_active,
-                    ..Default::default()
-                },
+                active_op,
                 data: PivSessionData::default(),
             },
         );
@@ -633,7 +618,7 @@ mod tests {
 
     #[test]
     fn context_specific_login_rejected_with_no_operation_in_progress() {
-        let mut slot = slot_with_session(1, false, false);
+        let mut slot = slot_with_session(1, ActiveOp::None);
         let rv = PivBackend::login(
             &mut slot,
             1,
@@ -646,7 +631,7 @@ mod tests {
 
     #[test]
     fn context_specific_login_passes_the_gate_while_a_sign_operation_is_active() {
-        let mut slot = slot_with_session(1, true, false);
+        let mut slot = slot_with_session(1, ActiveOp::Sign(SignOp::default()));
         // No real `piv_session` is wired up in this test, so once the
         // CKU_CONTEXT_SPECIFIC gate is passed, the next thing `login` does
         // is look up `slot.data.piv_session` and fail with
@@ -664,7 +649,7 @@ mod tests {
 
     #[test]
     fn context_specific_login_passes_the_gate_while_a_decrypt_operation_is_active() {
-        let mut slot = slot_with_session(1, false, true);
+        let mut slot = slot_with_session(1, ActiveOp::Decrypt(DecryptOp::default()));
         let rv = PivBackend::login(
             &mut slot,
             1,
@@ -677,7 +662,10 @@ mod tests {
 
     #[test]
     fn context_specific_login_rejected_on_an_unknown_session_handle() {
-        let mut slot = slot_with_session(1, true, true);
+        // Which op (if any) is active on session 1 is irrelevant here --
+        // this test only exercises the lookup of the *different*,
+        // nonexistent session handle 2.
+        let mut slot = slot_with_session(1, ActiveOp::None);
         let rv = PivBackend::login(
             &mut slot,
             2,
