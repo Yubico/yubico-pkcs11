@@ -17,7 +17,7 @@
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;
 use crate::piv_key_slot::PivObjectClass;
-use crate::template::require_so_login;
+use crate::util::require_so_login;
 use common::backend::Slot;
 use pkcs11_sys::*;
 

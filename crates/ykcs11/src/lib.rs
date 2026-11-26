@@ -37,7 +37,7 @@ mod piv_key_slot;
 mod pkcs11_slot;
 mod set_pin;
 mod sign;
-mod template;
+mod util;
 mod verify;
 
 pub use dispatch::*;

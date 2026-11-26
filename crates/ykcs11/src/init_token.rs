@@ -23,7 +23,7 @@ use yubikit::piv::{
     DEFAULT_MANAGEMENT_KEY, ManagementKey, ManagementKeyType, PivError, TouchPolicy,
 };
 
-fn authenticate_with_key(
+fn authenticate_with_mgmkey(
     piv: &mut ActivePivSession,
     key_type: ManagementKeyType,
     key_bytes: &[u8],
@@ -45,7 +45,7 @@ pub fn init_token(slot: &mut Slot<PivBackend>, pin: &[u8]) -> Result<(), CK_RV> 
         .ok_or(CK_RV::from(CKR_TOKEN_NOT_PRESENT))?;
 
     let old_key_type = piv.management_key_type();
-    authenticate_with_key(piv, old_key_type, &key_bytes)?;
+    authenticate_with_mgmkey(piv, old_key_type, &key_bytes)?;
 
     let require_touch = piv
         .get_management_key_metadata()
@@ -56,7 +56,7 @@ pub fn init_token(slot: &mut Slot<PivBackend>, pin: &[u8]) -> Result<(), CK_RV> 
 
     // Re-authenticate with the now-restored factory-default key.
     let default_key_type = piv.management_key_type();
-    authenticate_with_key(piv, default_key_type, DEFAULT_MANAGEMENT_KEY)?;
+    authenticate_with_mgmkey(piv, default_key_type, DEFAULT_MANAGEMENT_KEY)?;
 
     let restored_key =
         ManagementKey::new(old_key_type, &key_bytes).map_err(|_| CK_RV::from(CKR_PIN_INVALID))?;

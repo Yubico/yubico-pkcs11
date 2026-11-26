@@ -21,15 +21,15 @@ use common::util::hex_decode;
 use pkcs11_sys::*;
 use yubikit::piv::{ManagementKey, PivPin, TouchPolicy};
 
+const PUK_PREFIX: &[u8] = b"puk:";
+const PIN_PREFIX: &[u8] = b"pin:";
+
 fn piv_pin(bytes: &[u8]) -> Result<PivPin, CK_RV> {
     std::str::from_utf8(bytes)
         .ok()
         .and_then(|s| PivPin::new(s).ok())
         .ok_or(CK_RV::from(CKR_PIN_LEN_RANGE))
 }
-
-const PUK_PREFIX: &[u8] = b"puk:";
-const PIN_PREFIX: &[u8] = b"pin:";
 
 enum UserPinRequest<'a> {
     ChangePin { old: &'a [u8], new: &'a [u8] },
