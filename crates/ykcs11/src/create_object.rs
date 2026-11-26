@@ -16,10 +16,9 @@
 
 use crate::backend::{PivBackend, piv_error_to_rv};
 use crate::objects::refresh_slot_objects;
-use crate::util::{
-    P256_CURVE_OID, P384_CURVE_OID, is_public_exponent_65537, parse_policies, require_so_login,
-};
+use crate::util::{P256_CURVE_OID, P384_CURVE_OID, parse_policies, require_so_login};
 use common::backend::Slot;
+use common::util::is_public_exponent_65537;
 use common::yk_dbg;
 use der::Decode;
 use pkcs11_sys::*;

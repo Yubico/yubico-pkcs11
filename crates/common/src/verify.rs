@@ -18,67 +18,15 @@ use crate::digest::DigestOp;
 use crate::sign::{digest_info_prefix, mgf1, pkcs1_v15_pad, zero_pad};
 use pkcs11_sys::*;
 use rsa::BoxedUint;
-pub(crate) fn rsa_public_raw_op(
-    n: &[u8],
-    e: &[u8],
-    input: &[u8],
-    modulus_len: usize,
-) -> Result<Vec<u8>, CK_RV> {
-    if input.len() != modulus_len {
-        return Err(CKR_SIGNATURE_LEN_RANGE.into());
-    }
-    let pub_key = rsa::PublicKey::new(
-        BoxedUint::from_be_slice_vartime(n),
-        BoxedUint::from_be_slice_vartime(e),
-    )
-    .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
-    let m = BoxedUint::from_be_slice_vartime(input);
-    let result =
-        rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
-    zero_pad(&result.to_be_bytes_trimmed_vartime(), modulus_len)
-}
 
-pub fn verify_rsa_x509(
-    n: &[u8],
-    e: &[u8],
-    modulus_len: usize,
-    message: &[u8],
-    signature: &[u8],
-) -> Result<(), CK_RV> {
-    let expected = zero_pad(message, modulus_len)?;
-    let actual = rsa_public_raw_op(n, e, signature, modulus_len)?;
-    if actual == expected {
-        Ok(())
+fn bits2field_manual(digest: &[u8], curve_byte_len: usize) -> Vec<u8> {
+    let mut field_bytes = vec![0u8; curve_byte_len];
+    if digest.len() >= curve_byte_len {
+        field_bytes.copy_from_slice(&digest[..curve_byte_len]);
     } else {
-        Err(CKR_SIGNATURE_INVALID.into())
+        field_bytes[curve_byte_len - digest.len()..].copy_from_slice(digest);
     }
-}
-
-pub fn verify_rsa_pkcs1v15(
-    n: &[u8],
-    e: &[u8],
-    modulus_len: usize,
-    hash_mechanism: Option<CK_MECHANISM_TYPE>,
-    message_or_hash: &[u8],
-    signature: &[u8],
-) -> Result<(), CK_RV> {
-    let to_pad = match hash_mechanism {
-        Some(h) => {
-            let prefix = digest_info_prefix(h).ok_or(CK_RV::from(CKR_MECHANISM_INVALID))?;
-            let mut v = Vec::with_capacity(prefix.len() + message_or_hash.len());
-            v.extend_from_slice(prefix);
-            v.extend_from_slice(message_or_hash);
-            v
-        }
-        None => message_or_hash.to_vec(),
-    };
-    let expected = pkcs1_v15_pad(&to_pad, modulus_len)?;
-    let actual = rsa_public_raw_op(n, e, signature, modulus_len)?;
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(CKR_SIGNATURE_INVALID.into())
-    }
+    field_bytes
 }
 
 /// EMSA-PSS-VERIFY (RFC 8017 §9.1.2) — the inverse of `sign.rs`'s
@@ -151,6 +99,69 @@ fn emsa_pss_verify(
     }
 }
 
+pub(crate) fn rsa_public_raw_op(
+    n: &[u8],
+    e: &[u8],
+    input: &[u8],
+    modulus_len: usize,
+) -> Result<Vec<u8>, CK_RV> {
+    if input.len() != modulus_len {
+        return Err(CKR_SIGNATURE_LEN_RANGE.into());
+    }
+    let pub_key = rsa::PublicKey::new(
+        BoxedUint::from_be_slice_vartime(n),
+        BoxedUint::from_be_slice_vartime(e),
+    )
+    .map_err(|_| CK_RV::from(CKR_GENERAL_ERROR))?;
+    let m = BoxedUint::from_be_slice_vartime(input);
+    let result =
+        rsa::hazmat::rsa_encrypt(&pub_key, &m).map_err(|_| CK_RV::from(CKR_SIGNATURE_INVALID))?;
+    zero_pad(&result.to_be_bytes_trimmed_vartime(), modulus_len)
+}
+
+pub fn verify_rsa_x509(
+    n: &[u8],
+    e: &[u8],
+    modulus_len: usize,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), CK_RV> {
+    let expected = zero_pad(message, modulus_len)?;
+    let actual = rsa_public_raw_op(n, e, signature, modulus_len)?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(CKR_SIGNATURE_INVALID.into())
+    }
+}
+
+pub fn verify_rsa_pkcs1v15(
+    n: &[u8],
+    e: &[u8],
+    modulus_len: usize,
+    hash_mechanism: Option<CK_MECHANISM_TYPE>,
+    message_or_hash: &[u8],
+    signature: &[u8],
+) -> Result<(), CK_RV> {
+    let to_pad = match hash_mechanism {
+        Some(h) => {
+            let prefix = digest_info_prefix(h).ok_or(CK_RV::from(CKR_MECHANISM_INVALID))?;
+            let mut v = Vec::with_capacity(prefix.len() + message_or_hash.len());
+            v.extend_from_slice(prefix);
+            v.extend_from_slice(message_or_hash);
+            v
+        }
+        None => message_or_hash.to_vec(),
+    };
+    let expected = pkcs1_v15_pad(&to_pad, modulus_len)?;
+    let actual = rsa_public_raw_op(n, e, signature, modulus_len)?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(CKR_SIGNATURE_INVALID.into())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn verify_rsa_pss(
     n: &[u8],
@@ -172,16 +183,6 @@ pub fn verify_rsa_pss(
         hash_mechanism,
         mgf_hash_mechanism,
     )
-}
-
-fn bits2field_manual(digest: &[u8], curve_byte_len: usize) -> Vec<u8> {
-    let mut field_bytes = vec![0u8; curve_byte_len];
-    if digest.len() >= curve_byte_len {
-        field_bytes.copy_from_slice(&digest[..curve_byte_len]);
-    } else {
-        field_bytes[curve_byte_len - digest.len()..].copy_from_slice(digest);
-    }
-    field_bytes
 }
 
 /// `CKM_ECDSA`/`CKM_ECDSA_SHAx` verify. `point` is the key's raw SEC1 point
@@ -246,10 +247,7 @@ pub fn verify_eddsa(key: &[u8], message: &[u8], signature: &[u8]) -> Result<(), 
 mod tests {
     use super::*;
     use crate::sign::emsa_pss_encode;
-
-    // 2048-bit RSA test key (n, e, d) -- not from any real device, generated
-    // for these unit tests.
-    include!("verify_test_key.rs");
+    use crate::sign::tests::{TEST_RSA_D, TEST_RSA_E, TEST_RSA_N};
 
     fn modexp(input: &[u8], exp: &[u8]) -> Vec<u8> {
         let base = BoxedUint::from_be_slice_vartime(input);

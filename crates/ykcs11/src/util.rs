@@ -53,14 +53,6 @@ pub(crate) fn parse_policies(
     Ok((pin_policy, touch_policy))
 }
 
-pub(crate) fn is_public_exponent_65537(e: &[u8]) -> bool {
-    let trimmed = match e.iter().position(|&b| b != 0) {
-        Some(i) => &e[i..],
-        None => &[][..],
-    };
-    trimmed == [0x01, 0x00, 0x01]
-}
-
 pub(crate) fn require_so_login(login_state: LoginState) -> Result<(), CK_RV> {
     if login_state != LoginState::SO {
         return Err(CKR_USER_TYPE_INVALID.into());
