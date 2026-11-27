@@ -68,6 +68,20 @@ pub unsafe extern "C" fn C_Initialize(pInitArgs: CK_VOID_PTR) -> CK_RV {
             .unwrap_or(0);
         debug::set_verbose(dbg_level);
 
+        // Unlike yubikit's own interactive callers (e.g. the ykman CLI),
+        // ykcs11 is a PKCS#11 provider module meant to coexist with other
+        // consumers of the same token, and should connect in shared mode
+        // (SCARD_SHARE_SHARED), no exclusive
+        // attempt. Without this, PcscSmartCardConnection::open() tries
+        // exclusive access first (yubikit/src/platform/pcsc.rs), and on a
+        // reader another process (e.g. GnuPG's scdaemon) already holds,
+        // every one of its 10 retries fails, burning ~900ms of sleep before
+        // falling back to shared -- this is yubikit's own documented escape
+        // hatch for that loop, so set it unless the caller already did.
+        if std::env::var_os("YKMAN_NO_EXLUSIVE").is_none() {
+            std::env::set_var("YKMAN_NO_EXLUSIVE", "1");
+        }
+
         // Ignore the error: harmless if a logger is already installed (e.g.
         // a second C_Initialize after C_Finalize).
         let _ = log::set_logger(&LOGGER);
