@@ -24,7 +24,6 @@ use pkcs11_sys::{CK_RV, CK_ULONG};
 use std::collections::HashSet;
 use std::sync::Arc;
 use yubikit::piv::PivSession;
-use yubikit::platform::device::LocalYubiKeyDevice;
 use yubikit::platform::pcsc::{PcscSmartCardConnection, list_readers_with_state};
 
 /// A connected PIV application session, held per-slot for as long as the
@@ -111,23 +110,23 @@ fn connect_slot(slot: &Arc<Mutex<Slot<PivBackend>>>, reader_name: &str, card_pre
         return;
     }
 
-    let device = match LocalYubiKeyDevice::open_reader(reader_name) {
-        Ok(d) => d,
+    let conn = match PcscSmartCardConnection::open(reader_name) {
+        Ok(conn) => conn,
         Err(e) => {
-            yk_dbg!("Unable to read device info from '{}': {}", reader_name, e);
+            yk_dbg!("Unable to connect to '{}': {}", reader_name, e);
             s.data.disconnect();
             return;
         }
     };
 
-    let conn = match device.open_smartcard() {
-        Ok(c) => c,
+    // No reader-name-derived PID hint here (that lookup is private to
+    // yubikit) -- only used as a fallback label for pre-4.1.0 devices that
+    // predate the Management applet's DeviceInfo support, so `None` is fine
+    // for any modern PIV-capable YubiKey.
+    let (info, conn) = match yubikit::device::read_info_ccid(conn, None) {
+        Ok(result) => result,
         Err(e) => {
-            yk_dbg!(
-                "Unable to open smartcard connection to '{}': {}",
-                reader_name,
-                e
-            );
+            yk_dbg!("Unable to read device info from '{}': {}", reader_name, e);
             s.data.disconnect();
             return;
         }
@@ -144,13 +143,12 @@ fn connect_slot(slot: &Arc<Mutex<Slot<PivBackend>>>, reader_name: &str, card_pre
 
     yk_dbg!("Connected slot to '{}'", reader_name);
 
-    s.data.token_info = Some(build_token_info(&device));
+    s.data.token_info = Some(build_token_info(&info));
     s.data.piv_session = Some(piv);
     s.data.token_present = true;
 }
 
-fn build_token_info(device: &LocalYubiKeyDevice) -> Pkcs11TokenInfo {
-    let info = device.info();
+fn build_token_info(info: &yubikit::management::DeviceInfo) -> Pkcs11TokenInfo {
     let serial = info.serial.map(|s| s.to_string()).unwrap_or_default();
     Pkcs11TokenInfo {
         label: format!("YubiKey PIV #{serial}"),
